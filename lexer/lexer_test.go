@@ -75,6 +75,63 @@ func Test_HoleCache(t *testing.T) {
 	}
 }
 
+func Test_HoleCacheIF(t *testing.T) {
+	r := require.New(t)
+	input := `<%H if(a == 2) { %> 
+	
+	<%= v %>
+
+	<% } else { %>
+		<%= "else block" %>
+	<% } %>`
+	tests := []struct {
+		tokenType    token.Type
+		tokenLiteral string
+	}{
+		{token.H_START, ` if(a == 2) { %> 
+	
+	<%= v %>
+
+	<% } else { %>
+		<%= "else block" %>
+	<% } `},
+	}
+
+	l := lexer.New(input)
+	for _, tt := range tests {
+		tok := l.NextToken()
+		log.Println(tok.Literal)
+		r.Equal(tt.tokenType, tok.Type)
+		r.Equal(tt.tokenLiteral, tok.Literal)
+	}
+}
+
+func Test_HoleCacheF(t *testing.T) {
+	r := require.New(t)
+	input := `<%H for (i,v) in myArray { %> 
+	
+	<%= v %>
+
+	<% } %>`
+	tests := []struct {
+		tokenType    token.Type
+		tokenLiteral string
+	}{
+		{token.H_START, ` for (i,v) in myArray { %> 
+	
+	<%= v %>
+
+	<% } `},
+	}
+
+	l := lexer.New(input)
+	for _, tt := range tests {
+		tok := l.NextToken()
+		log.Println(tok.Literal)
+		r.Equal(tt.tokenType, tok.Type)
+		r.Equal(tt.tokenLiteral, tok.Literal)
+	}
+}
 func Test_EscapeStringQuote(t *testing.T) {
 	r := require.New(t)
 	input := `<%= "mark \"cool\" bates" %>`

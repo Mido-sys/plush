@@ -31,7 +31,7 @@ func Test_PartialHelper_Blank_Context(t *testing.T) {
 
 	html, err := plush.PartialHelper(name, data, help)
 	r.Error(err)
-	r.Contains(err.Error(), "could not found")
+	r.Contains(err.Error(), "could not find")
 	r.Equal("", string(html))
 }
 
@@ -45,7 +45,7 @@ func Test_PartialHelper_Invalid_Feeder(t *testing.T) {
 
 	html, err := plush.PartialHelper(name, data, help)
 	r.Error(err)
-	r.Contains(err.Error(), "could not found")
+	r.Contains(err.Error(), "could not find")
 	r.Equal("", string(html))
 }
 
@@ -61,7 +61,7 @@ func Test_PartialHelper_Invalid_FeederFunction(t *testing.T) {
 
 	html, err := plush.PartialHelper(name, data, help)
 	r.Error(err)
-	r.Contains(err.Error(), "could not found")
+	r.Contains(err.Error(), "could not find")
 	r.Equal("", string(html))
 }
 
