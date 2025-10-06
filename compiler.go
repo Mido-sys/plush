@@ -93,11 +93,28 @@ func (c *compiler) compile() (string, error) {
 		c.write(bb, res)
 	}
 
-	return bb.String(), nil
+	content := bb.String()
+	c.fixHolePositions(content)
+	return content, nil
 }
 
 func (c *compiler) write(bb *strings.Builder, i interface{}) {
 	switch t := i.(type) {
+	case *ast.HoleStatement:
+		res, _ := c.evalHoleStatement(t)
+		getString := string(res)
+		hh := fmt.Sprintf(punch_hole_constant, len(c.positionStartEnds))
+		st := HoleMarker{
+			marker_name: hh,
+			input:       getString,
+			start:       -1,
+			end:         -1,
+			content:     "",
+			err:         nil,
+		}
+		c.positionStartEnds = append(c.positionStartEnds, st)
+		bb.WriteString(hh)
+		return
 	case time.Time:
 		if dtf, ok := c.ctx.Value("TIME_FORMAT").(string); ok {
 			bb.Write(unsafeGetBytes(t.Format(dtf)))
@@ -1075,6 +1092,8 @@ func (c *compiler) evalStatement(node ast.Statement) (interface{}, error) {
 		return c.evalReturnStatement(t)
 	case *ast.LetStatement:
 		return c.evalLetStatement(t)
+	case *ast.HoleStatement:
+		return t, nil
 	}
 
 	return nil, fmt.Errorf("could not eval statement %T", node)
@@ -1160,4 +1179,18 @@ func unsafeGetBytes(s string) []byte {
 		return []byte{}
 	}
 	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+func (c *compiler) fixHolePositions(rendered string) {
+
+	for i := range c.positionStartEnds {
+		hole := &c.positionStartEnds[i]
+		if hole.start == -1 && hole.end == -1 {
+			pos := strings.Index(rendered, hole.marker_name)
+			if pos != -1 {
+				hole.start = pos
+				hole.end = pos + len(hole.marker_name)
+			}
+		}
+	}
 }

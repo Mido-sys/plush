@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"path/filepath"
 	"strings"
+
+	"github.com/gobuffalo/plush/v5/helpers/meta"
 )
 
 // PartialFeeder is callback function should implemented on application side.
@@ -19,10 +21,17 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 	for k, v := range data {
 		help.Set(k, v)
 	}
+	if help.Value(meta.TemplateBaseFileNameKey) != nil && help.Value(meta.TemplateFileKey) != nil && help.Value(meta.TemplateExtensionKey) != nil {
+		consturctFileName := fmt.Sprintf("%s.%s", help.Value(meta.TemplateBaseFileNameKey), help.Value(meta.TemplateExtensionKey))
+		truePath := strings.TrimSuffix(help.Value(meta.TemplateFileKey).(string), consturctFileName)
+		help.Set(meta.TemplateFileKey, filepath.Join(truePath, name))
+	} else {
+		help.Set(meta.TemplateFileKey, name)
+	}
 
 	pf, ok := help.Value("partialFeeder").(func(string) (string, error))
 	if !ok {
-		return "", fmt.Errorf("could not found partial feeder from helpers")
+		return "", fmt.Errorf("could not find partial feeder from helpers")
 	}
 
 	var part string
@@ -30,7 +39,7 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 	if part, err = pf(name); err != nil {
 		return "", err
 	}
-	help.Context.Set(TemplateFileKey, name)
+
 	if part, err = Render(part, help.Context); err != nil {
 		return "", err
 	}

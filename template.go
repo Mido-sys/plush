@@ -1,6 +1,8 @@
 package plush
 
 import (
+	"time"
+
 	"github.com/gobuffalo/plush/v5/ast"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 
@@ -10,11 +12,12 @@ import (
 // Template represents an input and helpers to be used
 // to evaluate and render the input.
 type Template struct {
-	Input     string
-	Program   *ast.Program
-	PunchHole []HoleMarker
-	Skeleton  string
-	IsCache   bool
+	Input      string
+	Program    *ast.Program
+	PunchHole  []HoleMarker
+	Skeleton   string
+	IsCache    bool
+	LastCached time.Time
 }
 
 // NewTemplate from the input string. Adds all of the

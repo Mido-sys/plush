@@ -6,11 +6,13 @@ import (
 	"html/template"
 	"io"
 	"io/ioutil"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
+	"github.com/gobuffalo/plush/v5/helpers/meta"
 )
 
 // DefaultTimeFormat is the default way of formatting a time.Time type.
@@ -24,12 +26,10 @@ import (
 	s, err = Render(input, ctx)
 */
 var DefaultTimeFormat = "January 02, 2006 15:04:05 -0700"
-
-// Internal keys with unique prefixes to prevent collision with user variables
-// These keys are used internally by the plush engine and should not be set by users. We ensure this by adding a unique timestamp.
-var holeTemplateFileKey = "__plush_internal_hole_render_key_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
-var TemplateFileKey = "__plush_internal_template_file_key_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var PunchHoleCacheLifetime = 1 * time.Minute
 var cacheEnabled bool
+var holeTemplateFileKey = "__plush_internal_hole_render_key_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var errClearCache error = errors.New("template recently cached, skipping")
 
 var templateCacheBackend TemplateCache
 
@@ -65,11 +65,20 @@ func Parse(input ...string) (*Template, error) {
 	}
 
 	filename := input[1]
-	if filename != "" && templateCacheBackend != nil {
-		t, ok := templateCacheBackend.Get(filename)
+	var astKey string
+	isPlushFile := isFilePlush(filename)
+	if isPlushFile {
+
+		astKey = GenerateASTKey(filename)
+	}
+	if filename != "" && templateCacheBackend != nil && isPlushFile {
+		t, ok := templateCacheBackend.Get(astKey)
 		if ok {
-			t.IsCache = true
-			return t, nil
+			cloned := &Template{
+				Program: t.Program,
+				IsCache: true,
+			}
+			return cloned, nil
 		}
 	}
 
@@ -77,7 +86,29 @@ func Parse(input ...string) (*Template, error) {
 	if err != nil {
 		return t, err
 	}
+	// Cache the AST
+	if cacheEnabled && templateCacheBackend != nil && filename != "" && isPlushFile {
+		astTemplate := &Template{
+			Program: t.Program,
+			IsCache: false,
+		}
+		templateCacheBackend.Set(astKey, astTemplate)
+	}
 	return t, nil
+}
+
+func isHole(ctx hctx.Context) bool {
+	if ctx.Value(holeTemplateFileKey) == nil {
+		return false
+	}
+	if ctx.Value(meta.TemplateFileKey) == nil {
+		return false
+	}
+
+	ss, _ := ctx.Value(holeTemplateFileKey).(string)
+	ss2, _ := ctx.Value(meta.TemplateFileKey).(string)
+	return ss2 == ss
+
 }
 
 // Render a string using the given context.
@@ -86,51 +117,65 @@ func Render(input string, ctx hctx.Context) (string, error) {
 
 	// Extract filename from context if we're not in a hole rendering pass.
 	// The filename is used for template caching - only main templates (not holes) should use cache.
-	if ctx.Value(holeTemplateFileKey) == nil && ctx.Value(TemplateFileKey) != nil {
-		filename, _ = ctx.Value(TemplateFileKey).(string)
+	if !isHole(ctx) && ctx.Value(meta.TemplateFileKey) != nil {
+		if rawFilename, ok := ctx.Value(meta.TemplateFileKey).(string); ok {
+			filename = cleanFilePath(rawFilename) // ✅ Clean once here
+		}
 	}
-
+	forceCacheClear := false
 	// Try to render from cache if conditions are met:
 	// - Not in hole rendering pass (prevents infinite recursion)
 	// - Cache is enabled and backend is available
 	// - Template has a filename for cache key
-	if ctx.Value(holeTemplateFileKey) == nil {
+	if !isHole(ctx) && filename != "" {
 		cacheT, cacheErr := renderFromCache(filename, ctx)
 		if cacheErr == nil {
 			return cacheT, nil
+		} else if cacheErr == errClearCache {
+			forceCacheClear = true
 		}
 	}
 
-	// Parse template (with caching if enabled)
 	t, err := Parse(input, filename)
 	if err != nil {
 		return "", err
 	}
+	isPlushFile := isFilePlush(filename)
 
 	// Execute template to get skeleton with hole markers
 	s, holeMarkers, err := t.Exec(ctx)
 	if err != nil {
 		return "", err
 	}
-	//Don't bloat the cache with Sketons
+	if !isPlushFile {
+		return s, err
+	}
+	//Don't bloat the cache with Skeletons that have no holes
+	// If there are holes, store skeleton and hole markers in the template for future use
+	// This is used when caching the fully rendered template with holes filled in
 	if len(holeMarkers) > 0 {
 		t.Skeleton = s
 		t.PunchHole = holeMarkers
 	}
-	// Cache the template after successful execution (deferred to ensure caching even if hole rendering fails)
-	if !t.IsCache && cacheEnabled {
+
+	if (!t.IsCache || forceCacheClear) && cacheEnabled {
 		defer func() {
-			if templateCacheBackend != nil && filename != "" {
-				t.PunchHole = holesCopy(t.PunchHole)
-				if strings.HasSuffix(filename, ".plush") {
-					templateCacheBackend.Set(filename, t)
+			if templateCacheBackend != nil && filename != "" && isPlushFile && len(holeMarkers) > 0 {
+				fullKey := generateFullKey(filename, ctx)
+				cacheableTemplate := &Template{
+					Skeleton:   t.Skeleton,
+					PunchHole:  holesCopy(t.PunchHole),
+					IsCache:    false,
+					LastCached: time.Now(),
 				}
+				templateCacheBackend.Set(fullKey, cacheableTemplate)
 			}
 		}()
 	}
+
 	// If we have holes and this is the main render pass (not hole rendering),
 	// render holes concurrently and fill them into the skeleton
-	if ctx.Value(holeTemplateFileKey) == nil && len(t.PunchHole) > 0 {
+	if !isHole(ctx) && len(t.PunchHole) > 0 {
 		hc := renderHolesConcurrently(t.PunchHole, ctx)
 		return fillHoles(s, hc)
 	}
@@ -157,24 +202,39 @@ func fillHoles(rendered string, holes []HoleMarker) (string, error) {
 }
 
 func renderHolesConcurrently(holes []HoleMarker, ctx hctx.Context) []HoleMarker {
+	if len(holes) == 0 {
+		return holes
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(len(holes))
 
-	octx := ctx.New()
+	holeCtx := ctx.New()
 
-	octx.Set(holeTemplateFileKey, true)
+	octx := holeCtx.(*Context)
+	defer func() {
+		ctx = octx
+	}()
+	var currentfileName string
+	if holeCtx.Value(meta.TemplateFileKey) != nil {
+
+		tempF, _ := holeCtx.Value(meta.TemplateFileKey).(string)
+		if tempF != "" {
+			currentfileName = filepath.Base(tempF)
+		}
+	}
+	holeCtx.Set(holeTemplateFileKey, holeCtx.Value(meta.TemplateFileKey))
 	for k, hole := range holes {
-
-		go func(k int, holeCtx hctx.Context, h HoleMarker) {
+		go func(k int, childCtx hctx.Context, h HoleMarker) {
 			defer wg.Done()
 
-			content, err := Render(h.input, holeCtx)
+			content, err := Render(h.input, childCtx)
 			if err != nil {
-				holes[k].err = err
-				return
+				content = err.Error() + " in " + currentfileName
+
 			}
 			holes[k].content = content
-		}(k, octx.New(), hole)
+		}(k, holeCtx.New(), hole)
 	}
 	wg.Wait()
 	return holes
@@ -232,17 +292,40 @@ func holesCopy(holes []HoleMarker) []HoleMarker {
 // If cache is disabled, we should not use the cache.
 // If there is no templateCacheBackend, we should not use the cache.
 func renderFromCache(filename string, ctx hctx.Context) (string, error) {
+	if filename == "" || !cacheEnabled || templateCacheBackend == nil || isHole(ctx) {
+		return "", errors.New("cache not available")
+	}
 
-	if filename != "" && cacheEnabled && templateCacheBackend != nil && ctx.Value(holeTemplateFileKey) == nil {
-		inCacheTemplate, inCache := templateCacheBackend.Get(filename)
-		if inCache &&
-			inCacheTemplate != nil &&
-			inCacheTemplate.Skeleton != "" &&
-			len(inCacheTemplate.PunchHole) > 0 {
-			hc := holesCopy(inCacheTemplate.PunchHole)
-			hc = renderHolesConcurrently(hc, ctx)
-			return fillHoles(inCacheTemplate.Skeleton, hc)
+	astKey := GenerateASTKey(filename)
+	_, astExists := templateCacheBackend.Get(astKey)
+	if !astExists {
+		return "", errors.New("AST not cached")
+	}
+
+	fullKey := generateFullKey(filename, ctx)
+	inCacheTemplate, inCache := templateCacheBackend.Get(fullKey)
+	if inCache &&
+		inCacheTemplate != nil &&
+		inCacheTemplate.Skeleton != "" &&
+		len(inCacheTemplate.PunchHole) > 0 {
+		if time.Since(inCacheTemplate.LastCached) > PunchHoleCacheLifetime {
+			return "", errClearCache
 		}
+		hc := holesCopy(inCacheTemplate.PunchHole)
+		hc = renderHolesConcurrently(hc, ctx)
+		return fillHoles(inCacheTemplate.Skeleton, hc)
 	}
 	return "", errors.New("no cached template found")
+}
+
+func isFilePlush(filename string) bool {
+	if len(filename) < 6 {
+		return false
+	}
+	// Check for .plush.html first (longer suffix)
+	if len(filename) >= 11 && filename[len(filename)-11:] == ".plush.html" {
+		return true
+	}
+	// Check for .plush
+	return filename[len(filename)-6:] == ".plush"
 }

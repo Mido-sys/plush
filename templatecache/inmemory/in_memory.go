@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/gobuffalo/plush/v5"
@@ -24,6 +25,10 @@ func (c *MemoryCache) Clear() {
 }
 
 func (c *MemoryCache) Get(key string) (*plush.Template, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	t, ok := c.store[key]
@@ -31,6 +36,10 @@ func (c *MemoryCache) Get(key string) (*plush.Template, bool) {
 }
 
 func (c *MemoryCache) Set(key string, t *plush.Template) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.store[key] = t
@@ -40,6 +49,9 @@ func (c *MemoryCache) Delete(key ...string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, k := range key {
+		if k == "" {
+			continue
+		}
 		delete(c.store, k)
 	}
 }

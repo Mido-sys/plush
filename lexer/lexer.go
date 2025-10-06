@@ -309,23 +309,37 @@ func (l *Lexer) readBString() string {
 }
 
 func (l *Lexer) readHString() string {
-	position := l.position + 1
-	breakFound := false
+	position := l.position + 1 // Skip 'H'
+	braceDepth := 0
+	foundOpenBrace := false
+
 	for l.ch != 0 {
 		l.readChar()
+
+		if l.ch == '{' {
+			braceDepth += 1
+			foundOpenBrace = true
+		} else if l.ch == '}' {
+			braceDepth -= 1
+		}
+
 		if l.ch == '%' && l.peekChar() == '>' {
-			breakFound = true
-			break
+			if foundOpenBrace {
+				if braceDepth == 0 {
+					l.readChar()
+
+					break
+				}
+			} else {
+
+				l.readChar()
+
+				break
+			}
 		}
 	}
-
-	if breakFound {
-		l.readChar()
-	}
-
 	return l.input[position : l.position-1]
 }
-
 func (l *Lexer) readHTML() string {
 	position := l.position
 

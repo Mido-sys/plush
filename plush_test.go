@@ -176,13 +176,16 @@ func Test_UndefinedArg(t *testing.T) {
 func Test_Caching(t *testing.T) {
 	r := require.New(t)
 
-	fileCacheName := "testing 123"
+	fileCacheName := "testing-123.plush"
+	astCacheName := "ast:" + fileCacheName
 	template, err := plush.NewTemplate("<%= \"AA\" %>")
 	r.NoError(err)
 
 	imC := inmemory.NewMemoryCache()
 	plush.PlushCacheSetup(imC)
-	imC.Set(fileCacheName, template)
+	template.Input = ""
+	template.IsCache = true
+	imC.Set(astCacheName, template)
 
 	tc, err := plush.Parse("<%= a %>", fileCacheName)
 	r.NoError(err)
