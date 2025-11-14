@@ -10,6 +10,10 @@ import (
 	"github.com/gobuffalo/plush/v5/helpers/meta"
 )
 
+// already_in_partial is a unique key used in the helper context to track whether
+// the current execution is already inside a partial template. This helps prevent
+// recursive or redundant partial rendering. The value is constructed with a unique
+// suffix to avoid key collisions across different runs or contexts.
 var already_in_partial = "__plush_internal_already_in_partial_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 
 // PartialFeeder is callback function should implemented on application side.
@@ -28,17 +32,24 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 	ext := help.Value(meta.TemplateExtensionKey)
 	fileKey := help.Value(meta.TemplateFileKey)
 	if base != nil && fileKey != nil && ext != nil {
-		templateFileKey := fileKey.(string)
-		if help.Value(already_in_partial) != nil {
-			parentPartial := help.Value(already_in_partial).(string)
-			templateFileKey = strings.TrimSuffix(templateFileKey, parentPartial)
+		templateFileKey, ok := fileKey.(string)
+		if !ok {
+			return "", fmt.Errorf("expected fileKey to be a string, got %T", fileKey)
+		}
+		if v := help.Value(already_in_partial); v != nil {
+			if parentPartial, ok := v.(string); ok {
+				// If already rendering a partial, remove the parent partial's name from the end of the template file key.
+				templateFileKey = strings.TrimSuffix(templateFileKey, parentPartial)
+			}
 		}
 		baseVal, baseOk := base.(string)
 		extVal, extOk := ext.(string)
 		if baseOk && extOk {
-			consturctFileName := baseVal + "." + extVal
-			templateFileKey = strings.TrimSuffix(templateFileKey, consturctFileName)
+			constructFileName := baseVal + "." + extVal
+			// Remove the base template filename (with extension) from the end of the template file key.
+			templateFileKey = strings.TrimSuffix(templateFileKey, constructFileName)
 		}
+		// Construct the new template file key by joining the (possibly trimmed) path with the partial name.
 		help.Set(meta.TemplateFileKey, strings.ReplaceAll(filepath.Join(templateFileKey, name), "\\", "/"))
 	} else {
 		help.Set(meta.TemplateFileKey, name)

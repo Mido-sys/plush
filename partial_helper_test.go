@@ -74,6 +74,7 @@ func Test_PartialHelper_NestedPartial_PathHandling(t *testing.T) {
 	normalized := strings.ReplaceAll(html, "\\", "/")
 	r.Equal("CODE3 PRINT /fake/templates/testing/code-3.plush.html", normalized)
 }
+
 func Test_PartialHelper_Invalid_FeederFunction(t *testing.T) {
 	r := require.New(t)
 
