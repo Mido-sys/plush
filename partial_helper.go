@@ -13,7 +13,7 @@ import (
 // already_in_partial is a unique key used in the helper context to track whether
 // the current execution is already inside a partial template. This helps prevent
 // recursive or redundant partial rendering. The value is constructed with a unique
-// suffix to avoid key collisions with user-defined variables across different program runs.
+// suffix to avoid key collisions with user-defined variables within a single program run.
 var already_in_partial = "__plush_internal_already_in_partial_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 
 // PartialFeeder is callback function should implemented on application side.
