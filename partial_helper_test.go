@@ -56,7 +56,7 @@ func Test_PartialHelper_NestedPartial_PathHandling(t *testing.T) {
 	partials := map[string]string{
 		"partials/code-1.plush.html": `<%= partial("testing/code-2.plush.html") %>`,
 		"testing/code-2.plush.html":  `<%= partial("testing/code-3.plush.html") %>`,
-		"testing/code-3.plush.html":  `CODE3 PRINT <%= ` + gg + ` %>`,
+		"testing/code-3.plush.html":  `<%= ` + gg + ` %>`,
 	}
 	partialFeeder := func(name string) (string, error) {
 		return partials[name], nil
@@ -70,7 +70,7 @@ func Test_PartialHelper_NestedPartial_PathHandling(t *testing.T) {
 
 	html, err := plush.Render(`<%= partial("partials/code-1.plush.html") %>`, help)
 	r.NoError(err)
-	r.Equal("CODE3 PRINT /fake/templates/testing/code-3.plush.html", html)
+	r.Equal("ast:fake_templates_testing_code-3.plush.html", plush.GenerateASTKey(html))
 }
 func Test_PartialHelper_Invalid_FeederFunction(t *testing.T) {
 	r := require.New(t)
