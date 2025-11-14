@@ -13,7 +13,7 @@ import (
 // already_in_partial is a unique key used in the helper context to track whether
 // the current execution is already inside a partial template. This helps prevent
 // recursive or redundant partial rendering. The value is constructed with a unique
-// suffix to avoid key collisions across different runs or contexts.
+// suffix to avoid key collisions with user-defined variables across different program runs.
 var already_in_partial = "__plush_internal_already_in_partial_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 
 // PartialFeeder is callback function should implemented on application side.
@@ -69,9 +69,16 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 		help.Set(already_in_partial, name)
 		defer help.Set(already_in_partial, nil)
 	} else {
+		// Save original values to restore after rendering the partial
+		origBase := help.Value(meta.TemplateBaseFileNameKey)
+		origExt := help.Value(meta.TemplateExtensionKey)
 		extNm := filepath.Ext(name)
 		help.Set(meta.TemplateBaseFileNameKey, strings.TrimSuffix(name, extNm))
 		help.Set(meta.TemplateExtensionKey, strings.TrimPrefix(extNm, "."))
+		defer func() {
+			help.Set(meta.TemplateBaseFileNameKey, origBase)
+			help.Set(meta.TemplateExtensionKey, origExt)
+		}()
 	}
 	if part, err = Render(part, help.Context); err != nil {
 		return "", err
