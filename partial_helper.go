@@ -39,7 +39,7 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 			consturctFileName := baseVal + "." + extVal
 			templateFileKey = strings.TrimSuffix(templateFileKey, consturctFileName)
 		}
-		help.Set(meta.TemplateFileKey, filepath.Join(templateFileKey, name))
+		help.Set(meta.TemplateFileKey, strings.ReplaceAll(filepath.Join(templateFileKey, name), "\\", "/"))
 	} else {
 		help.Set(meta.TemplateFileKey, name)
 	}
