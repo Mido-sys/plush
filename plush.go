@@ -367,7 +367,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 	if GetRenderMode() == RenderModeVM {
 		renderer, ok := registeredVMRenderer()
 		if !ok {
-			return "", fmt.Errorf("%w: import github.com/gobuffalo/plush/v5/VM/plush to register it", ErrVMRendererNotRegistered)
+			return "", fmt.Errorf("%w: import github.com/gobuffalo/plush/v5/vm/plush to register it", ErrVMRendererNotRegistered)
 		}
 		return renderer(input, ctx)
 	}

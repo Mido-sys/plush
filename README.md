@@ -529,7 +529,7 @@ When using the compiled VM renderer, simple static-key partial data maps are opt
 Plush now has two render engines:
 
 - The classic interpreter, which remains the default.
-- The compiled VM renderer, available from `github.com/gobuffalo/plush/v5/VM/plush`.
+- The compiled VM renderer, available from `github.com/gobuffalo/plush/v5/vm/plush`.
 
 For one-off template strings, the interpreter is still a good default because the VM has to parse and compile before it can run. For templates rendered repeatedly, use the VM path.
 
@@ -551,7 +551,7 @@ import (
   "log"
 
   plush "github.com/gobuffalo/plush/v5"
-  vmplush "github.com/gobuffalo/plush/v5/VM/plush"
+  vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 )
 
 tmpl, err := vmplush.Compile(`<p><%= greet(name) %></p>`)
@@ -578,7 +578,7 @@ Use this when an application already calls the root `plush.Render` function and 
 ```go
 import (
   plush "github.com/gobuffalo/plush/v5"
-  _ "github.com/gobuffalo/plush/v5/VM/plush"
+  _ "github.com/gobuffalo/plush/v5/vm/plush"
 )
 
 plush.SetRenderMode(plush.RenderModeVM)
@@ -593,7 +593,7 @@ For file-backed templates, enable a template cache. The interpreter stores parse
 ```go
 import (
   plush "github.com/gobuffalo/plush/v5"
-  _ "github.com/gobuffalo/plush/v5/VM/plush"
+  _ "github.com/gobuffalo/plush/v5/vm/plush"
   "github.com/gobuffalo/plush/v5/helpers/meta"
   "github.com/gobuffalo/plush/v5/templatecache/inmemory"
 )
@@ -628,7 +628,7 @@ import (
   "fmt"
 
   plush "github.com/gobuffalo/plush/v5"
-  _ "github.com/gobuffalo/plush/v5/VM/plush"
+  _ "github.com/gobuffalo/plush/v5/vm/plush"
   "github.com/gobuffalo/plush/v5/helpers/meta"
 )
 
@@ -833,7 +833,7 @@ Important caveat: one-shot VM rendering is not the headline number because it in
 Run the benchmark matrix locally:
 
 ```sh
-go test ./VM/vm -run '^$' -bench '^BenchmarkRenderModeMatrix/.*/(interpreter_ast_cache|vm_bytecode_cache)$' -benchmem -count=3 -benchtime=500ms
+go test ./vm/vm -run '^$' -bench '^BenchmarkRenderModeMatrix/.*/(interpreter_ast_cache|vm_bytecode_cache)$' -benchmem -count=3 -benchtime=500ms
 ```
 
 ### Automatic VM Fast Paths
