@@ -64,20 +64,21 @@ func BuffaloRenderer(input string, data map[string]interface{}, helpers map[stri
 // configuration hook. The hook runs after data/helpers are loaded and before
 // rendering, so callers can attach per-render options such as VM fast helpers.
 func BuffaloRendererWithContext(input string, data map[string]interface{}, helpers map[string]interface{}, configure func(*Context)) (string, error) {
-	if data == nil {
-		data = make(map[string]interface{})
+	renderData := make(map[string]interface{}, len(data)+len(helpers))
+	for k, v := range data {
+		renderData[k] = v
 	}
 	for k, v := range helpers {
-		data[k] = v
+		renderData[k] = v
 	}
-	ctx := NewContextWith(data)
+	ctx := NewContextWith(renderData)
 	if configure != nil {
 		configure(ctx)
 	}
 	defer func() {
 		if data != nil {
-			for k := range ctx.data.localInterner.stringToID {
-				data[k] = ctx.Value(k)
+			for k, v := range ctx.localDataSnapshot() {
+				data[k] = v
 			}
 		}
 	}()

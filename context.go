@@ -151,6 +151,15 @@ func (c *Context) Has(key string) bool {
 	return false
 }
 
+func (c *Context) localDataSnapshot() map[string]interface{} {
+	if c == nil || c.data == nil {
+		return nil
+	}
+	c.moot.RLock()
+	defer c.moot.RUnlock()
+	return c.data.localSnapshot()
+}
+
 // NewContext returns a fully formed context ready to go
 func NewContext() *Context {
 	return NewContextWith(nil)
