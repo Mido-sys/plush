@@ -506,6 +506,19 @@ func (vm *VM) getProperty(obj object.Object, name string, access object.Property
 		rv = rv.Elem()
 	}
 
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return vm.push(Null)
+			}
+			if !value.CanInterface() {
+				return fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return vm.push(object.Wrap(value.Interface()))
+		}
+	}
+
 	lookup := inlinePropertyLookup(cacheSlot, rv.Type(), name)
 	switch lookup.kind {
 	case propertyLookupValueMethod:
@@ -568,6 +581,19 @@ func (vm *VM) propertyValue(base interface{}, name string, access object.Propert
 		rv = rv.Elem()
 	}
 
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return nil, nil
+			}
+			if !value.CanInterface() {
+				return nil, fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return value.Interface(), nil
+		}
+	}
+
 	lookup := inlinePropertyLookup(cacheSlot, rv.Type(), name)
 	switch lookup.kind {
 	case propertyLookupValueMethod:
@@ -600,6 +626,28 @@ func (vm *VM) propertyValue(base interface{}, name string, access object.Propert
 	}
 
 	return nil, propertyMissingError(access, base, name)
+}
+
+func reflectMapStringKeyValue(rv reflect.Value, name string) (reflect.Value, bool, bool) {
+	if !rv.IsValid() || rv.Kind() != reflect.Map {
+		return reflect.Value{}, false, false
+	}
+
+	key := reflect.ValueOf(name)
+	keyType := rv.Type().Key()
+	if !key.Type().AssignableTo(keyType) {
+		if key.Type().ConvertibleTo(keyType) {
+			key = key.Convert(keyType)
+		} else {
+			return reflect.Value{}, false, false
+		}
+	}
+
+	value := rv.MapIndex(key)
+	if !value.IsValid() {
+		return reflect.Value{}, false, true
+	}
+	return value, true, true
 }
 
 func inlinePropertyLookup(slot *object.InlineCacheSlot, rt reflect.Type, name string) propertyLookup {

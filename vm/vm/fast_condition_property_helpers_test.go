@@ -289,6 +289,15 @@ func Test_VM_Fast_Property_Value_And_Output_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, value)
 
+	nativeMap := map[string]interface{}{"Name": "<map>"}
+	value, err = fastPropertyValue(nativeMap, "Name", access, &nameSlot)
+	require.NoError(t, err)
+	require.Equal(t, "<map>", value)
+
+	value, err = fastPropertyValue(nativeMap, "Missing", access, &missingSlot)
+	require.NoError(t, err)
+	require.Nil(t, value)
+
 	_, err = fastPropertyValue(user, "Name", object.PropertyAccess{Receiver: "user", Full: "user.Name()", Method: true}, &nameSlot)
 	require.ErrorContains(t, err, "does not have a method")
 
@@ -298,6 +307,10 @@ func Test_VM_Fast_Property_Value_And_Output_Branches(t *testing.T) {
 	var out strings.Builder
 	require.NoError(t, writeFastPropertyOutput(&out, ctx, hash, "Name", access, &nameSlot))
 	require.Equal(t, "&lt;hash&gt;", out.String())
+
+	out.Reset()
+	require.NoError(t, writeFastPropertyOutput(&out, ctx, nativeMap, "Name", access, &nameSlot))
+	require.Equal(t, "&lt;map&gt;", out.String())
 
 	out.Reset()
 	require.NoError(t, writeFastPropertyOutput(&out, ctx, user, "Name", access, &nameSlot))

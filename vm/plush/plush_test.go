@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	rootplush "github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/meta"
+	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
 	vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 	"github.com/stretchr/testify/require"
 )
@@ -102,6 +104,88 @@ func Test_Set_Fast_Helper_Custom_Bytecode_Path(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fast:7", out)
 	require.Zero(t, fallbackCalls)
+}
+
+func Test_Buffalo_Renderer_VM_Partial_Sees_Top_Level_Let_From_Layout(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	type settingValue struct {
+		StringVar string
+	}
+	type setting struct {
+		ValueType settingValue
+	}
+	type globalSchema struct {
+		GlobalSettings map[string]interface{}
+	}
+
+	data := map[string]interface{}{
+		"schemaLayoutsAndSettings": map[string]interface{}{
+			"Current": globalSchema{
+				GlobalSettings: map[string]interface{}{
+					"main_col": setting{ValueType: settingValue{StringVar: "#123456"}},
+				},
+			},
+		},
+	}
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "sections/global-styling.plush.html", name)
+			return `#bread-crumb .container a h1{
+color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;
+ font-family: Poppins, sans-serif !important;
+}`, nil
+		},
+	}
+
+	out, err := rootplush.BuffaloRendererWithContext(`<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`, data, helpers, nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "color: #123456 !important;")
+}
+
+func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	type settingValue struct {
+		StringVar string
+	}
+	type setting struct {
+		ValueType settingValue
+	}
+	type globalSchema struct {
+		GlobalSettings map[string]interface{}
+	}
+
+	input := `<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "sections/global-styling.plush.html", name)
+			return `color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;`, nil
+		},
+	}
+
+	for _, color := range []string{"#123456", "#abcdef"} {
+		data := map[string]interface{}{
+			"schemaLayoutsAndSettings": map[string]interface{}{
+				"Current": globalSchema{
+					GlobalSettings: map[string]interface{}{
+						"main_col": setting{ValueType: settingValue{StringVar: color}},
+					},
+				},
+			},
+		}
+		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+		})
+		require.NoError(t, err)
+		require.Contains(t, out, "color: "+color+" !important;")
+	}
 }
 
 func Test_Clear_Fast_Helper_Removes_Custom_Fast_Render(t *testing.T) {

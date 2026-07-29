@@ -1597,6 +1597,39 @@ func Test_VM_Fast_Loop_Partial_Sees_Current_Loop_Value(t *testing.T) {
 	require.False(t, ctx.Has("product"))
 }
 
+func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
+	type settingValue struct {
+		StringVar string
+	}
+	type setting struct {
+		ValueType settingValue
+	}
+	type globalSchema struct {
+		GlobalSettings map[string]interface{}
+	}
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"schemaLayoutsAndSettings": map[string]interface{}{
+			"Current": globalSchema{
+				GlobalSettings: map[string]interface{}{
+					"main_col": setting{ValueType: settingValue{StringVar: "#123456"}},
+				},
+			},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "sections/global-styling.plush.html", name)
+			return `#bread-crumb .container a h1{
+color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;
+ font-family: Poppins, sans-serif !important;
+}`, nil
+		},
+	})
+
+	out, err := Render(`<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, "color: #123456 !important;")
+}
+
 func Test_VM_Partial_Render_Binding_Plan_Keeps_Data_Values_Live(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{
 		"partialFeeder": func(string) (string, error) {
@@ -2308,6 +2341,55 @@ func Test_VM_Fast_String_Indexed_Access_Chain_Plan_Writes_Nested_Map_Struct_Outp
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `&lt;Bender&gt;`, out)
+}
+
+func Test_VM_Fast_Property_Access_Chain_Plan_Writes_Map_Output(t *testing.T) {
+	type schema struct {
+		Name string
+	}
+
+	tmpl, err := Compile(`<%= layouts.Current.Name %>|<%= any.Current %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
+	mixed := prepareFastMixedPlan(tmpl.bytecode.FastRenderPlan)
+	require.NotNil(t, mixed)
+	require.Len(t, mixed.ops, 2)
+
+	schemaPlan := &compiler.FastValuePlan{
+		Kind: compiler.FastValuePath,
+		Path: []compiler.FastPathStep{
+			{Kind: compiler.FastPathStepProperty, Value: "Current"},
+			{Kind: compiler.FastPathStepProperty, Value: "Name"},
+		},
+	}
+	schemaChain, ok := fastAccessChainPlanFor(schemaPlan, reflect.TypeOf(map[string]schema{}))
+	require.True(t, ok)
+	require.Len(t, schemaChain.steps, 2)
+	require.Equal(t, fastAccessStepIndex, schemaChain.steps[0].kind)
+	require.Equal(t, "Current", schemaChain.steps[0].mapKey.Interface())
+	require.Equal(t, fastAccessStepField, schemaChain.steps[1].kind)
+
+	interfacePlan := &compiler.FastValuePlan{
+		Kind: compiler.FastValuePath,
+		Path: []compiler.FastPathStep{
+			{Kind: compiler.FastPathStepProperty, Value: "Current"},
+		},
+	}
+	interfaceChain, ok := fastAccessChainPlanFor(interfacePlan, reflect.TypeOf(map[string]interface{}{}))
+	require.True(t, ok)
+	require.Len(t, interfaceChain.steps, 1)
+	require.Equal(t, fastAccessStepIndex, interfaceChain.steps[0].kind)
+	require.Equal(t, "Current", interfaceChain.steps[0].mapKey.Interface())
+	require.Equal(t, fastMapDirectStringInterface, interfaceChain.steps[0].mapDirect)
+
+	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
+		"layouts": map[string]schema{
+			"Current": {Name: "<schema>"},
+		},
+		"any": map[string]interface{}{"Current": "<any>"},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, `&lt;schema&gt;|&lt;any&gt;`, out)
 }
 
 func Test_VM_Fast_String_Indexed_Access_Chain_Plan_Handles_Interface_Map_Keys(t *testing.T) {
