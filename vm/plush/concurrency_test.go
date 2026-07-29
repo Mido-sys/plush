@@ -131,6 +131,46 @@ func Test_Phase_15_Concurrent_Root_Render_Mode_VM_Bytecode_Cache_Access(t *testi
 	require.NotNil(t, entry.VMBytecode)
 }
 
+func Test_Concurrent_Buffalo_Renderer_Copy_Back_VM_Mode(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	runConcurrentChecks(t, 32, func(i int) error {
+		for j := 0; j < 64; j++ {
+			marker := fmt.Sprintf("buffalo_vm_marker_%d_%d", i, j)
+			helper := fmt.Sprintf("buffalo_vm_helper_%d_%d", i, j)
+			data := map[string]interface{}{
+				"name": marker,
+			}
+			helpers := map[string]interface{}{
+				helper: func() string {
+					return "helper"
+				},
+			}
+
+			rendered, err := rootplush.BuffaloRendererWithContext(`<% contentFor("name") { %>MD<% } %><%= name %>`, data, helpers, func(ctx *rootplush.Context) {
+				ctx.Set(marker, "configured")
+			})
+			if err != nil {
+				return err
+			}
+			if rendered != marker {
+				return fmt.Errorf("rendered %q, expected %q", rendered, marker)
+			}
+			if _, ok := data["contentFor:name"]; !ok {
+				return fmt.Errorf("missing contentFor copy-back for %s", marker)
+			}
+			if data[marker] != "configured" {
+				return fmt.Errorf("missing configured copy-back for %s", marker)
+			}
+			if _, ok := data[helper]; !ok {
+				return fmt.Errorf("missing helper copy-back for %s", helper)
+			}
+		}
+		return nil
+	})
+}
+
 func runConcurrentChecks(t *testing.T, count int, fn func(int) error) {
 	t.Helper()
 
