@@ -189,6 +189,21 @@ func (s *SymbolTable) ResolveID(id int) (interface{}, bool) {
 	return nil, false
 }
 
+func (s *SymbolTable) localSnapshot() map[string]interface{} {
+	if s == nil || len(s.vars) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(s.vars))
+	for id, value := range s.vars {
+		name, ok := s.SymbolName(id)
+		if !ok {
+			continue
+		}
+		out[name] = value
+	}
+	return out
+}
+
 func (s *SymbolTable) SymbolName(id int) (string, bool) {
 	if s == nil || s.localInterner == nil {
 		return "", false
