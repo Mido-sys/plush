@@ -138,6 +138,24 @@ func Test_Parity_Phase_6_Optional_Injection_Matrix(t *testing.T) {
 			},
 		}))
 	})
+
+	t.Run("helper context and preceding default argument", func(t *testing.T) {
+		compareRender(t, `<%= join_values("left", "right") %>|<%= join_values("left", "right", "wide") %>`, contextWith(map[string]interface{}{
+			"suffix": "ctx",
+			"join_values": func(left, right, mode string, help rootplush.HelperContext) string {
+				return left + ":" + right + ":" + mode + ":" + help.Value("suffix").(string)
+			},
+		}))
+	})
+
+	t.Run("helper context and preceding numeric default argument", func(t *testing.T) {
+		compareRender(t, `<%= format_count("items") %>|<%= format_count("items", 7) %>`, contextWith(map[string]interface{}{
+			"suffix": "ctx",
+			"format_count": func(label string, count int, help rootplush.HelperContext) string {
+				return fmt.Sprintf("%s:%d:%s", label, count, help.Value("suffix").(string))
+			},
+		}))
+	})
 }
 
 func Test_Parity_Phase_6_Helper_Context_Block_With_And_Render(t *testing.T) {

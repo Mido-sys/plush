@@ -25,7 +25,7 @@ func (v vmNativeIntObject) Type() object.ObjectType { return object.NATIVE_OBJ }
 func (v vmNativeIntObject) Inspect() string         { return fmt.Sprintf("%d", v) }
 
 func Test_VM_Fast_Reflect_Args_Into_Branches(t *testing.T) {
-	ctx := plush.NewContext()
+	ctx := plush.NewContextWith(map[string]interface{}{"name": "Mido"})
 	plan := cachedCallPlan(reflect.TypeOf(func(string, int64) {}))
 	args, err := fastReflectArgsInto("helper", plan, fastArgs(&object.String{Value: "name"}, &object.Integer{Value: 7}), ctx, nil)
 	require.NoError(t, err)
@@ -63,6 +63,32 @@ func Test_VM_Fast_Reflect_Args_Into_Branches(t *testing.T) {
 	require.Len(t, args, 2)
 	require.IsType(t, plush.HelperContext{}, args[1].Interface())
 
+	withTrailingHelperDefaults := cachedCallPlan(reflect.TypeOf(func(string, string, string, plush.HelperContext) {}))
+	args, err = fastReflectArgsInto("join_values", withTrailingHelperDefaults, fastArgs("left", "right"), ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, args, 4)
+	require.Equal(t, "left", args[0].Interface())
+	require.Equal(t, "right", args[1].Interface())
+	require.Equal(t, "", args[2].Interface())
+	require.IsType(t, plush.HelperContext{}, args[3].Interface())
+
+	helperCtx := plush.NewHelperContext(ctx, nil)
+	args, err = fastReflectArgsIntoWithHelperContext("join_values", withTrailingHelperDefaults, fastArgs("left", "right"), ctx, helperCtx, nil)
+	require.NoError(t, err)
+	require.Len(t, args, 4)
+	require.Equal(t, "left", args[0].Interface())
+	require.Equal(t, "right", args[1].Interface())
+	require.Equal(t, "", args[2].Interface())
+	require.Equal(t, "Mido", args[3].Interface().(plush.HelperContext).Value("name"))
+
+	withTrailingNumericDefault := cachedCallPlan(reflect.TypeOf(func(string, int, plush.HelperContext) {}))
+	args, err = fastReflectArgsInto("format_count", withTrailingNumericDefault, fastArgs("items"), ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, args, 3)
+	require.Equal(t, "items", args[0].Interface())
+	require.Equal(t, 0, args[1].Interface())
+	require.IsType(t, plush.HelperContext{}, args[2].Interface())
+
 	_, err = fastReflectArgsInto("helper", plan, fastArgs("a", struct{}{}), ctx, nil)
 	require.ErrorContains(t, err, "invalid argument")
 }
@@ -87,6 +113,28 @@ func Test_VM_Reflect_Args_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, args, 2)
 	require.Equal(t, 3, args[1].Interface())
+
+	withTrailingHelperDefaults := cachedCallPlan(reflect.TypeOf(func(string, string, string, plush.HelperContext) {}))
+	machine.stack[0] = &object.String{Value: "left"}
+	machine.stack[1] = &object.String{Value: "right"}
+	machine.sp = 2
+	args, err = machine.reflectArgs("join_values", withTrailingHelperDefaults, 2, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, args, 4)
+	require.Equal(t, "left", args[0].Interface())
+	require.Equal(t, "right", args[1].Interface())
+	require.Equal(t, "", args[2].Interface())
+	require.IsType(t, plush.HelperContext{}, args[3].Interface())
+
+	withTrailingNumericDefault := cachedCallPlan(reflect.TypeOf(func(string, int, plush.HelperContext) {}))
+	machine.stack[0] = &object.String{Value: "items"}
+	machine.sp = 1
+	args, err = machine.reflectArgs("format_count", withTrailingNumericDefault, 1, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, args, 3)
+	require.Equal(t, "items", args[0].Interface())
+	require.Equal(t, 0, args[1].Interface())
+	require.IsType(t, plush.HelperContext{}, args[2].Interface())
 
 	tooMany := cachedCallPlan(reflect.TypeOf(func(string) {}))
 	machine.stack[0] = &object.String{Value: "a"}

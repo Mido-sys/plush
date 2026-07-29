@@ -271,13 +271,9 @@ func fastReflectArgsIntoWithHelperContext(name string, plan *callPlan, rawArgs *
 			args = append(args, arg)
 		}
 	} else if len(args) < plan.numIn {
-		for len(args) < plan.numIn {
-			arg, ok := fastOptionalArgWithHelperContext(plan.optionalArgs[len(args)], plan.argTypes[len(args)], ctx, helperCtx)
-			if !ok {
-				break
-			}
-			args = append(args, arg)
-		}
+		args, _ = appendMissingFixedHelperArgs(args, plan, func(kind optionalArgKind, expected reflect.Type) (reflect.Value, bool) {
+			return fastOptionalArgWithHelperContext(kind, expected, ctx, helperCtx)
+		})
 	}
 	if len(args) < plan.minArgs {
 		return nil, errFastWriteUnsupported
