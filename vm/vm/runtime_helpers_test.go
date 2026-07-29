@@ -550,7 +550,7 @@ func Test_VM_Native_Call_Execution_Edge_Branches(t *testing.T) {
 
 	machine.stack[0] = &object.Native{Value: func(string) string { return "" }}
 	machine.sp = 1
-	require.ErrorContains(t, machine.callNativeValue("needsArg", func(string) string { return "" }, 0, nil, nil), "too few arguments")
+	require.ErrorContains(t, machine.callNativeValue("needsArg", func(string) string { return "" }, 0, nil, nil), "needsArg: too few arguments (0 for 1)")
 
 	machine.stack[0] = &object.Native{Value: func() {}}
 	machine.sp = 1
@@ -569,7 +569,7 @@ func Test_VM_Native_Call_Execution_Edge_Branches(t *testing.T) {
 
 	machine.stack[0] = &object.Native{Value: func(string) string { return "" }}
 	machine.sp = 1
-	require.ErrorContains(t, machine.writeNativeValueCall("needsArg", func(string) string { return "" }, 0, nil, true), "too few arguments")
+	require.ErrorContains(t, machine.writeNativeValueCall("needsArg", func(string) string { return "" }, 0, nil, true), "needsArg: too few arguments (0 for 1)")
 
 	machine.sp = 0
 	handled, err := machine.tryFastWriteNativeValueCall("nilFast", nil, 0, nil, false)

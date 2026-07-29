@@ -306,12 +306,12 @@ func Test_VM_Native_Call_Remaining_Edge_Branches(t *testing.T) {
 	rawArgs := fastCallArgs{}
 	rawArgs.Append("extra")
 	_, err = fastReflectArgsInto("tooMany", &callPlan{numIn: 0}, &rawArgs, plush.NewContext(), nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "tooMany: too many arguments (1 for 0)")
 
 	machine = newRuntimeHelperTestVM(plush.NewContext())
 	require.NoError(t, machine.push(&object.String{Value: "extra"}))
 	_, err = machine.reflectArgs("tooMany", &callPlan{numIn: 0}, 1, nil, nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "tooMany: too many arguments (1 for 0)")
 
 	badValue := 7
 	require.ErrorContains(t, machine.writeNativeValueCall("badPointer", &badValue, 0, nil, false), "invalid function")

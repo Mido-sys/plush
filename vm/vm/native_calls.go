@@ -175,10 +175,10 @@ func fastReflectArgsInto(name string, plan *callPlan, rawArgs *fastCallArgs, ctx
 	}
 
 	if !plan.isVariadic && numArgs > plan.numIn {
-		return nil, fmt.Errorf("too many arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too many", numArgs, plan.numIn)
 	}
 	if plan.isVariadic && numArgs < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too few", numArgs, plan.numIn)
 	}
 
 	fixed := numArgs
@@ -206,9 +206,16 @@ func fastReflectArgsInto(name string, plan *callPlan, rawArgs *fastCallArgs, ctx
 		})
 	}
 	if len(args) < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", len(args), plan.numIn)
+		return nil, callArgumentCountError(name, "too few", len(args), plan.numIn)
 	}
 	return args, nil
+}
+
+func callArgumentCountError(name, kind string, got, want int) error {
+	if name == "" {
+		return fmt.Errorf("%s arguments (%d for %d)", kind, got, want)
+	}
+	return fmt.Errorf("%s: %s arguments (%d for %d)", name, kind, got, want)
 }
 
 func appendMissingFixedHelperArgs(args []reflect.Value, plan *callPlan, optional func(optionalArgKind, reflect.Type) (reflect.Value, bool)) ([]reflect.Value, bool) {
@@ -300,10 +307,10 @@ func (vm *VM) reflectArgs(name string, plan *callPlan, numArgs int, block *objec
 	args := scratch[:0]
 
 	if !plan.isVariadic && numArgs > plan.numIn {
-		return nil, fmt.Errorf("too many arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too many", numArgs, plan.numIn)
 	}
 	if plan.isVariadic && numArgs < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too few", numArgs, plan.numIn)
 	}
 
 	fixed := numArgs
@@ -334,7 +341,7 @@ func (vm *VM) reflectArgs(name string, plan *callPlan, numArgs int, block *objec
 	}
 
 	if len(args) < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", len(args), plan.numIn)
+		return nil, callArgumentCountError(name, "too few", len(args), plan.numIn)
 	}
 
 	return args, nil

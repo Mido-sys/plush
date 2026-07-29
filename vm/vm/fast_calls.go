@@ -245,10 +245,10 @@ func fastReflectArgsIntoWithHelperContext(name string, plan *callPlan, rawArgs *
 	}
 
 	if !plan.isVariadic && numArgs > plan.numIn {
-		return nil, fmt.Errorf("too many arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too many", numArgs, plan.numIn)
 	}
 	if plan.isVariadic && numArgs < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too few", numArgs, plan.numIn)
 	}
 
 	fixed := numArgs

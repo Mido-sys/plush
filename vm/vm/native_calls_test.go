@@ -34,10 +34,10 @@ func Test_VM_Fast_Reflect_Args_Into_Branches(t *testing.T) {
 	require.Equal(t, int64(7), args[1].Interface())
 
 	_, err = fastReflectArgsInto("helper", plan, fastArgs("a", int64(1), "extra"), ctx, nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "helper: too many arguments (3 for 2)")
 
 	_, err = fastReflectArgsInto("helper", plan, fastArgs("a"), ctx, nil)
-	require.ErrorContains(t, err, "too few arguments")
+	require.ErrorContains(t, err, "helper: too few arguments (1 for 2)")
 
 	variadic := cachedCallPlan(reflect.TypeOf(func(string, ...int) {}))
 	args, err = fastReflectArgsInto("helper", variadic, fastArgs("n", 1, 2), ctx, nil)
@@ -49,7 +49,7 @@ func Test_VM_Fast_Reflect_Args_Into_Branches(t *testing.T) {
 	require.ErrorContains(t, err, "invalid argument")
 
 	_, err = fastReflectArgsInto("helper", variadic, fastArgs(), ctx, nil)
-	require.ErrorContains(t, err, "too few arguments")
+	require.ErrorContains(t, err, "helper: too few arguments (0 for 2)")
 
 	withMap := cachedCallPlan(reflect.TypeOf(func(string, map[string]interface{}) {}))
 	args, err = fastReflectArgsInto("helper", withMap, fastArgs("n"), ctx, nil)
@@ -80,6 +80,12 @@ func Test_VM_Fast_Reflect_Args_Into_Branches(t *testing.T) {
 	require.Equal(t, "right", args[1].Interface())
 	require.Equal(t, "", args[2].Interface())
 	require.Equal(t, "Mido", args[3].Interface().(plush.HelperContext).Value("name"))
+
+	_, err = fastReflectArgsIntoWithHelperContext("block_helper", plan, fastArgs(), ctx, helperCtx, nil)
+	require.ErrorIs(t, err, errFastWriteUnsupported)
+
+	_, err = fastReflectArgsIntoWithHelperContext("block_helper", plan, fastArgs("a", int64(1), "extra"), ctx, helperCtx, nil)
+	require.ErrorContains(t, err, "block_helper: too many arguments (3 for 2)")
 
 	withTrailingNumericDefault := cachedCallPlan(reflect.TypeOf(func(string, int, plush.HelperContext) {}))
 	args, err = fastReflectArgsInto("format_count", withTrailingNumericDefault, fastArgs("items"), ctx, nil)
@@ -141,11 +147,11 @@ func Test_VM_Reflect_Args_Branches(t *testing.T) {
 	machine.stack[1] = &object.String{Value: "b"}
 	machine.sp = 2
 	_, err = machine.reflectArgs("helper", tooMany, 2, nil, nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "helper: too many arguments (2 for 1)")
 
 	machine.sp = 0
 	_, err = machine.reflectArgs("helper", variadic, 0, nil, nil)
-	require.ErrorContains(t, err, "too few arguments")
+	require.ErrorContains(t, err, "helper: too few arguments (0 for 2)")
 
 	fixedBad := cachedCallPlan(reflect.TypeOf(func(int) {}))
 	machine.stack[0] = &object.String{Value: "bad"}
