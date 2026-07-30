@@ -151,18 +151,20 @@ func Test_Phase_12_VM_Plush_Cache_Hole_Skeleton_For_Plush_Filenames(t *testing.T
 			defer rootplush.ClearTemplateCache()
 
 			ctx := rootplush.NewContextWith(map[string]interface{}{
-				"items": []string{"a", "b"},
+				"items":  []string{"a", "b"},
+				"suffix": "1",
 			})
 			ctx.Set(meta.TemplateFileKey, filename)
 
-			input := `<% let suffix = "1" %><%= items[0] %><%H suffix %><%= items[1] %>`
+			input := `<%= items[0] %><%H suffix %><%= items[1] %>`
 			out, err := vmplush.Render(input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a1b", out)
 			requireCacheKey(t, cache, rootplush.GenerateASTKey(filename))
 			requireCacheKey(t, cache, "full:"+filename)
 
-			out, err = vmplush.Render(`<% let suffix = "2" %><%= items[0] %><%H suffix %><%= items[1] %>`, ctx)
+			ctx.Set("suffix", "2")
+			out, err = vmplush.Render(input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a2b", out)
 		})

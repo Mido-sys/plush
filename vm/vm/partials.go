@@ -1319,12 +1319,13 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 		ctx = plush.NewContext()
 	}
 
-	filename, forceCacheClear, cached, ok := punchHoleCacheState(ctx)
+	input = preprocessTrimTags(input)
+	filename := plush.PunchHoleTemplateFilename(ctx)
+	filename, forceCacheClear, cached, ok := punchHoleCacheStateForFilename(filename, ctx, input)
 	if ok {
 		return cached, nil
 	}
 
-	input = preprocessTrimTags(input)
 	sourceHash := hashString(input)
 	linkKey := partialBytecodeLinkKey(filename, input, sourceHash)
 	links := partialBytecodeLinks(ctx)

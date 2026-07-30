@@ -1148,6 +1148,34 @@ func Test_VM_Runtime_Source_Render_Ignores_Source_Blind_Stale_Bytecode(t *testin
 	require.Equal(t, "<section>ready</section>", rendered)
 }
 
+func Test_VM_Runtime_Punch_Hole_Cache_Does_Not_Skip_Parent_Let_Bindings(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	type record struct {
+		Title string
+	}
+	source := `<% let activePanel = viewData.Current %><%H activePanel.Title %>`
+	filename := "runtime_parent_let_hole.plush"
+
+	for _, title := range []string{"first", "second"} {
+		ctx := plush.NewContextWith(map[string]interface{}{
+			"viewData": struct {
+				Current record
+			}{Current: record{Title: title}},
+		})
+		ctx.Set(meta.TemplateFileKey, filename)
+
+		rendered, err := Render(source, ctx)
+		require.NoError(t, err)
+		require.Equal(t, title, rendered)
+	}
+}
+
 func Test_VM_Source_Bytecode_Cache_Is_Bounded(t *testing.T) {
 	cache := newSourceBytecodeCache(2)
 	first := &compiler.Bytecode{Static: true, StaticOutput: "first"}

@@ -16,6 +16,10 @@ type TemplateCache interface {
 	Clear()
 }
 
+type contextWriteReporter interface {
+	ContextWrites() bool
+}
+
 func ClearTemplateCache() {
 	if templateCacheBackend != nil {
 		templateCacheBackend.Clear()
@@ -119,6 +123,10 @@ func cacheVMBytecodeWithKey(key string, program *ast.Program, bytecode interface
 	}
 	if program != nil {
 		t.Program = program
+		t.HasContextWrites = programHasContextWrites(program)
+	}
+	if reporter, ok := bytecode.(contextWriteReporter); ok {
+		t.HasContextWrites = reporter.ContextWrites()
 	}
 	t.Input = ""
 	t.VMBytecode = bytecode

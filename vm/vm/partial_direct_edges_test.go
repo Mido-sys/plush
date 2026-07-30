@@ -521,6 +521,46 @@ func Test_VM_Direct_Partial_First_Render_Does_Not_Poison_Second_Source(t *testin
 	require.Equal(t, 1, secondFeederCalls)
 }
 
+func Test_VM_Partial_Punch_Hole_Cache_Uses_Current_Source(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	const partialName = "shared/token.plush"
+	const parentSource = `<%= partial("shared/token.plush") %>`
+
+	firstCtx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, partialName, name)
+			return `<%H "first" %>`, nil
+		},
+	})
+	firstCtx.Set(meta.TemplateFileKey, "templates/page.plush")
+
+	rendered, err := Render(parentSource, firstCtx)
+	require.NoError(t, err)
+	require.Equal(t, "first", rendered)
+
+	secondFeederCalls := 0
+	secondCtx := plush.NewContextWith(map[string]interface{}{
+		"label": "second",
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, partialName, name)
+			secondFeederCalls++
+			return `<%H label %>`, nil
+		},
+	})
+	secondCtx.Set(meta.TemplateFileKey, "templates/page.plush")
+
+	rendered, err = Render(parentSource, secondCtx)
+	require.NoError(t, err)
+	require.Equal(t, "second", rendered)
+	require.GreaterOrEqual(t, secondFeederCalls, 1)
+}
+
 func Test_VM_Fast_No_Data_Partial_Direct_Uses_Current_Feeder_Source_When_Source_Is_Unknown(t *testing.T) {
 	cache := inmemory.NewMemoryCache()
 	plush.PlushCacheSetup(cache)
