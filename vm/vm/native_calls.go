@@ -175,10 +175,10 @@ func fastReflectArgsInto(name string, plan *callPlan, rawArgs *fastCallArgs, ctx
 	}
 
 	if !plan.isVariadic && numArgs > plan.numIn {
-		return nil, fmt.Errorf("too many arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too many", numArgs, plan.numIn)
 	}
 	if plan.isVariadic && numArgs < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too few", numArgs, plan.numIn)
 	}
 
 	fixed := numArgs
@@ -201,18 +201,50 @@ func fastReflectArgsInto(name string, plan *callPlan, rawArgs *fastCallArgs, ctx
 			args = append(args, arg)
 		}
 	} else if len(args) < plan.numIn {
-		for len(args) < plan.numIn {
-			arg, ok := fastOptionalArg(plan.optionalArgs[len(args)], plan.argTypes[len(args)], ctx)
-			if !ok {
-				break
-			}
-			args = append(args, arg)
-		}
+		args, _ = appendMissingFixedHelperArgs(args, plan, func(kind optionalArgKind, expected reflect.Type) (reflect.Value, bool) {
+			return fastOptionalArg(kind, expected, ctx)
+		})
 	}
 	if len(args) < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", len(args), plan.numIn)
+		return nil, callArgumentCountError(name, "too few", len(args), plan.numIn)
 	}
 	return args, nil
+}
+
+func callArgumentCountError(name, kind string, got, want int) error {
+	if name == "" {
+		return fmt.Errorf("%s arguments (%d for %d)", kind, got, want)
+	}
+	return fmt.Errorf("%s: %s arguments (%d for %d)", name, kind, got, want)
+}
+
+func appendMissingFixedHelperArgs(args []reflect.Value, plan *callPlan, optional func(optionalArgKind, reflect.Type) (reflect.Value, bool)) ([]reflect.Value, bool) {
+	missing := plan.numIn - len(args)
+	if missing == 0 {
+		return args, true
+	}
+	if missing < 0 || missing > 2 || !missingFixedArgsIncludeHelperArg(plan, len(args)) {
+		return args, false
+	}
+
+	for len(args) < plan.numIn {
+		pos := len(args)
+		arg, ok := optional(plan.optionalArgs[pos], plan.argTypes[pos])
+		if !ok {
+			arg = reflect.New(plan.argTypes[pos]).Elem()
+		}
+		args = append(args, arg)
+	}
+	return args, true
+}
+
+func missingFixedArgsIncludeHelperArg(plan *callPlan, start int) bool {
+	for pos := start; pos < plan.numIn; pos++ {
+		if plan.optionalArgs[pos] != optionalArgNone {
+			return true
+		}
+	}
+	return false
 }
 
 func fastReflectArgForCall(name string, pos int, raw interface{}, expected reflect.Type) (reflect.Value, error) {
@@ -275,10 +307,10 @@ func (vm *VM) reflectArgs(name string, plan *callPlan, numArgs int, block *objec
 	args := scratch[:0]
 
 	if !plan.isVariadic && numArgs > plan.numIn {
-		return nil, fmt.Errorf("too many arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too many", numArgs, plan.numIn)
 	}
 	if plan.isVariadic && numArgs < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", numArgs, plan.numIn)
+		return nil, callArgumentCountError(name, "too few", numArgs, plan.numIn)
 	}
 
 	fixed := numArgs
@@ -303,17 +335,13 @@ func (vm *VM) reflectArgs(name string, plan *callPlan, numArgs int, block *objec
 			args = append(args, arg)
 		}
 	} else if len(args) < plan.numIn {
-		for len(args) < plan.numIn {
-			arg, ok := vm.optionalArg(plan.optionalArgs[len(args)], plan.argTypes[len(args)], block)
-			if !ok {
-				break
-			}
-			args = append(args, arg)
-		}
+		args, _ = appendMissingFixedHelperArgs(args, plan, func(kind optionalArgKind, expected reflect.Type) (reflect.Value, bool) {
+			return vm.optionalArg(kind, expected, block)
+		})
 	}
 
 	if len(args) < plan.minArgs {
-		return nil, fmt.Errorf("too few arguments (%d for %d)", len(args), plan.numIn)
+		return nil, callArgumentCountError(name, "too few", len(args), plan.numIn)
 	}
 
 	return args, nil
@@ -514,6 +542,7 @@ func (vm *VM) optionalArg(kind optionalArgKind, expected reflect.Type, block *ob
 	switch kind {
 	case optionalArgHelperContext:
 		hargs := vm.helperContext(block)
+		vm.lastHelperContext = hargs.Context
 		value := reflect.ValueOf(hargs)
 		if value.Type().AssignableTo(expected) {
 			return value, true
@@ -574,6 +603,8 @@ func (vm *VM) runBlock(block *object.Closure, ctx hctx.Context) (string, error) 
 	if err := child.Run(); err != nil {
 		return "", child.wrapRuntimeError(err)
 	}
+	vm.syncContextBindingsFromContext(ctx, blockCtx)
+	vm.syncFrameBindingsFromContext(blockCtx)
 	if !object.IsNull(child.lastPopped) && child.lastPopped != nil {
 		return child.renderObject(child.lastPopped), nil
 	}

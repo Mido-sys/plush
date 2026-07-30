@@ -271,7 +271,7 @@ ctx.Set("counts", map[string]uint32{"active": 7})
 
 When using the compiled VM renderer, static string-key map access is optimized automatically for typed maps such as `map[string]string`, `map[string]uint32`, and nested chains such as `robots["bender"].Name`. The VM caches the access plan and typed map key, not the map value itself.
 
-Using maps as options to functions in Plush is incredibly powerful. See the sections on Functions and Helpers to see more examples.
+Using maps as options to functions in Plush is useful for passing named options into helpers.
 
 ## Arrays
 
@@ -612,7 +612,7 @@ The filename must be present in the context for filename-backed cache reuse. On 
 
 ### Compiled Render Diagnostics
 
-Plush records lightweight render diagnostics on the render context. Use these when comparing interpreter and VM mode, confirming bytecode-cache hits, or understanding why a template did or did not use the VM fast path. The diagnostics API lives in [`render_diagnostics.go`](render_diagnostics.go).
+Plush records lightweight render diagnostics on the render context. Use these when comparing interpreter and VM mode, confirming bytecode-cache hits, or understanding why a template did or did not use the VM fast path.
 
 Diagnostics are collected automatically during `plush.Render`; no global flag is required for the basic fields.
 
@@ -902,42 +902,7 @@ The template stays normal:
 
 Fast helpers should only optimize the hot path. They must not cache request values or rendered output. Use `WriteEscapedString` for normal text and `WriteHTML` only for trusted `template.HTML`. If a fast helper cannot safely handle the current arguments, return `vmplush.ErrFastUnsupported` so the VM can call the regular helper.
 
-For generated gRPC/protobuf objects, use `args.Raw(i)` and type assert to the generated message type:
-
-```go
-ctx.Set("productName", func(value interface{}) string {
-  product, ok := value.(*pb.Product)
-  if !ok || product == nil {
-    return ""
-  }
-  return product.GetName()
-})
-
-vmplush.SetFastHelper(ctx, "productName", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
-  raw, ok := args.Raw(0)
-  if !ok {
-    return vmplush.ErrFastUnsupported
-  }
-
-  product, ok := raw.(*pb.Product)
-  if !ok || product == nil {
-    return vmplush.ErrFastUnsupported
-  }
-
-  w.WriteEscapedString(product.GetName())
-  return nil
-})
-```
-
-The template does not change:
-
-```erb
-<%= productName(product) %>
-```
-
-This avoids reflection and generic property access for the hot helper body while still keeping the normal helper as a safe fallback.
-
-For nested Go structs, the pattern is the same. Register a normal helper first:
+For regular Go structs, use `args.Raw(i)` and type assert to the concrete type. Register the normal helper first:
 
 ```go
 type Product struct {
@@ -988,13 +953,15 @@ if !ok || product == nil {
 w.WriteEscapedString(product.Category.Label + ":" + product.Name)
 ```
 
+This avoids reflection and generic property access for the hot helper body while still keeping the normal helper as a safe fallback.
+
 Normal templates can still use regular Plush access without a fast helper:
 
 ```erb
 <%= product.Category.Label %>
 ```
 
-Partial calls with simple data maps are also optimized automatically by the VM. See [Partial Rendering With Data Maps](#partial-rendering-with-data-maps) for syntax and behavior.
+Partial calls with simple data maps are also optimized automatically by the VM.
 
 ## Render Budget
 

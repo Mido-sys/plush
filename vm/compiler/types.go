@@ -9,25 +9,30 @@ import (
 )
 
 type Bytecode struct {
-	Instructions    code.Instructions
-	CallNames       map[int]string
-	LocalNames      map[int]string
-	LineNumbers     map[int]int
-	Properties      map[int]object.PropertyAccess
-	PropertyCaches  []object.InlineCacheSlot
-	CallCaches      []object.InlineCacheSlot
-	NumLocals       int
-	NumGlobals      int
-	Constants       []object.Object
-	GlobalNames     map[int]string
-	Static          bool
-	StaticOutput    string
-	FastRenderPlan  *FastRenderPlan
-	FastRejectLine  int
-	FastReject      string
-	FastDiagnostics atomic.Value
-	HasHoles        bool
-	HasPartials     bool
+	Instructions     code.Instructions
+	CallNames        map[int]string
+	LocalNames       map[int]string
+	LineNumbers      map[int]int
+	Properties       map[int]object.PropertyAccess
+	PropertyCaches   []object.InlineCacheSlot
+	CallCaches       []object.InlineCacheSlot
+	NumLocals        int
+	NumGlobals       int
+	Constants        []object.Object
+	GlobalNames      map[int]string
+	Static           bool
+	StaticOutput     string
+	FastRenderPlan   *FastRenderPlan
+	FastRejectLine   int
+	FastReject       string
+	FastDiagnostics  atomic.Value
+	HasHoles         bool
+	HasPartials      bool
+	HasContextWrites bool
+}
+
+func (b *Bytecode) ContextWrites() bool {
+	return b != nil && b.HasContextWrites
 }
 
 type FastRenderReject struct {

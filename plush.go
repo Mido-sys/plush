@@ -64,20 +64,21 @@ func BuffaloRenderer(input string, data map[string]interface{}, helpers map[stri
 // configuration hook. The hook runs after data/helpers are loaded and before
 // rendering, so callers can attach per-render options such as VM fast helpers.
 func BuffaloRendererWithContext(input string, data map[string]interface{}, helpers map[string]interface{}, configure func(*Context)) (string, error) {
-	if data == nil {
-		data = make(map[string]interface{})
+	renderData := make(map[string]interface{}, len(data)+len(helpers))
+	for k, v := range data {
+		renderData[k] = v
 	}
 	for k, v := range helpers {
-		data[k] = v
+		renderData[k] = v
 	}
-	ctx := NewContextWith(data)
+	ctx := NewContextWith(renderData)
 	if configure != nil {
 		configure(ctx)
 	}
 	defer func() {
 		if data != nil {
-			for k := range ctx.data.localInterner.stringToID {
-				data[k] = ctx.Value(k)
+			for k, v := range ctx.localDataSnapshot() {
+				data[k] = v
 			}
 		}
 	}()
@@ -110,10 +111,11 @@ func Parse(input ...string) (*Template, error) {
 					return parsed, err
 				}
 				astTemplate := &Template{
-					Program:    parsed.Program,
-					VMBytecode: t.VMBytecode,
-					SourceHash: sourceHash,
-					IsCache:    false,
+					Program:          parsed.Program,
+					VMBytecode:       t.VMBytecode,
+					SourceHash:       sourceHash,
+					HasContextWrites: parsed.HasContextWrites || t.HasContextWrites,
+					IsCache:          false,
 				}
 				templateCacheBackend.Set(astKey, astTemplate)
 				return cachedParseTemplate(astTemplate), nil
@@ -128,12 +130,14 @@ func Parse(input ...string) (*Template, error) {
 	// Cache the AST
 	if cacheEnabled && templateCacheBackend != nil && filename != "" && isPlushFile {
 		astTemplate := &Template{
-			Program:    t.Program,
-			SourceHash: sourceHash,
-			IsCache:    false,
+			Program:          t.Program,
+			SourceHash:       sourceHash,
+			HasContextWrites: t.HasContextWrites,
+			IsCache:          false,
 		}
 		if cached, ok := templateCacheBackend.Get(astKey); ok && cached != nil && templateSourceMatches(cached, sourceHash) {
 			astTemplate.VMBytecode = cached.VMBytecode
+			astTemplate.HasContextWrites = t.HasContextWrites || cached.HasContextWrites
 		}
 		templateCacheBackend.Set(astKey, astTemplate)
 	}
@@ -142,11 +146,12 @@ func Parse(input ...string) (*Template, error) {
 
 func cachedParseTemplate(t *Template) *Template {
 	return &Template{
-		Input:      t.Input,
-		Program:    t.Program,
-		VMBytecode: t.VMBytecode,
-		SourceHash: t.SourceHash,
-		IsCache:    true,
+		Input:            t.Input,
+		Program:          t.Program,
+		VMBytecode:       t.VMBytecode,
+		SourceHash:       t.SourceHash,
+		HasContextWrites: t.HasContextWrites,
+		IsCache:          true,
 	}
 }
 
@@ -284,15 +289,22 @@ func CachePunchHoleSkeletonWithSource(filename string, ctx hctx.Context, skeleto
 		}
 	}
 	astKey := GenerateASTKeyFromCleanFilename(filename)
-	if _, ok := templateCacheBackend.Get(astKey); !ok {
-		templateCacheBackend.Set(astKey, &Template{IsCache: false})
+	hasContextWrites := false
+	if astTemplate, ok := templateCacheBackend.Get(astKey); ok && templateSourceMatches(astTemplate, sourceHash) {
+		hasContextWrites = astTemplate.HasContextWrites
+	} else {
+		templateCacheBackend.Set(astKey, &Template{IsCache: false, SourceHash: sourceHash})
+	}
+	if hasContextWrites {
+		return
 	}
 	templateCacheBackend.Set(generateFullKeyFromCleanFilename(filename, ctx), &Template{
-		Skeleton:   skeleton,
-		PunchHole:  holesCopy(holes),
-		SourceHash: sourceHash,
-		IsCache:    false,
-		LastCached: time.Now(),
+		Skeleton:         skeleton,
+		PunchHole:        holesCopy(holes),
+		SourceHash:       sourceHash,
+		HasContextWrites: hasContextWrites,
+		IsCache:          false,
+		LastCached:       time.Now(),
 	})
 }
 
@@ -414,16 +426,17 @@ func renderInterpreter(input string, ctx hctx.Context) (string, error) {
 		t.PunchHole = holeMarkers
 	}
 
-	if (!t.IsCache || forceCacheClear) && cacheEnabled {
+	if (!t.IsCache || forceCacheClear) && cacheEnabled && !t.HasContextWrites {
 		defer func() {
 			if templateCacheBackend != nil && filename != "" && isPlushFile && len(holeMarkers) > 0 {
 				fullKey := generateFullKeyFromCleanFilename(filename, ctx)
 				cacheableTemplate := &Template{
-					Skeleton:   t.Skeleton,
-					PunchHole:  holesCopy(t.PunchHole),
-					SourceHash: templateSourceHash(preprocessTrimTags(input)),
-					IsCache:    false,
-					LastCached: time.Now(),
+					Skeleton:         t.Skeleton,
+					PunchHole:        holesCopy(t.PunchHole),
+					SourceHash:       templateSourceHash(preprocessTrimTags(input)),
+					HasContextWrites: t.HasContextWrites,
+					IsCache:          false,
+					LastCached:       time.Now(),
 				}
 				templateCacheBackend.Set(fullKey, cacheableTemplate)
 			}
@@ -610,7 +623,7 @@ func renderFromCache(filename string, source string, ctx hctx.Context) (string, 
 	sourceHash := templateSourceCacheHash(preprocessTrimTags(source))
 	astKey := GenerateASTKeyFromCleanFilename(filename)
 	astTemplate, astExists := templateCacheBackend.Get(astKey)
-	if !astExists || !templateSourceMatches(astTemplate, sourceHash) {
+	if !astExists || !templateSourceMatches(astTemplate, sourceHash) || astTemplate.HasContextWrites {
 		return "", errors.New("AST not cached")
 	}
 
@@ -619,6 +632,7 @@ func renderFromCache(filename string, source string, ctx hctx.Context) (string, 
 	if inCache &&
 		inCacheTemplate != nil &&
 		templateSourceMatches(inCacheTemplate, sourceHash) &&
+		!inCacheTemplate.HasContextWrites &&
 		inCacheTemplate.Skeleton != "" &&
 		len(inCacheTemplate.PunchHole) > 0 {
 		if time.Since(inCacheTemplate.LastCached) > PunchHoleCacheLifetime {

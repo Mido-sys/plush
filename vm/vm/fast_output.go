@@ -54,6 +54,18 @@ func writeFastPropertyReflectOutput(out *strings.Builder, ctx hctx.Context, rv r
 		}
 		rv = rv.Elem()
 	}
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return nil
+			}
+			if !value.CanInterface() {
+				return fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return writeFastReflectValue(out, ctx, value)
+		}
+	}
 	entry := inlinePropertyEntry(cacheSlot, rv.Type(), name)
 	if entry != nil && entry.writer != nil {
 		written, err := entry.writer(out, ctx, rv, access, name)
@@ -112,6 +124,18 @@ func fastPropertyReflectValue(base interface{}) (reflect.Value, interface{}, boo
 }
 
 func fastPropertyValueFromReflect(rv reflect.Value, raw interface{}, name string, access object.PropertyAccess, entry *propertyInlineCacheEntry) (interface{}, error) {
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return nil, nil
+			}
+			if !value.CanInterface() {
+				return nil, fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return value.Interface(), nil
+		}
+	}
 	if entry == nil {
 		return nil, propertyMissingError(access, raw, name)
 	}

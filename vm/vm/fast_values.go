@@ -843,7 +843,19 @@ func buildFastAccessChainPlanForSteps(steps []compiler.FastPathStep, root reflec
 		current = unwrapReflectType(current)
 		switch step.Kind {
 		case compiler.FastPathStepProperty:
-			if step.Method || current.Kind() != reflect.Struct {
+			if step.Method {
+				return nil, nil, false
+			}
+			if current.Kind() == reflect.Map {
+				indexStep, next, ok := buildFastIndexAccessStep(current, step)
+				if !ok {
+					return nil, nil, false
+				}
+				chain.steps = append(chain.steps, indexStep)
+				current = next
+				continue
+			}
+			if current.Kind() != reflect.Struct {
 				return nil, nil, false
 			}
 			lookup := cachedPropertyLookup(current, step.Value)
@@ -924,7 +936,10 @@ func buildFastIndexAccessStep(current reflect.Type, step *compiler.FastPathStep)
 }
 
 func fastMapDirectKindFor(mapType reflect.Type, step *compiler.FastPathStep) fastMapDirectKind {
-	if mapType == nil || step == nil || step.Kind != compiler.FastPathStepIndexString || mapType.Kind() != reflect.Map || mapType.Key() != stringType {
+	if mapType == nil || step == nil || mapType.Kind() != reflect.Map || mapType.Key() != stringType {
+		return fastMapDirectNone
+	}
+	if step.Kind != compiler.FastPathStepIndexString && step.Kind != compiler.FastPathStepProperty {
 		return fastMapDirectNone
 	}
 	switch mapType.Elem() {
@@ -946,7 +961,7 @@ func fastAccessMapKeyValue(keyType reflect.Type, step *compiler.FastPathStep) (r
 	switch step.Kind {
 	case compiler.FastPathStepIndexInteger:
 		key = reflect.ValueOf(step.Index)
-	case compiler.FastPathStepIndexString:
+	case compiler.FastPathStepIndexString, compiler.FastPathStepProperty:
 		key = reflect.ValueOf(step.Value)
 	default:
 		return reflect.Value{}, false
@@ -954,10 +969,10 @@ func fastAccessMapKeyValue(keyType reflect.Type, step *compiler.FastPathStep) (r
 	if !key.IsValid() || keyType == nil {
 		return reflect.Value{}, false
 	}
-	if key.Type() != keyType {
+	if !key.Type().AssignableTo(keyType) {
 		if key.Type().ConvertibleTo(keyType) {
 			key = key.Convert(keyType)
-		} else if keyType.Kind() != reflect.Interface {
+		} else {
 			return reflect.Value{}, false
 		}
 	}

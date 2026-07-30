@@ -1524,10 +1524,11 @@ func Test_Static_Only_Bytecode_Includes_Scalar_Constants(t *testing.T) {
 
 func Test_Bytecode_Feature_Flags(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		hasHoles    bool
-		hasPartials bool
+		name             string
+		input            string
+		hasHoles         bool
+		hasPartials      bool
+		hasContextWrites bool
 	}{
 		{
 			name:  "plain",
@@ -1539,9 +1540,10 @@ func Test_Bytecode_Feature_Flags(t *testing.T) {
 			hasPartials: true,
 		},
 		{
-			name:        "partial alias",
-			input:       `<% let p = partial %><%= p("row") %>`,
-			hasPartials: true,
+			name:             "partial alias",
+			input:            `<% let p = partial %><%= p("row") %>`,
+			hasPartials:      true,
+			hasContextWrites: true,
 		},
 		{
 			name:     "hole",
@@ -1549,9 +1551,15 @@ func Test_Bytecode_Feature_Flags(t *testing.T) {
 			hasHoles: true,
 		},
 		{
-			name:        "partial in function",
-			input:       `<% let render = fn() { return partial("row") } %><%= render() %>`,
-			hasPartials: true,
+			name:             "partial in function",
+			input:            `<% let render = fn() { return partial("row") } %><%= render() %>`,
+			hasPartials:      true,
+			hasContextWrites: true,
+		},
+		{
+			name:             "branch scoped let",
+			input:            `<%= if (enabled) { %><% let lookup = {} %><%= lookup %><% } %>`,
+			hasContextWrites: true,
 		},
 	}
 
@@ -1566,8 +1574,21 @@ func Test_Bytecode_Feature_Flags(t *testing.T) {
 			bytecode := compiler.Bytecode()
 			require.Equal(t, tt.hasHoles, bytecode.HasHoles)
 			require.Equal(t, tt.hasPartials, bytecode.HasPartials)
+			require.Equal(t, tt.hasContextWrites, bytecode.HasContextWrites)
 		})
 	}
+}
+
+func Test_Fast_Render_Rejects_Block_Helper_Assignment(t *testing.T) {
+	program, err := parser.Parse(`<% let value = "before" %><%= run() { value = "after" } %><%= value %>`)
+	require.NoError(t, err)
+
+	compiler := New()
+	require.NoError(t, compiler.Compile(program))
+
+	bytecode := compiler.Bytecode()
+	require.Nil(t, bytecode.FastRenderPlan)
+	require.NotEmpty(t, bytecode.FastReject)
 }
 
 func Test_Mixed_Static_Runs_Are_Coalesced_Without_Marking_Template_Static(t *testing.T) {

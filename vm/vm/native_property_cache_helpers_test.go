@@ -33,6 +33,15 @@ func Test_VM_Property_Value_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, value)
 
+	nativeMap := map[string]interface{}{"Name": "<map>"}
+	value, err = machine.propertyValue(nativeMap, "Name", access, &nameSlot)
+	require.NoError(t, err)
+	require.Equal(t, "<map>", value)
+
+	value, err = machine.propertyValue(nativeMap, "Missing", access, &missingSlot)
+	require.NoError(t, err)
+	require.Nil(t, value)
+
 	value, err = machine.propertyValue(object.NullObject, "Name", access, &nameSlot)
 	require.NoError(t, err)
 	require.Nil(t, value)
@@ -89,6 +98,13 @@ func Test_VM_Get_Property_And_Field_Value_Branches(t *testing.T) {
 	require.Equal(t, &object.String{Value: "<hash>"}, machine.pop())
 
 	require.NoError(t, machine.getProperty(hash, "Missing", access, &missingSlot))
+	require.Same(t, Null, machine.pop())
+
+	nativeMap := map[string]interface{}{"Name": "<map>"}
+	require.NoError(t, machine.getProperty(&object.Native{Value: nativeMap}, "Name", access, &nameSlot))
+	require.Equal(t, &object.String{Value: "<map>"}, machine.pop())
+
+	require.NoError(t, machine.getProperty(&object.Native{Value: nativeMap}, "Missing", access, &missingSlot))
 	require.Same(t, Null, machine.pop())
 
 	require.NoError(t, machine.getProperty(object.NullObject, "Name", access, &nameSlot))

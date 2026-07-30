@@ -89,6 +89,18 @@ func Test_Parity_Partials_Data_Map_Helper_Call_Value(t *testing.T) {
 	}))
 }
 
+func Test_Parity_Partial_Assigns_Parent_Binding(t *testing.T) {
+	compareRender(t, `<%= if (currentRoute.PathName == "target") { %><% let lookup = {} %><%= partial("partials/lookup-file.html") %><%= lookup["primary"] %><% } %>`, contextWith(map[string]interface{}{
+		"currentRoute": struct {
+			PathName string
+		}{PathName: "target"},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/lookup-file.html", name)
+			return `<% lookup = {"primary": "current-id"} %>`, nil
+		},
+	}))
+}
+
 func Test_Parity_Phase_12_Partial_Java_Script_Escaping(t *testing.T) {
 	compareRender(t, `<%= partial("index.html") %>|<%= partial("index.js") %>|<%= partial("index") %>`, contextWith(map[string]interface{}{
 		"contentType": "application/javascript",
@@ -151,18 +163,20 @@ func Test_Phase_12_VM_Plush_Cache_Hole_Skeleton_For_Plush_Filenames(t *testing.T
 			defer rootplush.ClearTemplateCache()
 
 			ctx := rootplush.NewContextWith(map[string]interface{}{
-				"items": []string{"a", "b"},
+				"items":  []string{"a", "b"},
+				"suffix": "1",
 			})
 			ctx.Set(meta.TemplateFileKey, filename)
 
-			input := `<% let suffix = "1" %><%= items[0] %><%H suffix %><%= items[1] %>`
+			input := `<%= items[0] %><%H suffix %><%= items[1] %>`
 			out, err := vmplush.Render(input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a1b", out)
 			requireCacheKey(t, cache, rootplush.GenerateASTKey(filename))
 			requireCacheKey(t, cache, "full:"+filename)
 
-			out, err = vmplush.Render(`<% let suffix = "2" %><%= items[0] %><%H suffix %><%= items[1] %>`, ctx)
+			ctx.Set("suffix", "2")
+			out, err = vmplush.Render(input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a2b", out)
 		})

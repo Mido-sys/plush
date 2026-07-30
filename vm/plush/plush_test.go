@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	rootplush "github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/meta"
+	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
 	vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 	"github.com/stretchr/testify/require"
 )
@@ -102,6 +104,132 @@ func Test_Set_Fast_Helper_Custom_Bytecode_Path(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fast:7", out)
 	require.Zero(t, fallbackCalls)
+}
+
+func Test_Buffalo_Renderer_VM_Partial_Sees_Top_Level_Let_From_Layout(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+
+	data := map[string]interface{}{
+		"viewData": map[string]interface{}{
+			"Current": record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
+				},
+			},
+		},
+	}
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `<span class="token"><%= activeRecord.Attributes["primary"].Value.Text %></span>`, nil
+		},
+	}
+
+	out, err := rootplush.BuffaloRendererWithContext(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, data, helpers, nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "<span class=\"token\">#123456</span>")
+}
+
+func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+
+	input := `<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
+		},
+	}
+
+	for _, color := range []string{"#123456", "#abcdef"} {
+		data := map[string]interface{}{
+			"viewData": map[string]interface{}{
+				"Current": record{
+					Attributes: map[string]interface{}{
+						"primary": setting{Value: settingValue{Text: color}},
+					},
+				},
+			},
+		}
+		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+		})
+		require.NoError(t, err)
+		require.Contains(t, out, "color: "+color+";")
+	}
+}
+
+func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let_Alias_From_Config(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+	type pageConfig struct {
+		Current *record
+	}
+
+	input := `<% let layoutState = pageConfig %><% let activeRecord = layoutState.Current %><%= partial("partials/color-token.plush.html") %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
+		},
+	}
+
+	for _, color := range []string{"#123456", "#abcdef"} {
+		data := map[string]interface{}{
+			"pageConfig": &pageConfig{
+				Current: &record{
+					Attributes: map[string]interface{}{
+						"primary": setting{Value: settingValue{Text: color}},
+					},
+				},
+			},
+		}
+		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+		})
+		require.NoError(t, err)
+		require.Contains(t, out, "color: "+color+";")
+	}
 }
 
 func Test_Clear_Fast_Helper_Removes_Custom_Fast_Render(t *testing.T) {

@@ -1,6 +1,7 @@
 package plush_test
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -213,6 +214,70 @@ func Test_Buffalo_Renderer_With_Context_Configures_Context(t *testing.T) {
 	r.Equal(plush.RenderModeNameInterpreter, diagnostics.Mode)
 }
 
+func Test_Buffalo_Renderer_Copy_Back_Concurrent_Context_Keys(t *testing.T) {
+	r := require.New(t)
+	previous := plush.SetRenderMode(plush.RenderModeInterpreter)
+	defer plush.SetRenderMode(previous)
+
+	const workers = 32
+	const iterations = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	start := make(chan struct{})
+
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < iterations; i++ {
+				marker := fmt.Sprintf("buffalo_concurrent_marker_%d_%d", worker, i)
+				helper := fmt.Sprintf("buffalo_concurrent_helper_%d_%d", worker, i)
+				data := map[string]interface{}{
+					"name": marker,
+				}
+				helpers := map[string]interface{}{
+					helper: func() string {
+						return "helper"
+					},
+				}
+
+				rendered, err := plush.BuffaloRendererWithContext(`<% contentFor("name") { %>MD<% } %><%= name %>`, data, helpers, func(ctx *plush.Context) {
+					ctx.Set(marker, "configured")
+				})
+				if err != nil {
+					errs <- err
+					return
+				}
+				if rendered != marker {
+					errs <- fmt.Errorf("rendered %q, expected %q", rendered, marker)
+					return
+				}
+				if _, ok := data["contentFor:name"]; !ok {
+					errs <- fmt.Errorf("missing contentFor copy-back for %s", marker)
+					return
+				}
+				if data[marker] != "configured" {
+					errs <- fmt.Errorf("missing configured copy-back for %s", marker)
+					return
+				}
+				if _, ok := data[helper]; !ok {
+					errs <- fmt.Errorf("missing helper copy-back for %s", helper)
+					return
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		r.NoError(err)
+	}
+}
+
 func Test_Render_Diagnostics_VM_Hotspots_Header(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
@@ -392,7 +457,7 @@ func Test_Caching(t *testing.T) {
 
 	tc, err := plush.Parse("<%= a %>", fileCacheName)
 	r.NoError(err)
-	r.Equal(tc, template)
+	r.NotEqual(tc, template)
 
 	imC = nil
 	tc, err = plush.Parse("<%= a %>")

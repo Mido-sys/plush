@@ -1045,9 +1045,11 @@ func (vm *VM) executeWriteCall(name string, numArgs int, cacheSlot *object.Inlin
 		if handled || err != nil {
 			return err
 		}
-		handled, err = vm.tryFastWriteNativeCall(name, callee, numArgs, cacheSlot, true)
-		if handled || err != nil {
-			return err
+		if name != "partial" {
+			handled, err = vm.tryFastWriteNativeCall(name, callee, numArgs, cacheSlot, true)
+			if handled || err != nil {
+				return err
+			}
 		}
 		if err := vm.executeCallAfterSpend(name, numArgs, nil, cacheSlot); err != nil {
 			return err
@@ -1176,12 +1178,18 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 	rt := rv.Type()
 	plan := cachedCallPlanForSlot(rt, cacheSlot)
 	var scratch [1]reflect.Value
+	vm.lastHelperContext = nil
 	args, err := vm.reflectArgs(name, plan, numArgs, block, scratch[:0])
 	if err != nil {
 		return err
 	}
+	helperCtx := vm.lastHelperContext
 
 	res := rv.Call(args)
+	if helperCtx != nil {
+		vm.syncFrameBindingsFromContext(helperCtx)
+		vm.lastHelperContext = nil
+	}
 	vm.sp = vm.sp - numArgs - 1
 
 	if len(res) == 0 {
@@ -1201,8 +1209,10 @@ func (vm *VM) writeNativeCall(name string, callee object.Object, numArgs int, ca
 }
 
 func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, cacheSlot *object.InlineCacheSlot, calleeOnStack bool) error {
-	if handled, err := vm.tryFastWriteNativeValueCall(name, raw, numArgs, cacheSlot, calleeOnStack); handled || err != nil {
-		return err
+	if name != "partial" {
+		if handled, err := vm.tryFastWriteNativeValueCall(name, raw, numArgs, cacheSlot, calleeOnStack); handled || err != nil {
+			return err
+		}
 	}
 
 	rv := reflect.ValueOf(raw)
@@ -1219,12 +1229,18 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 	rt := rv.Type()
 	plan := cachedCallPlanForSlot(rt, cacheSlot)
 	var scratch [1]reflect.Value
+	vm.lastHelperContext = nil
 	args, err := vm.reflectArgs(name, plan, numArgs, nil, scratch[:0])
 	if err != nil {
 		return err
 	}
+	helperCtx := vm.lastHelperContext
 
 	res := rv.Call(args)
+	if helperCtx != nil {
+		vm.syncFrameBindingsFromContext(helperCtx)
+		vm.lastHelperContext = nil
+	}
 	vm.sp = vm.sp - numArgs
 	if calleeOnStack {
 		vm.sp--

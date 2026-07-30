@@ -460,6 +460,75 @@ func (vm *VM) assignName(nameIndex int, value object.Object) error {
 	return fmt.Errorf("%q: unknown identifier", name)
 }
 
+func (vm *VM) syncFrameBindingsFromContext(ctx hctx.Context) {
+	if vm == nil || ctx == nil {
+		return
+	}
+	for index, name := range vm.globalNames {
+		value, ok := fastContextValue(ctx, name)
+		if !ok {
+			continue
+		}
+		vm.ensureGlobal(index)
+		vm.globals[index] = object.Wrap(value)
+	}
+
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		return
+	}
+	for index, name := range frame.cl.Fn.LocalNames {
+		value, ok := fastContextValue(ctx, name)
+		if !ok {
+			continue
+		}
+		stackIndex := frame.basePointer + index
+		if stackIndex < 0 || stackIndex >= len(vm.stack) {
+			continue
+		}
+		vm.stack[stackIndex] = object.Wrap(value)
+	}
+}
+
+func (vm *VM) syncContextBindingsFromContext(target hctx.Context, source hctx.Context) {
+	if vm == nil || target == nil || source == nil || target == source {
+		return
+	}
+	for _, name := range vm.globalNames {
+		syncContextBinding(target, source, name)
+	}
+
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		return
+	}
+	for _, name := range frame.cl.Fn.LocalNames {
+		syncContextBinding(target, source, name)
+	}
+}
+
+func syncContextBinding(target hctx.Context, source hctx.Context, name string) {
+	if name == "" {
+		return
+	}
+	value, ok := fastContextValue(source, name)
+	if !ok {
+		return
+	}
+	if lookup, ok := target.(contextIDLookup); ok {
+		id := lookup.InternID(name)
+		if lookup.UpdateID(id, value) {
+			return
+		}
+		lookup.SetID(id, value)
+		return
+	}
+	if target.Update(name, value) {
+		return
+	}
+	target.Set(name, value)
+}
+
 func (vm *VM) updateNamedGlobal(globalIndex int, value object.Object) {
 	name, ok := vm.globalNames[globalIndex]
 	if !ok || vm.ctx == nil {
@@ -504,6 +573,19 @@ func (vm *VM) getProperty(obj object.Object, name string, access object.Property
 			return vm.push(Null)
 		}
 		rv = rv.Elem()
+	}
+
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return vm.push(Null)
+			}
+			if !value.CanInterface() {
+				return fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return vm.push(object.Wrap(value.Interface()))
+		}
 	}
 
 	lookup := inlinePropertyLookup(cacheSlot, rv.Type(), name)
@@ -568,6 +650,19 @@ func (vm *VM) propertyValue(base interface{}, name string, access object.Propert
 		rv = rv.Elem()
 	}
 
+	if !access.Method && rv.Kind() == reflect.Map {
+		value, found, handled := reflectMapStringKeyValue(rv, name)
+		if handled {
+			if !found {
+				return nil, nil
+			}
+			if !value.CanInterface() {
+				return nil, fieldAccessError(access.Receiver, access.Full, name)
+			}
+			return value.Interface(), nil
+		}
+	}
+
 	lookup := inlinePropertyLookup(cacheSlot, rv.Type(), name)
 	switch lookup.kind {
 	case propertyLookupValueMethod:
@@ -600,6 +695,28 @@ func (vm *VM) propertyValue(base interface{}, name string, access object.Propert
 	}
 
 	return nil, propertyMissingError(access, base, name)
+}
+
+func reflectMapStringKeyValue(rv reflect.Value, name string) (reflect.Value, bool, bool) {
+	if !rv.IsValid() || rv.Kind() != reflect.Map {
+		return reflect.Value{}, false, false
+	}
+
+	key := reflect.ValueOf(name)
+	keyType := rv.Type().Key()
+	if !key.Type().AssignableTo(keyType) {
+		if key.Type().ConvertibleTo(keyType) {
+			key = key.Convert(keyType)
+		} else {
+			return reflect.Value{}, false, false
+		}
+	}
+
+	value := rv.MapIndex(key)
+	if !value.IsValid() {
+		return reflect.Value{}, false, true
+	}
+	return value, true, true
 }
 
 func inlinePropertyLookup(slot *object.InlineCacheSlot, rt reflect.Type, name string) propertyLookup {

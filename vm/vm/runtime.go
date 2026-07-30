@@ -343,7 +343,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 			defer restorePartial()
 		}
 		forceCacheClear := false
-		if cachedBytecode.HasHoles {
+		if cachedBytecode.HasHoles && bytecodeCanUsePunchHoleCache(cachedBytecode) {
 			var cached string
 			var ok bool
 			filename, forceCacheClear, cached, ok = punchHoleCacheStateForFilename(filename, ctx, cacheSource)
@@ -519,7 +519,7 @@ func renderBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, erro
 	}
 
 	forceCacheClear := false
-	if bytecode == nil || bytecode.HasHoles {
+	if bytecode == nil || bytecodeCanUsePunchHoleCache(bytecode) && bytecode.HasHoles {
 		var cached string
 		var ok bool
 		filename, forceCacheClear, cached, ok = punchHoleCacheState(ctx)
@@ -576,11 +576,17 @@ func renderBytecodeVMWithState(bytecode *compiler.Bytecode, ctx hctx.Context, fi
 	}
 
 	holes = plush.FinalizePunchHolePositions(rendered, holes)
-	plush.CachePunchHoleSkeletonWithSource(filename, ctx, rendered, holes, forceCacheClear, source)
+	if bytecodeCanUsePunchHoleCache(bytecode) {
+		plush.CachePunchHoleSkeletonWithSource(filename, ctx, rendered, holes, forceCacheClear, source)
+	}
 	if plush.IsHoleRender(ctx) {
 		return rendered, nil
 	}
 
 	holes = plush.RenderPunchHolesConcurrentlyWith(holes, ctx, Render)
 	return plush.FillPunchHoles(rendered, holes)
+}
+
+func bytecodeCanUsePunchHoleCache(bytecode *compiler.Bytecode) bool {
+	return bytecode == nil || !bytecode.HasContextWrites
 }

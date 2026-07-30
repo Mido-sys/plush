@@ -616,8 +616,9 @@ func fastValuePlanSummary(value FastValuePlan) string {
 }
 
 type bytecodeFeatures struct {
-	HasHoles    bool
-	HasPartials bool
+	HasHoles         bool
+	HasPartials      bool
+	HasContextWrites bool
 }
 
 // bytecodeFeaturesFromInstructions records features that affect whether a fast
@@ -661,9 +662,14 @@ func scanInstructionFeatures(instructions code.Instructions, constants []object.
 			return features
 		}
 
-		switch op {
-		case code.OpHole:
+		if op == code.OpHole {
 			features.HasHoles = true
+		}
+		switch op {
+		case code.OpSetGlobal, code.OpSetLocal, code.OpSetName, code.OpAssignName, code.OpSetIndex:
+			features.HasContextWrites = true
+		}
+		switch op {
 		case code.OpGetName, code.OpGetNameOrNull, code.OpSetName, code.OpAssignName,
 			code.OpWriteName, code.OpWriteNameOrNull:
 			if len(operands) > 0 && stringConstantEquals(constants, operands[0], "partial") {
@@ -679,7 +685,7 @@ func scanInstructionFeatures(instructions code.Instructions, constants []object.
 			}
 		}
 
-		if features.HasHoles && features.HasPartials {
+		if features.HasHoles && features.HasPartials && features.HasContextWrites {
 			return features
 		}
 		i += 1 + read
@@ -695,6 +701,7 @@ func stringConstantEquals(constants []object.Object, index int, want string) boo
 func (f *bytecodeFeatures) merge(other bytecodeFeatures) {
 	f.HasHoles = f.HasHoles || other.HasHoles
 	f.HasPartials = f.HasPartials || other.HasPartials
+	f.HasContextWrites = f.HasContextWrites || other.HasContextWrites
 }
 
 func appendFastStatements(plan *FastRenderPlan, segments *[]FastRenderSegment, statements []ast.Statement) bool {

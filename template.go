@@ -12,14 +12,15 @@ import (
 // Template represents an input and helpers to be used
 // to evaluate and render the input.
 type Template struct {
-	Input      string
-	Program    *ast.Program
-	PunchHole  []HoleMarker
-	Skeleton   string
-	VMBytecode interface{}
-	SourceHash string
-	IsCache    bool
-	LastCached time.Time
+	Input            string
+	Program          *ast.Program
+	PunchHole        []HoleMarker
+	Skeleton         string
+	VMBytecode       interface{}
+	SourceHash       string
+	HasContextWrites bool
+	IsCache          bool
+	LastCached       time.Time
 }
 
 // NewTemplate from the input string. Adds all of the
@@ -52,6 +53,7 @@ func (t *Template) Parse() error {
 	}
 
 	t.Program = program
+	t.HasContextWrites = programHasContextWrites(program)
 	return nil
 }
 
@@ -74,10 +76,11 @@ func (t *Template) Exec(ctx hctx.Context) (string, []HoleMarker, error) {
 // Clone a template. This is useful for defining helpers on per "instance" of the template.
 func (t *Template) Clone() *Template {
 	t2 := &Template{
-		Input:      t.Input,
-		Program:    t.Program,
-		VMBytecode: t.VMBytecode,
-		SourceHash: t.SourceHash,
+		Input:            t.Input,
+		Program:          t.Program,
+		VMBytecode:       t.VMBytecode,
+		SourceHash:       t.SourceHash,
+		HasContextWrites: t.HasContextWrites,
 	}
 	return t2
 }

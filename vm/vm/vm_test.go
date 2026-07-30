@@ -913,7 +913,7 @@ func Test_VM_Compile_And_Render_Error_Branches(t *testing.T) {
 			Right:    &ast.Boolean{Value: true},
 		}},
 	}}
-	plush.CacheVMBytecodeForCleanFilename(filename, badProgram, "not-bytecode")
+	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, badProgram, "not-bytecode", `<%= true %>`)
 	ctx := plush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
@@ -1595,6 +1595,69 @@ func Test_VM_Fast_Loop_Partial_Sees_Current_Loop_Value(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `<span>Pizza</span><span>Pasta</span>`, out)
 	require.False(t, ctx.Has("product"))
+}
+
+func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"viewData": map[string]interface{}{
+			"Current": record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
+				},
+			},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `<span class="token"><%= activeRecord.Attributes["primary"].Value.Text %></span>`, nil
+		},
+	})
+
+	out, err := Render(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, "<span class=\"token\">#123456</span>")
+}
+
+func Test_VM_Partial_Sees_Top_Level_Let_Alias_From_Pointer_Config(t *testing.T) {
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+	type pageConfig struct {
+		Current *record
+	}
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"pageConfig": &pageConfig{
+			Current: &record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
+				},
+			},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
+		},
+	})
+
+	out, err := Render(`<% let layoutState = pageConfig %><% let activeRecord = layoutState.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, "color: #123456;")
 }
 
 func Test_VM_Partial_Render_Binding_Plan_Keeps_Data_Values_Live(t *testing.T) {
@@ -2308,6 +2371,55 @@ func Test_VM_Fast_String_Indexed_Access_Chain_Plan_Writes_Nested_Map_Struct_Outp
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `&lt;Bender&gt;`, out)
+}
+
+func Test_VM_Fast_Property_Access_Chain_Plan_Writes_Map_Output(t *testing.T) {
+	type schema struct {
+		Name string
+	}
+
+	tmpl, err := Compile(`<%= layouts.Current.Name %>|<%= any.Current %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
+	mixed := prepareFastMixedPlan(tmpl.bytecode.FastRenderPlan)
+	require.NotNil(t, mixed)
+	require.Len(t, mixed.ops, 2)
+
+	schemaPlan := &compiler.FastValuePlan{
+		Kind: compiler.FastValuePath,
+		Path: []compiler.FastPathStep{
+			{Kind: compiler.FastPathStepProperty, Value: "Current"},
+			{Kind: compiler.FastPathStepProperty, Value: "Name"},
+		},
+	}
+	schemaChain, ok := fastAccessChainPlanFor(schemaPlan, reflect.TypeOf(map[string]schema{}))
+	require.True(t, ok)
+	require.Len(t, schemaChain.steps, 2)
+	require.Equal(t, fastAccessStepIndex, schemaChain.steps[0].kind)
+	require.Equal(t, "Current", schemaChain.steps[0].mapKey.Interface())
+	require.Equal(t, fastAccessStepField, schemaChain.steps[1].kind)
+
+	interfacePlan := &compiler.FastValuePlan{
+		Kind: compiler.FastValuePath,
+		Path: []compiler.FastPathStep{
+			{Kind: compiler.FastPathStepProperty, Value: "Current"},
+		},
+	}
+	interfaceChain, ok := fastAccessChainPlanFor(interfacePlan, reflect.TypeOf(map[string]interface{}{}))
+	require.True(t, ok)
+	require.Len(t, interfaceChain.steps, 1)
+	require.Equal(t, fastAccessStepIndex, interfaceChain.steps[0].kind)
+	require.Equal(t, "Current", interfaceChain.steps[0].mapKey.Interface())
+	require.Equal(t, fastMapDirectStringInterface, interfaceChain.steps[0].mapDirect)
+
+	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
+		"layouts": map[string]schema{
+			"Current": {Name: "<schema>"},
+		},
+		"any": map[string]interface{}{"Current": "<any>"},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, `&lt;schema&gt;|&lt;any&gt;`, out)
 }
 
 func Test_VM_Fast_String_Indexed_Access_Chain_Plan_Handles_Interface_Map_Keys(t *testing.T) {

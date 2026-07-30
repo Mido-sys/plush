@@ -174,7 +174,7 @@ func Test_VM_Partial_Remaining_Error_Branches(t *testing.T) {
 	require.ErrorContains(t, err, "expected fileKey to be a string")
 
 	badLinkFile := "edge_partial_compile_error.plush"
-	plush.CacheVMBytecodeForCleanFilename(badLinkFile, vmCoverageBadProgram(), "not-bytecode")
+	plush.CacheVMBytecodeForCleanFilenameWithSource(badLinkFile, vmCoverageBadProgram(), "not-bytecode", "ignored")
 	_, err = partialBytecodeLinkForInput("ignored", badLinkFile, plush.NewContext())
 	require.ErrorContains(t, err, "unknown operator ??")
 
@@ -206,7 +206,7 @@ func Test_VM_Partial_Remaining_Error_Branches(t *testing.T) {
 	require.ErrorContains(t, err, "line 44")
 
 	inlineErrorName := "edge_no_data_inline_compile_error.plush"
-	plush.CacheVMBytecodeForCleanFilename(inlineErrorName, vmCoverageBadProgram(), "not-bytecode")
+	plush.CacheVMBytecodeForCleanFilenameWithSource(inlineErrorName, vmCoverageBadProgram(), "not-bytecode", "ignored")
 	noDataCtx := plush.NewContextWith(map[string]interface{}{
 		vmPartialFeederName: func(string) (string, error) { return "ignored", nil },
 	})
@@ -223,7 +223,8 @@ func Test_VM_Partial_Remaining_Error_Branches(t *testing.T) {
 	require.ErrorContains(t, err, "line 56")
 
 	slowInlineErrorName := "edge_no_data_slow_inline_error.plush"
-	plush.CacheVMBytecodeForCleanFilename(slowInlineErrorName, nil, &compiler.Bytecode{
+	slowInlineErrorSource := "ignored"
+	plush.CacheVMBytecodeForCleanFilenameWithSource(slowInlineErrorName, nil, &compiler.Bytecode{
 		FastRenderPlan: &compiler.FastRenderPlan{
 			Bindings: []string{meta.TemplateFileKey, "missing"},
 			Segments: []compiler.FastRenderSegment{{
@@ -233,9 +234,9 @@ func Test_VM_Partial_Remaining_Error_Branches(t *testing.T) {
 				Line:      58,
 			}},
 		},
-	})
+	}, slowInlineErrorSource)
 	slowInlineCtx := plush.NewContextWith(map[string]interface{}{
-		vmPartialFeederName: func(string) (string, error) { return "ignored", nil },
+		vmPartialFeederName: func(string) (string, error) { return slowInlineErrorSource, nil },
 	})
 	handled, err = renderFastNoDataPartialInto(&strings.Builder{}, slowInlineErrorName, slowInlineCtx, 58)
 	require.True(t, handled)
@@ -270,7 +271,7 @@ func Test_VM_Partial_Remaining_Error_Branches(t *testing.T) {
 }
 
 func partialCompileErrorContext(filename string) hctx.Context {
-	plush.CacheVMBytecodeForCleanFilename(filename, vmCoverageBadProgram(), "not-bytecode")
+	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, vmCoverageBadProgram(), "not-bytecode", "ignored")
 	ctx := plush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 	return ctx
@@ -306,12 +307,12 @@ func Test_VM_Native_Call_Remaining_Edge_Branches(t *testing.T) {
 	rawArgs := fastCallArgs{}
 	rawArgs.Append("extra")
 	_, err = fastReflectArgsInto("tooMany", &callPlan{numIn: 0}, &rawArgs, plush.NewContext(), nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "tooMany: too many arguments (1 for 0)")
 
 	machine = newRuntimeHelperTestVM(plush.NewContext())
 	require.NoError(t, machine.push(&object.String{Value: "extra"}))
 	_, err = machine.reflectArgs("tooMany", &callPlan{numIn: 0}, 1, nil, nil)
-	require.ErrorContains(t, err, "too many arguments")
+	require.ErrorContains(t, err, "tooMany: too many arguments (1 for 0)")
 
 	badValue := 7
 	require.ErrorContains(t, machine.writeNativeValueCall("badPointer", &badValue, 0, nil, false), "invalid function")
