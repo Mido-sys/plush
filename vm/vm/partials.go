@@ -460,6 +460,7 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 	if err := spendFastSubRender(ctx, partial.Line); err != nil {
 		return true, err
 	}
+	defer bindings.syncLocalValuesFromContext()
 	start := time.Now()
 	defer func() {
 		plush.AddRenderDiagnosticVMPartialTiming(ctx, partial.Name, time.Since(start))

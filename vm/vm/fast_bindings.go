@@ -143,6 +143,28 @@ func (b *fastRenderBindings) setLocalAndContext(index int, value interface{}) {
 	b.ctx.Set(b.names[index], value)
 }
 
+func (b fastRenderBindings) syncLocalValuesFromContext() {
+	if b.ctx == nil || len(b.localOK) == 0 || len(b.localVals) == 0 {
+		return
+	}
+	for i, ok := range b.localOK {
+		if !ok || i >= len(b.localVals) || i >= len(b.names) {
+			continue
+		}
+		if id, hasID := b.bindingID(i); hasID {
+			if lookup, ok := b.ctx.(contextIDLookup); ok {
+				if value, ok := lookup.LookupID(id); ok {
+					b.localVals[i] = value
+					continue
+				}
+			}
+		}
+		if value, ok := fastContextValue(b.ctx, b.names[i]); ok {
+			b.localVals[i] = value
+		}
+	}
+}
+
 func (b fastRenderBindings) bindingID(index int) (int, bool) {
 	if index < 0 || index >= len(b.names) {
 		return 0, false

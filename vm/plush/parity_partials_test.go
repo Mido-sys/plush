@@ -89,6 +89,18 @@ func Test_Parity_Partials_Data_Map_Helper_Call_Value(t *testing.T) {
 	}))
 }
 
+func Test_Parity_Partial_Assigns_Parent_Binding(t *testing.T) {
+	compareRender(t, `<%= if (currentRoute.PathName == "target") { %><% let lookup = {} %><%= partial("partials/lookup-file.html") %><%= lookup["primary"] %><% } %>`, contextWith(map[string]interface{}{
+		"currentRoute": struct {
+			PathName string
+		}{PathName: "target"},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/lookup-file.html", name)
+			return `<% lookup = {"primary": "current-id"} %>`, nil
+		},
+	}))
+}
+
 func Test_Parity_Phase_12_Partial_Java_Script_Escaping(t *testing.T) {
 	compareRender(t, `<%= partial("index.html") %>|<%= partial("index.js") %>|<%= partial("index") %>`, contextWith(map[string]interface{}{
 		"contentType": "application/javascript",

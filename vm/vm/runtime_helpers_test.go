@@ -1176,6 +1176,36 @@ func Test_VM_Runtime_Punch_Hole_Cache_Does_Not_Skip_Parent_Let_Bindings(t *testi
 	}
 }
 
+func Test_VM_Runtime_Punch_Hole_Cache_Does_Not_Replay_Branch_Let_Partial_Assignment(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	source := `<%= if (currentRoute.PathName == "target") { %><% let registry = {} %><%= partial("partials/registry-file.html") %><%= registry["primary"] %><%H "!" %><% } %>`
+	filename := "runtime_branch_partial_assignment_hole.plush"
+
+	for _, id := range []string{"first-id", "second-id"} {
+		ctx := plush.NewContextWith(map[string]interface{}{
+			"currentRoute": struct {
+				PathName string
+			}{PathName: "target"},
+			"entryID": id,
+			"partialFeeder": func(name string) (string, error) {
+				require.Equal(t, "partials/registry-file.html", name)
+				return `<% registry = {"primary": entryID} %>`, nil
+			},
+		})
+		ctx.Set(meta.TemplateFileKey, filename)
+
+		rendered, err := Render(source, ctx)
+		require.NoError(t, err)
+		require.Equal(t, id+"!", rendered)
+	}
+}
+
 func Test_VM_Source_Bytecode_Cache_Is_Bounded(t *testing.T) {
 	cache := newSourceBytecodeCache(2)
 	first := &compiler.Bytecode{Static: true, StaticOutput: "first"}

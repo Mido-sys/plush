@@ -666,7 +666,7 @@ func scanInstructionFeatures(instructions code.Instructions, constants []object.
 			features.HasHoles = true
 		}
 		switch op {
-		case code.OpSetGlobal, code.OpSetName, code.OpAssignName, code.OpSetIndex:
+		case code.OpSetGlobal, code.OpSetLocal, code.OpSetName, code.OpAssignName, code.OpSetIndex:
 			features.HasContextWrites = true
 		}
 		switch op {

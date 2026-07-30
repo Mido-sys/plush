@@ -56,6 +56,8 @@ type VM struct {
 	lastIP     int
 	halted     bool
 
+	lastHelperContext hctx.Context
+
 	pooled     bool
 	ownGlobals bool
 	ownHoles   bool

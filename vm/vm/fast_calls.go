@@ -124,7 +124,12 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 		return err
 	}
 	helperCtx := plush.NewHelperContext(ctx, func(blockCtx hctx.Context) (string, error) {
-		return renderFastBlockCallBytecode(call, fastBlockContext(blockCtx, bindings))
+		scoped := fastBlockContext(blockCtx, bindings)
+		rendered, err := renderFastBlockCallBytecode(call, scoped)
+		scopedBindings := bindings
+		scopedBindings.ctx = scoped
+		scopedBindings.syncLocalValuesFromContext()
+		return rendered, err
 	})
 	if err := writeFastBlockCallValue(out, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
 		return fastLineError(call.Line, err)
@@ -149,7 +154,12 @@ func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings
 		return err
 	}
 	helperCtx := plush.NewHelperContext(ctx, func(blockCtx hctx.Context) (string, error) {
-		return renderFastBlockCallBytecode(call, fastLoopBlockContext(blockCtx, bindings, loop, loopKey, loopValue))
+		scoped := fastLoopBlockContext(blockCtx, bindings, loop, loopKey, loopValue)
+		rendered, err := renderFastBlockCallBytecode(call, scoped)
+		scopedBindings := bindings
+		scopedBindings.ctx = scoped
+		scopedBindings.syncLocalValuesFromContext()
+		return rendered, err
 	})
 	if err := writeFastBlockCallValue(out, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
 		return fastLineError(call.Line, err)

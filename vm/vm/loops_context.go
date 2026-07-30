@@ -460,6 +460,75 @@ func (vm *VM) assignName(nameIndex int, value object.Object) error {
 	return fmt.Errorf("%q: unknown identifier", name)
 }
 
+func (vm *VM) syncFrameBindingsFromContext(ctx hctx.Context) {
+	if vm == nil || ctx == nil {
+		return
+	}
+	for index, name := range vm.globalNames {
+		value, ok := fastContextValue(ctx, name)
+		if !ok {
+			continue
+		}
+		vm.ensureGlobal(index)
+		vm.globals[index] = object.Wrap(value)
+	}
+
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		return
+	}
+	for index, name := range frame.cl.Fn.LocalNames {
+		value, ok := fastContextValue(ctx, name)
+		if !ok {
+			continue
+		}
+		stackIndex := frame.basePointer + index
+		if stackIndex < 0 || stackIndex >= len(vm.stack) {
+			continue
+		}
+		vm.stack[stackIndex] = object.Wrap(value)
+	}
+}
+
+func (vm *VM) syncContextBindingsFromContext(target hctx.Context, source hctx.Context) {
+	if vm == nil || target == nil || source == nil || target == source {
+		return
+	}
+	for _, name := range vm.globalNames {
+		syncContextBinding(target, source, name)
+	}
+
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		return
+	}
+	for _, name := range frame.cl.Fn.LocalNames {
+		syncContextBinding(target, source, name)
+	}
+}
+
+func syncContextBinding(target hctx.Context, source hctx.Context, name string) {
+	if name == "" {
+		return
+	}
+	value, ok := fastContextValue(source, name)
+	if !ok {
+		return
+	}
+	if lookup, ok := target.(contextIDLookup); ok {
+		id := lookup.InternID(name)
+		if lookup.UpdateID(id, value) {
+			return
+		}
+		lookup.SetID(id, value)
+		return
+	}
+	if target.Update(name, value) {
+		return
+	}
+	target.Set(name, value)
+}
+
 func (vm *VM) updateNamedGlobal(globalIndex int, value object.Object) {
 	name, ok := vm.globalNames[globalIndex]
 	if !ok || vm.ctx == nil {

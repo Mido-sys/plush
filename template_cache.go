@@ -126,7 +126,7 @@ func cacheVMBytecodeWithKey(key string, program *ast.Program, bytecode interface
 		t.HasContextWrites = programHasContextWrites(program)
 	}
 	if reporter, ok := bytecode.(contextWriteReporter); ok {
-		t.HasContextWrites = reporter.ContextWrites()
+		t.HasContextWrites = t.HasContextWrites || reporter.ContextWrites()
 	}
 	t.Input = ""
 	t.VMBytecode = bytecode

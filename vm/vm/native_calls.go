@@ -542,6 +542,7 @@ func (vm *VM) optionalArg(kind optionalArgKind, expected reflect.Type, block *ob
 	switch kind {
 	case optionalArgHelperContext:
 		hargs := vm.helperContext(block)
+		vm.lastHelperContext = hargs.Context
 		value := reflect.ValueOf(hargs)
 		if value.Type().AssignableTo(expected) {
 			return value, true
@@ -602,6 +603,8 @@ func (vm *VM) runBlock(block *object.Closure, ctx hctx.Context) (string, error) 
 	if err := child.Run(); err != nil {
 		return "", child.wrapRuntimeError(err)
 	}
+	vm.syncContextBindingsFromContext(ctx, blockCtx)
+	vm.syncFrameBindingsFromContext(blockCtx)
 	if !object.IsNull(child.lastPopped) && child.lastPopped != nil {
 		return child.renderObject(child.lastPopped), nil
 	}
