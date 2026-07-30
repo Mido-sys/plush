@@ -285,8 +285,8 @@ func CachePunchHoleSkeletonWithSource(filename string, ctx hctx.Context, skeleto
 		}
 	}
 	astKey := GenerateASTKeyFromCleanFilename(filename)
-	if _, ok := templateCacheBackend.Get(astKey); !ok {
-		templateCacheBackend.Set(astKey, &Template{IsCache: false})
+	if astTemplate, ok := templateCacheBackend.Get(astKey); !ok || !templateSourceMatches(astTemplate, sourceHash) {
+		templateCacheBackend.Set(astKey, &Template{IsCache: false, SourceHash: sourceHash})
 	}
 	templateCacheBackend.Set(generateFullKeyFromCleanFilename(filename, ctx), &Template{
 		Skeleton:   skeleton,

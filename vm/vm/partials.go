@@ -908,17 +908,6 @@ func directPartialBytecodeLinkForName(name string, filename string, ctx hctx.Con
 		}
 		return nil, false, nil
 	}
-	if plush.IsPlushTemplateFile(filename) {
-		if cached, ok := plush.CachedVMBytecodeForCleanFilename(filename); ok {
-			if bytecode, ok := cached.(*compiler.Bytecode); ok {
-				link := links.Set(linkKey, 0, bytecode)
-				if directPartialBytecodeLinkCanRender(bytecode) {
-					return link, true, nil
-				}
-				return nil, false, nil
-			}
-		}
-	}
 	return directPartialBytecodeLinkFromFeeder(name, filename, ctx)
 }
 

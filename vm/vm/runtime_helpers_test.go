@@ -1051,14 +1051,14 @@ func Test_VM_Runtime_Render_Cache_And_Error_Branches(t *testing.T) {
 
 	staticCtx := plush.NewContext()
 	staticCtx.Set(meta.TemplateFileKey, "runtime_static.plush")
-	plush.CacheVMBytecodeForCleanFilename("runtime_static.plush", nil, &compiler.Bytecode{Static: true, StaticOutput: "cached static"})
+	plush.CacheVMBytecodeForCleanFilenameWithSource("runtime_static.plush", nil, &compiler.Bytecode{Static: true, StaticOutput: "cached static"}, "ignored")
 	rendered, err = Render("ignored", staticCtx)
 	require.NoError(t, err)
 	require.Equal(t, "cached static", rendered)
 
 	cachedProgram, err := parser.Parse("cached ast")
 	require.NoError(t, err)
-	plush.CacheVMBytecodeForCleanFilename("runtime_ast.plush", cachedProgram, &compiler.Bytecode{Static: true, StaticOutput: "cached ast"})
+	plush.CacheVMBytecodeForCleanFilenameWithSource("runtime_ast.plush", cachedProgram, &compiler.Bytecode{Static: true, StaticOutput: "cached ast"}, "ignored")
 	parsedProgram, parsedCachedProgram, err := parseProgram("ignored", "runtime_ast.plush", plush.NewContext())
 	require.NoError(t, err)
 	require.Same(t, cachedProgram, parsedProgram)
@@ -1068,7 +1068,7 @@ func Test_VM_Runtime_Render_Cache_And_Error_Branches(t *testing.T) {
 	require.NoError(t, err)
 	fastCtx := plush.NewContextWith(map[string]interface{}{"name": "Mido"})
 	fastCtx.Set(meta.TemplateFileKey, "runtime_fast.plush")
-	plush.CacheVMBytecodeForCleanFilename("runtime_fast.plush", nil, fastTemplate.bytecode)
+	plush.CacheVMBytecodeForCleanFilenameWithSource("runtime_fast.plush", nil, fastTemplate.bytecode, "ignored")
 	rendered, err = Render("ignored", fastCtx)
 	require.NoError(t, err)
 	require.Equal(t, "Mido", rendered)
@@ -1082,7 +1082,7 @@ func Test_VM_Runtime_Render_Cache_And_Error_Branches(t *testing.T) {
 		"partial": plush.PartialHelper,
 	})
 	dynamicCtx.Set(meta.TemplateFileKey, "runtime_dynamic.plush")
-	plush.CacheVMBytecodeForCleanFilename("runtime_dynamic.plush", nil, dynamicTemplate.bytecode)
+	plush.CacheVMBytecodeForCleanFilenameWithSource("runtime_dynamic.plush", nil, dynamicTemplate.bytecode, "ignored")
 	rendered, err = Render("ignored", dynamicCtx)
 	require.NoError(t, err)
 	require.Equal(t, "Leela", rendered)
@@ -1115,6 +1115,37 @@ func Test_VM_Runtime_Render_No_Filename_Uses_Source_Bytecode_Cache(t *testing.T)
 	require.True(t, ok)
 	require.Equal(t, plush.VMBytecodeCacheHitSource, secondDiagnostics.VMBytecodeCache)
 	require.Equal(t, plush.RenderFastPathFast, secondDiagnostics.FastPath)
+}
+
+func Test_VM_Runtime_Source_Render_Ignores_Source_Blind_Stale_Bytecode(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	staleTemplate, err := Compile(`<%= partial("partials/status.plush.html") %>`)
+	require.NoError(t, err)
+	plush.CacheVMBytecodeForCleanFilename("templates/application.plush.html", nil, staleTemplate.bytecode)
+
+	type panel struct {
+		Title string
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"viewData": struct {
+			Current panel
+		}{Current: panel{Title: "ready"}},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/status.plush.html", name)
+			return `<section><%= activePanel.Title %></section>`, nil
+		},
+	})
+	ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+
+	rendered, err := Render(`<% let activePanel = viewData.Current %><%= partial("partials/status.plush.html") %>`, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<section>ready</section>", rendered)
 }
 
 func Test_VM_Source_Bytecode_Cache_Is_Bounded(t *testing.T) {
@@ -1153,7 +1184,7 @@ func Test_VM_Runtime_Render_Returns_Cached_Punch_Hole_Skeleton_Before_Compile(t 
 	holes := []plush.HoleMarker{
 		plush.NewHoleMarker(plush.PunchHoleMarkerName(0), `<%= name %>`, 1, 15),
 	}
-	plush.CachePunchHoleSkeleton("runtime_cached_hole.plush", ctx, "A<PLUSH_HOLE_0>B", holes, true)
+	plush.CachePunchHoleSkeletonWithSource("runtime_cached_hole.plush", ctx, "A<PLUSH_HOLE_0>B", holes, true, "ignored")
 
 	rendered, err := Render("ignored", ctx)
 	require.NoError(t, err)
@@ -1208,7 +1239,7 @@ func Test_VM_Runtime_Render_Uses_Post_Preprocess_Bytecode_Cache(t *testing.T) {
 			if setter, ok := tt.ctx.(interface{ Set(string, interface{}) }); ok {
 				setter.Set(meta.TemplateFileKey, filename)
 			}
-			rendered, err := Render("ignored", tt.ctx)
+			rendered, err := Render("", tt.ctx)
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, rendered)
 			require.GreaterOrEqual(t, cache.gets, 3)

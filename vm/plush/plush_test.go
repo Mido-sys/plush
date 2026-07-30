@@ -111,37 +111,34 @@ func Test_Buffalo_Renderer_VM_Partial_Sees_Top_Level_Let_From_Layout(t *testing.
 	defer rootplush.SetRenderMode(previous)
 
 	type settingValue struct {
-		StringVar string
+		Text string
 	}
 	type setting struct {
-		ValueType settingValue
+		Value settingValue
 	}
-	type globalSchema struct {
-		GlobalSettings map[string]interface{}
+	type record struct {
+		Attributes map[string]interface{}
 	}
 
 	data := map[string]interface{}{
-		"schemaLayoutsAndSettings": map[string]interface{}{
-			"Current": globalSchema{
-				GlobalSettings: map[string]interface{}{
-					"main_col": setting{ValueType: settingValue{StringVar: "#123456"}},
+		"viewData": map[string]interface{}{
+			"Current": record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
 				},
 			},
 		},
 	}
 	helpers := map[string]interface{}{
 		"partialFeeder": func(name string) (string, error) {
-			require.Equal(t, "sections/global-styling.plush.html", name)
-			return `#bread-crumb .container a h1{
-color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;
- font-family: Poppins, sans-serif !important;
-}`, nil
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `<span class="token"><%= activeRecord.Attributes["primary"].Value.Text %></span>`, nil
 		},
 	}
 
-	out, err := rootplush.BuffaloRendererWithContext(`<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`, data, helpers, nil)
+	out, err := rootplush.BuffaloRendererWithContext(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, data, helpers, nil)
 	require.NoError(t, err)
-	require.Contains(t, out, "color: #123456 !important;")
+	require.Contains(t, out, "<span class=\"token\">#123456</span>")
 }
 
 func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testing.T) {
@@ -153,29 +150,29 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testin
 	defer rootplush.ClearTemplateCache()
 
 	type settingValue struct {
-		StringVar string
+		Text string
 	}
 	type setting struct {
-		ValueType settingValue
+		Value settingValue
 	}
-	type globalSchema struct {
-		GlobalSettings map[string]interface{}
+	type record struct {
+		Attributes map[string]interface{}
 	}
 
-	input := `<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`
+	input := `<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`
 	helpers := map[string]interface{}{
 		"partialFeeder": func(name string) (string, error) {
-			require.Equal(t, "sections/global-styling.plush.html", name)
-			return `color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;`, nil
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
 		},
 	}
 
 	for _, color := range []string{"#123456", "#abcdef"} {
 		data := map[string]interface{}{
-			"schemaLayoutsAndSettings": map[string]interface{}{
-				"Current": globalSchema{
-					GlobalSettings: map[string]interface{}{
-						"main_col": setting{ValueType: settingValue{StringVar: color}},
+			"viewData": map[string]interface{}{
+				"Current": record{
+					Attributes: map[string]interface{}{
+						"primary": setting{Value: settingValue{Text: color}},
 					},
 				},
 			},
@@ -184,7 +181,54 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testin
 			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
 		})
 		require.NoError(t, err)
-		require.Contains(t, out, "color: "+color+" !important;")
+		require.Contains(t, out, "color: "+color+";")
+	}
+}
+
+func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let_Alias_From_Config(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+	type pageConfig struct {
+		Current *record
+	}
+
+	input := `<% let layoutState = pageConfig %><% let activeRecord = layoutState.Current %><%= partial("partials/color-token.plush.html") %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
+		},
+	}
+
+	for _, color := range []string{"#123456", "#abcdef"} {
+		data := map[string]interface{}{
+			"pageConfig": &pageConfig{
+				Current: &record{
+					Attributes: map[string]interface{}{
+						"primary": setting{Value: settingValue{Text: color}},
+					},
+				},
+			},
+		}
+		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+		})
+		require.NoError(t, err)
+		require.Contains(t, out, "color: "+color+";")
 	}
 }
 

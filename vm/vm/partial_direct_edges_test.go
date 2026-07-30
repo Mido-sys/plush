@@ -120,37 +120,43 @@ func Test_VM_Fast_Data_Partial_Direct_Cached_Bytecode_Fallback_Branches(t *testi
 		plush.PlushCacheSetup(nil)
 	}()
 
+	partialSources := map[string]string{
+		"edge_data_direct_holes.plush":           `<%= name %>`,
+		"edge_data_direct_no_fast_plan.plush":    `<%= name %>`,
+		"edge_data_direct_special_binding.plush": `<%= contentType %>`,
+		"edge_data_direct_empty_fast_plan.plush": `<%= name %>`,
+	}
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"partialFeeder": func(string) (string, error) {
-			return `<span>ignored</span>`, nil
+		"partialFeeder": func(name string) (string, error) {
+			return partialSources[name], nil
 		},
 	})
 	var out strings.Builder
 
 	partial, dataPlan := vmPartialDataPlan("edge_data_direct_holes.plush", "name")
-	plush.CacheVMBytecodeForCleanFilename(partial.Name, nil, &compiler.Bytecode{HasHoles: true})
+	plush.CacheVMBytecodeForCleanFilenameWithSource(partial.Name, nil, &compiler.Bytecode{HasHoles: true}, partialSources[partial.Name])
 	handled, err := renderFastDataPartialDirectInto(&out, partial, ctx, fastRenderBindings{}, dataPlan)
 	require.NoError(t, err)
 	require.False(t, handled)
 
 	partial, dataPlan = vmPartialDataPlan("edge_data_direct_no_fast_plan.plush", "name")
-	plush.CacheVMBytecodeForCleanFilename(partial.Name, nil, &compiler.Bytecode{})
+	plush.CacheVMBytecodeForCleanFilenameWithSource(partial.Name, nil, &compiler.Bytecode{}, partialSources[partial.Name])
 	handled, err = renderFastDataPartialDirectInto(&out, partial, ctx, fastRenderBindings{}, dataPlan)
 	require.NoError(t, err)
 	require.False(t, handled)
 
 	partial, dataPlan = vmPartialDataPlan("edge_data_direct_special_binding.plush", "name")
-	plush.CacheVMBytecodeForCleanFilename(partial.Name, nil, &compiler.Bytecode{
+	plush.CacheVMBytecodeForCleanFilenameWithSource(partial.Name, nil, &compiler.Bytecode{
 		FastRenderPlan: &compiler.FastRenderPlan{Bindings: []string{"contentType"}},
-	})
+	}, partialSources[partial.Name])
 	handled, err = renderFastDataPartialDirectInto(&out, partial, ctx, fastRenderBindings{}, dataPlan)
 	require.NoError(t, err)
 	require.False(t, handled)
 
 	partial, dataPlan = vmPartialDataPlan("edge_data_direct_empty_fast_plan.plush", "name")
-	plush.CacheVMBytecodeForCleanFilename(partial.Name, nil, &compiler.Bytecode{
+	plush.CacheVMBytecodeForCleanFilenameWithSource(partial.Name, nil, &compiler.Bytecode{
 		FastRenderPlan: &compiler.FastRenderPlan{Bindings: []string{"name"}},
-	})
+	}, partialSources[partial.Name])
 	handled, err = renderFastDataPartialDirectInto(&out, partial, ctx, fastRenderBindings{}, dataPlan)
 	require.NoError(t, err)
 	require.False(t, handled)
@@ -196,7 +202,7 @@ func Test_VM_Partial_Bytecode_Link_For_Input_Uses_Cached_VM_Bytecode(t *testing.
 	ctx := plush.NewContext()
 	filename := "edge_cached_link.plush"
 	bytecode := &compiler.Bytecode{Static: true, StaticOutput: "cached"}
-	plush.CacheVMBytecodeForCleanFilename(filename, nil, bytecode)
+	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, nil, bytecode, "ignored")
 
 	link, err := partialBytecodeLinkForInput("ignored", filename, ctx)
 	require.NoError(t, err)
@@ -404,28 +410,33 @@ func Test_VM_Fast_No_Data_Partial_Direct_Cached_Bytecode_Fallback_Branches(t *te
 		plush.PlushCacheSetup(nil)
 	}()
 
+	partialSources := map[string]string{
+		"edge_no_data_direct_holes.plush":           `<%= name %>`,
+		"edge_no_data_direct_special_binding.plush": `<%= contentType %>`,
+		"edge_no_data_direct_empty_fast_plan.plush": `<%= name %>`,
+	}
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"partialFeeder": func(string) (string, error) {
-			return `<span>ignored</span>`, nil
+		"partialFeeder": func(name string) (string, error) {
+			return partialSources[name], nil
 		},
 	})
 	var out strings.Builder
 
-	plush.CacheVMBytecodeForCleanFilename("edge_no_data_direct_holes.plush", nil, &compiler.Bytecode{HasHoles: true})
+	plush.CacheVMBytecodeForCleanFilenameWithSource("edge_no_data_direct_holes.plush", nil, &compiler.Bytecode{HasHoles: true}, partialSources["edge_no_data_direct_holes.plush"])
 	handled, err := renderFastNoDataPartialDirectInto(&out, "edge_no_data_direct_holes.plush", ctx, 41)
 	require.NoError(t, err)
 	require.False(t, handled)
 
-	plush.CacheVMBytecodeForCleanFilename("edge_no_data_direct_special_binding.plush", nil, &compiler.Bytecode{
+	plush.CacheVMBytecodeForCleanFilenameWithSource("edge_no_data_direct_special_binding.plush", nil, &compiler.Bytecode{
 		FastRenderPlan: &compiler.FastRenderPlan{Bindings: []string{"contentType"}},
-	})
+	}, partialSources["edge_no_data_direct_special_binding.plush"])
 	handled, err = renderFastNoDataPartialDirectInto(&out, "edge_no_data_direct_special_binding.plush", ctx, 42)
 	require.NoError(t, err)
 	require.False(t, handled)
 
-	plush.CacheVMBytecodeForCleanFilename("edge_no_data_direct_empty_fast_plan.plush", nil, &compiler.Bytecode{
+	plush.CacheVMBytecodeForCleanFilenameWithSource("edge_no_data_direct_empty_fast_plan.plush", nil, &compiler.Bytecode{
 		FastRenderPlan: &compiler.FastRenderPlan{Bindings: []string{"name"}},
-	})
+	}, partialSources["edge_no_data_direct_empty_fast_plan.plush"])
 	handled, err = renderFastNoDataPartialDirectInto(&out, "edge_no_data_direct_empty_fast_plan.plush", ctx, 43)
 	require.NoError(t, err)
 	require.False(t, handled)
@@ -442,7 +453,7 @@ func Test_VM_Fast_No_Data_Partial_Direct_Cached_Bytecode_Fallback_Branches(t *te
 	require.False(t, handled)
 }
 
-func Test_VM_Direct_Partial_Uses_Cached_Bytecode_Before_Feeder(t *testing.T) {
+func Test_VM_Direct_Partial_Ignores_Source_Blind_Cached_Bytecode_Before_Feeder(t *testing.T) {
 	cache := inmemory.NewMemoryCache()
 	plush.PlushCacheSetup(cache)
 	defer func() {
@@ -451,8 +462,8 @@ func Test_VM_Direct_Partial_Uses_Cached_Bytecode_Before_Feeder(t *testing.T) {
 	}()
 
 	filename := "edge_direct_cached_before_feeder.plush"
-	cachedBytecode := &compiler.Bytecode{Static: true, StaticOutput: "cached"}
-	plush.CacheVMBytecodeForCleanFilename(filename, nil, cachedBytecode)
+	staleBytecode := &compiler.Bytecode{Static: true, StaticOutput: "cached"}
+	plush.CacheVMBytecodeForCleanFilename(filename, nil, staleBytecode)
 
 	feederCalls := 0
 	ctx := plush.NewContextWith(map[string]interface{}{
@@ -466,8 +477,48 @@ func Test_VM_Direct_Partial_Uses_Cached_Bytecode_Before_Feeder(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.NotNil(t, link)
-	require.Same(t, cachedBytecode, link.bytecode)
-	require.Equal(t, 0, feederCalls)
+	require.NotSame(t, staleBytecode, link.bytecode)
+	require.True(t, link.bytecode.Static)
+	require.Equal(t, "<span>from feeder</span>", link.bytecode.StaticOutput)
+	require.Equal(t, 1, feederCalls)
+}
+
+func Test_VM_Direct_Partial_First_Render_Does_Not_Poison_Second_Source(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	const partialName = "shared/token.plush"
+	firstCtx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(string) (string, error) {
+			return `<span>first</span>`, nil
+		},
+	})
+
+	var out strings.Builder
+	handled, err := renderFastNoDataPartialDirectInto(&out, partialName, firstCtx, 47)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, `<span>first</span>`, out.String())
+
+	secondFeederCalls := 0
+	secondCtx := plush.NewContextWith(map[string]interface{}{
+		"label": "second",
+		"partialFeeder": func(string) (string, error) {
+			secondFeederCalls++
+			return `<span><%= label %></span>`, nil
+		},
+	})
+
+	out.Reset()
+	handled, err = renderFastNoDataPartialDirectInto(&out, partialName, secondCtx, 48)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, `<span>second</span>`, out.String())
+	require.Equal(t, 1, secondFeederCalls)
 }
 
 func Test_VM_Fast_No_Data_Partial_Direct_Uses_Current_Feeder_Source_When_Source_Is_Unknown(t *testing.T) {
@@ -833,14 +884,15 @@ func Test_VM_Render_Linked_Partial_Cache_And_Inline_Edges(t *testing.T) {
 	}()
 
 	cachedBytecode := &compiler.Bytecode{Static: true, StaticOutput: "cached linked"}
-	plush.CacheVMBytecodeForCleanFilename("edge_linked_cached.plush", nil, cachedBytecode)
 	cachedCtx := plush.NewContext()
 	cachedCtx.Set(meta.TemplateFileKey, "edge_linked_cached.plush")
 
+	plush.CacheVMBytecodeForCleanFilenameWithSource("edge_linked_cached.plush", nil, cachedBytecode, `<span>different source</span>`)
 	rendered, err = renderLinkedPartial(`<span>different source</span>`, cachedCtx)
 	require.NoError(t, err)
 	require.Equal(t, "cached linked", rendered)
 
+	plush.CacheVMBytecodeForCleanFilenameWithSource("edge_linked_cached.plush", nil, cachedBytecode, `<span>different inline source</span>`)
 	out.Reset()
 	ok, err = renderLinkedPartialInline(&out, `<span>different inline source</span>`, cachedCtx)
 	require.NoError(t, err)
@@ -865,7 +917,7 @@ func Test_VM_Render_Linked_Partial_Cache_And_Inline_Edges(t *testing.T) {
 	holes := []plush.HoleMarker{
 		plush.NewHoleMarker(plush.PunchHoleMarkerName(0), `<%= name %>`, 1, 15),
 	}
-	plush.CachePunchHoleSkeleton("edge_linked_hole.plush", holeCtx, "A<PLUSH_HOLE_0>B", holes, true)
+	plush.CachePunchHoleSkeletonWithSource("edge_linked_hole.plush", holeCtx, "A<PLUSH_HOLE_0>B", holes, true, `<span>ignored</span>`)
 	rendered, err = renderLinkedPartial(`<span>ignored</span>`, holeCtx)
 	require.NoError(t, err)
 	require.Equal(t, "AAmyB", rendered)

@@ -457,7 +457,7 @@ func Test_Caching(t *testing.T) {
 
 	tc, err := plush.Parse("<%= a %>", fileCacheName)
 	r.NoError(err)
-	r.Equal(tc, template)
+	r.NotEqual(tc, template)
 
 	imC = nil
 	tc, err = plush.Parse("<%= a %>")

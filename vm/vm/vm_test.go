@@ -913,7 +913,7 @@ func Test_VM_Compile_And_Render_Error_Branches(t *testing.T) {
 			Right:    &ast.Boolean{Value: true},
 		}},
 	}}
-	plush.CacheVMBytecodeForCleanFilename(filename, badProgram, "not-bytecode")
+	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, badProgram, "not-bytecode", `<%= true %>`)
 	ctx := plush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
@@ -1599,35 +1599,65 @@ func Test_VM_Fast_Loop_Partial_Sees_Current_Loop_Value(t *testing.T) {
 
 func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
 	type settingValue struct {
-		StringVar string
+		Text string
 	}
 	type setting struct {
-		ValueType settingValue
+		Value settingValue
 	}
-	type globalSchema struct {
-		GlobalSettings map[string]interface{}
+	type record struct {
+		Attributes map[string]interface{}
 	}
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"schemaLayoutsAndSettings": map[string]interface{}{
-			"Current": globalSchema{
-				GlobalSettings: map[string]interface{}{
-					"main_col": setting{ValueType: settingValue{StringVar: "#123456"}},
+		"viewData": map[string]interface{}{
+			"Current": record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
 				},
 			},
 		},
 		"partialFeeder": func(name string) (string, error) {
-			require.Equal(t, "sections/global-styling.plush.html", name)
-			return `#bread-crumb .container a h1{
-color: <%= globalSchema.GlobalSettings["main_col"].ValueType.StringVar %> !important;
- font-family: Poppins, sans-serif !important;
-}`, nil
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `<span class="token"><%= activeRecord.Attributes["primary"].Value.Text %></span>`, nil
 		},
 	})
 
-	out, err := Render(`<% let globalSchema = schemaLayoutsAndSettings.Current %><%= partial("sections/global-styling.plush.html") %>`, ctx)
+	out, err := Render(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
 	require.NoError(t, err)
-	require.Contains(t, out, "color: #123456 !important;")
+	require.Contains(t, out, "<span class=\"token\">#123456</span>")
+}
+
+func Test_VM_Partial_Sees_Top_Level_Let_Alias_From_Pointer_Config(t *testing.T) {
+	type settingValue struct {
+		Text string
+	}
+	type setting struct {
+		Value settingValue
+	}
+	type record struct {
+		Attributes map[string]interface{}
+	}
+	type pageConfig struct {
+		Current *record
+	}
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"pageConfig": &pageConfig{
+			Current: &record{
+				Attributes: map[string]interface{}{
+					"primary": setting{Value: settingValue{Text: "#123456"}},
+				},
+			},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/color-token.plush.html", name)
+			return `color: <%= activeRecord.Attributes["primary"].Value.Text %>;`, nil
+		},
+	})
+
+	out, err := Render(`<% let layoutState = pageConfig %><% let activeRecord = layoutState.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, "color: #123456;")
 }
 
 func Test_VM_Partial_Render_Binding_Plan_Keeps_Data_Values_Live(t *testing.T) {

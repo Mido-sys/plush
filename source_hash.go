@@ -19,5 +19,5 @@ func templateSourceCacheHash(input string) string {
 }
 
 func templateSourceMatches(t *Template, sourceHash string) bool {
-	return t != nil && (sourceHash == "" || t.SourceHash == "" || t.SourceHash == sourceHash)
+	return t != nil && (sourceHash == "" || t.SourceHash == sourceHash)
 }
