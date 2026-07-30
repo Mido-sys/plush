@@ -1360,7 +1360,6 @@ func renderFastMixedPlan(out *strings.Builder, ctx hctx.Context, bindings fastRe
 			if err := renderFastPartialSegmentWithDataPlan(out, ctx, bindings, op.partial, op.partialData); err != nil {
 				return true, err
 			}
-			bindings.syncLocalValuesFromContext()
 		case fastMixedOpLoop:
 			ok, err := renderFastLoop(out, ctx, bindings, op.loop)
 			if !ok || err != nil {
@@ -1457,7 +1456,6 @@ func renderFastSegments(out *strings.Builder, ctx hctx.Context, bindings fastRen
 			if err := renderFastPartialSegment(out, ctx, bindings, segment.Partial); err != nil {
 				return true, err
 			}
-			bindings.syncLocalValuesFromContext()
 		case compiler.FastRenderSegmentLoop:
 			ok, err := renderFastLoop(out, ctx, bindings, segment.Loop)
 			if !ok || err != nil {

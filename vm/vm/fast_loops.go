@@ -92,6 +92,7 @@ func renderFastPartialSegmentWithDataPlan(out *strings.Builder, ctx hctx.Context
 	if err := spendFastFunctionCall(ctx, "partial", partial.Line); err != nil {
 		return err
 	}
+	defer bindings.syncLocalValuesFromContext()
 	if len(partial.Data) > 0 {
 		if ok, err := renderFastDataPartialInto(out, partial, ctx, bindings, dataPlan); ok || err != nil {
 			if err != nil {
