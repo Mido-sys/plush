@@ -135,6 +135,10 @@ func (b *fastRenderBindings) setLocalAndContext(index int, value interface{}) {
 		return
 	}
 	if id, ok := b.bindingID(index); ok {
+		if overlay, ok := b.ctx.(*partialOverlayContext); ok {
+			overlay.setLocalWithID(b.names[index], id, value)
+			return
+		}
 		if setter, ok := b.ctx.(interface{ SetID(int, interface{}) }); ok {
 			setter.SetID(id, value)
 			return
