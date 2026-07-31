@@ -261,6 +261,10 @@ func Test_VM_Partial_Overlay_Update_ID_Branches(t *testing.T) {
 	value, ok := local.LookupID(localID)
 	require.True(t, ok)
 	require.Equal(t, "second", value)
+	require.True(t, local.UpdateID(localID, nil))
+	value, ok = local.LookupID(localID)
+	require.True(t, ok)
+	require.Nil(t, value)
 
 	require.True(t, local.UpdateID(parentID, "new"))
 	require.Equal(t, "new", parent.values["parent"])
@@ -268,6 +272,22 @@ func Test_VM_Partial_Overlay_Update_ID_Branches(t *testing.T) {
 	missingID := local.InternID("missing")
 	require.False(t, local.UpdateID(missingID, "value"))
 	require.False(t, local.UpdateID(missingID, nil))
+}
+
+func Test_VM_Partial_Overlay_Render_Assigns_Missing_Map_Value_To_Existing_Local(t *testing.T) {
+	type record struct {
+		Fields map[string]string
+	}
+
+	parent := plush.NewContextWith(map[string]interface{}{
+		"record": record{Fields: map[string]string{}},
+	})
+	ctx := borrowPartialOverlayContext(parent)
+	defer releasePartialOverlayContext(ctx)
+
+	out, err := Render(`<% let value = "fallback"; value = record.Fields["missing"]; %><%= value %>`, ctx)
+	require.NoError(t, err)
+	require.Empty(t, out)
 }
 
 func Test_VM_Partial_Overlay_Lookup_And_Context_Branches(t *testing.T) {

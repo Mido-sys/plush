@@ -294,7 +294,7 @@ func (c *partialOverlayContext) SetID(id int, value interface{}) {
 }
 
 func (c *partialOverlayContext) UpdateID(id int, value interface{}) bool {
-	if c == nil || value == nil {
+	if c == nil {
 		return false
 	}
 	if c.setLocalIDExisting(id, value) {
@@ -310,7 +310,7 @@ func (c *partialOverlayContext) UpdateID(id int, value interface{}) bool {
 }
 
 func (c *partialOverlayContext) Update(key string, value interface{}) bool {
-	if c == nil || value == nil {
+	if c == nil {
 		return false
 	}
 	if c.setLocalExisting(key, value) {
