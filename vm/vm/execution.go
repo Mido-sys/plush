@@ -492,6 +492,9 @@ func (vm *VM) wrapRuntimeError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if plush.IsTemplateTraceError(err) {
+		return err
+	}
 	if strings.HasPrefix(err.Error(), "line ") {
 		return err
 	}

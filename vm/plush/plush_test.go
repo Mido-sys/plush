@@ -265,7 +265,7 @@ func Test_Buffalo_Renderer_VM_Cached_Branch_Partial_Assigns_Parent_Binding(t *te
 	}
 }
 
-func Test_Buffalo_Renderer_VM_Interpreter_Fallback_Partial_Sees_Branch_Let(t *testing.T) {
+func Test_Buffalo_Renderer_VM_Generic_Partial_Sees_Branch_Let(t *testing.T) {
 	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
 	defer rootplush.SetRenderMode(previous)
 	previousFallback := rootplush.SetVMGenericFallback(true)
@@ -296,8 +296,8 @@ func Test_Buffalo_Renderer_VM_Interpreter_Fallback_Partial_Sees_Branch_Let(t *te
 	require.Equal(t, "current-id", out)
 	diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
 	require.True(t, ok)
-	require.Equal(t, rootplush.RenderFastPathInterpreterFallback, diagnostics.FastPath)
-	require.Contains(t, diagnostics.FastReject, `assignment value`)
+	require.Equal(t, rootplush.RenderFastPathGeneric, diagnostics.FastPath)
+	require.Empty(t, diagnostics.FastReject)
 }
 
 func Test_Clear_Fast_Helper_Removes_Custom_Fast_Render(t *testing.T) {

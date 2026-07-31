@@ -286,6 +286,8 @@ const (
 	fastMixedOpLoop
 	fastMixedOpLet
 	fastMixedOpAssign
+	fastMixedOpReturn
+	fastMixedOpGeneric
 )
 
 type fastMixedPlan struct {
@@ -312,6 +314,8 @@ type fastMixedOp struct {
 	blockCall     *compiler.FastBlockCallPlan
 	conditional   *compiler.FastConditionalPlan
 	partial       *compiler.FastPartialPlan
+	generic       *compiler.FastGenericPlan
+	assignTarget  *compiler.FastAssignTarget
 	partialData   *fastPartialDataBindingPlan
 	simpleCond    *fastSimpleConditionalPlan
 	accessCache   object.InlineCacheSlot

@@ -185,6 +185,28 @@ func Test_Parity_Phase_6_Helper_Context_Block_With_And_Render(t *testing.T) {
 	})
 }
 
+func Test_Parity_Helper_Context_Includes_Loop_Binding_For_Render_Like_Helper(t *testing.T) {
+	type renderBlock struct {
+		Type    string
+		BlockID string
+	}
+
+	compareRender(t, `<%= for (_, block) in blocks { %><%= render(block.Type + ".plush.html", {settings: block}) %><% } %>`, contextWith(map[string]interface{}{
+		"blocks": []renderBlock{{Type: "product-option", BlockID: "test-1234"}},
+		"render": func(fileName string, data map[string]interface{}, help rootplush.HelperContext) (template.HTML, error) {
+			block, ok := help.Value("block").(renderBlock)
+			if !ok {
+				return "", fmt.Errorf("%q: unknown identifier", "block")
+			}
+			settings, ok := data["settings"].(renderBlock)
+			if !ok {
+				return "", fmt.Errorf("%q: unknown identifier", "settings")
+			}
+			return template.HTML(fileName + "|" + settings.BlockID + "|" + block.BlockID), nil
+		},
+	}))
+}
+
 func Test_Parity_Phase_6_Helper_Block_Scope_Behavior(t *testing.T) {
 	t.Run("assignment updates outer scope", func(t *testing.T) {
 		compareRender(t, `<% let value = "before" %><%= run() { value = "after" } %><%= value %>`, contextWith(map[string]interface{}{

@@ -1090,6 +1090,10 @@ func (c *Compiler) Bytecode() *Bytecode {
 		}
 	}
 	features := bytecodeFeaturesFromInstructions(instructions, c.constants, callNames)
+	if fastRenderPlan == nil && fastReject.Reason != "" && !features.HasHoles {
+		fastRenderPlan = genericVMFastRenderPlan(fastReject)
+		fastReject = FastRenderReject{}
+	}
 
 	return &Bytecode{
 		Instructions:     instructions,
@@ -1111,6 +1115,25 @@ func (c *Compiler) Bytecode() *Bytecode {
 		HasHoles:         features.HasHoles,
 		HasPartials:      features.HasPartials,
 		HasContextWrites: features.HasContextWrites,
+	}
+}
+
+func genericVMFastRenderPlan(reject FastRenderReject) *FastRenderPlan {
+	line := reject.Line
+	if line <= 0 {
+		line = 1
+	}
+	return &FastRenderPlan{
+		Segments: []FastRenderSegment{{
+			Kind: FastRenderSegmentGeneric,
+			Generic: &FastGenericPlan{
+				WholeTemplate: true,
+				Reason:        reject.Reason,
+				Line:          line,
+			},
+			Line: line,
+		}},
+		NameCount: 1,
 	}
 }
 

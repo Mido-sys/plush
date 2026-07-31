@@ -669,6 +669,45 @@ Useful fields:
 | `FastPlan` | Static complexity counters for the compiled fast plan: bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names. |
 | `VMHotspots` | Optional helper and partial call counts/timings when VM hotspot diagnostics are enabled. |
 
+#### VM Execution Paths
+
+`Mode` and `FastPath` describe different layers of rendering. `Mode` says
+which top-level renderer was selected. `FastPath` says which path that renderer
+used after parsing or loading cached bytecode.
+
+When `Mode` is `interpreter`, Plush uses the classic AST interpreter and VM
+bytecode is disabled for that render.
+
+When `Mode` is `vm`, Plush enters the compiled VM renderer. From there,
+`FastPath` can report:
+
+- `static`: the template compiled to static output and no runtime execution was
+  needed.
+- `fast`: the VM compiled bytecode and used an optimized fast render plan.
+- `generic`: the VM compiled bytecode, but the specialized fast planner either
+  was not needed or used a generic VM segment for syntax it does not model as a
+  custom fast operation yet.
+- `interpreter-fallback`: the VM renderer intentionally delegated this render to
+  the classic AST interpreter.
+
+The old interpreter remains a compatibility safety net. Plush templates can
+exercise many subtle behaviors: helper block scoping, partial context overlays,
+form helpers that inject values into a block, assignments, punch holes, budgets,
+and older template quirks. The fast render planner is intentionally
+conservative; it only handles syntax it can render with the same behavior as the
+normal renderer.
+
+If the interpreter fallback is disabled, templates that cannot use specialized
+fast operations should run through the `generic` VM bytecode path instead. That
+is still VM execution, but it means any remaining VM parity gap becomes visible
+as a render error or output difference instead of falling back to the known-good
+interpreter behavior. Template-defined functions and function literals use this
+generic VM path. Punch holes remain on the punch-hole-specific path so skeleton
+caching and hole filling keep their existing behavior. If the classic
+interpreter is removed entirely, `RenderModeInterpreter` and
+`interpreter-fallback` are no longer available, and applications must rely on VM
+compile/runtime support for every template shape they render.
+
 `FastPlan` describes the compiled template shape, not elapsed time. It includes bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names.
 
 Hotspot diagnostics are optional. They time VM helper and partial calls, so enable them only when profiling or sampling because they add measurement overhead:
@@ -795,7 +834,7 @@ Common header meanings:
 | `X-Plush-VM-Bytecode-Cache` | VM cache status. Warm file-backed templates should usually move from `miss-store` on first render to `hit`, `hit-static`, or `hit-source` on later renders. |
 | `X-Plush-Template-Filename` | Filename used as the cache key when `meta.TemplateFileKey` was set on the context. |
 | `X-Plush-Render-Engine-Time-Ms` | Time spent inside Plush rendering only, in milliseconds. Use this instead of total request time when comparing interpreter vs VM. |
-| `X-Plush-Fast-Path` | VM execution path: `static`, `fast`, `generic`, or `interpreter-fallback`. The best steady-state VM path is usually `fast`; `interpreter-fallback` means the VM intentionally delegated unsupported syntax to the old interpreter. |
+| `X-Plush-Fast-Path` | VM execution path: `static`, `fast`, `generic`, or `interpreter-fallback`. The best steady-state VM path is usually `fast`; `generic` still runs VM bytecode; `interpreter-fallback` means VM mode intentionally delegated unsupported syntax to the classic interpreter. |
 | `X-Plush-Punch-Hole-Cache` | Punch-hole cache status for templates that mix static HTML with embedded Plush code. |
 | `X-Plush-Fast-Plan-*` | Static counters captured from the compiled fast plan. These describe template complexity, not elapsed time. |
 | `X-Plush-Fast-Plan-Helper-Names` | Helper names the fast plan found while compiling. Useful for spotting expensive helper-heavy templates. |
@@ -846,15 +885,21 @@ Most VM optimizations need no template changes. The VM automatically specializes
 - safe mixed numeric comparisons such as `uint32 == 0` and `float32 == 3`
 - struct fields, nested property chains, indexed property chains, and no-arg method tails
 - typed Go map access with static string keys, such as `labels["status"]` and `robots["bender"].Name`
-- loops over strings, slices, structs, and pointers to structs
+- loops over `nil`, strings, slices, structs, and pointers to structs
 - simple top-level conditionals whose branches contain static/name/property/access/infix output
 - conditionals and infix conditions inside loops
 - direct helper calls for common helper signatures
+- silent script helper calls for side effects, such as `<% touch(name) %>`
 - direct scalar helper calls for common string, int, uint32, bool, and float64 argument shapes
+- dynamic callable values and chained receiver calls, such as `helpers[name]("x")` and `makeUser(name).Render("short")`
+- top-level `let`, assignment, return, loop return, loop iterator assignment, and index assignment statements
 - regex match expressions
+- unary negation with `-`
+- arrays, hashes, non-string literal hash keys, and dynamic index reads as supported fast values
 - partials with no data, including direct linked rendering when the partial body is simple and does not need partial metadata
 - partials with simple static-key data maps, such as `partial("row", {name: product.Name})`; the VM prepares the keys and value lookup plan, then reads fresh values each render
 - partial data maps with helper-call values, such as `partial("row", {label: label(product.Name, prefix)})`; the VM compiles the call arguments and uses direct value invokers for common helper signatures
+- dynamic partial names and `layout` data values through the regular VM partial helper-call path
 - linked partial bodies that contain simple property/access/infix output, such as `<%= robot.Name %>` or `<%= labels["status"] %>`
 - clean filename cache keys and punch-hole filename checks for file-backed cached renders
 

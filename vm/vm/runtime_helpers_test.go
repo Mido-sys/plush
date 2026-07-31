@@ -747,9 +747,9 @@ func Test_VM_Fast_Loop_Conditional_And_Call_Helpers(t *testing.T) {
 	require.Equal(t, "pre:", evaluated.Raw(1))
 
 	var out strings.Builder
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, call, 1, "item"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, call, 1, "item"))
 	require.Equal(t, "pre:item", out.String())
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, 1, "item"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, nil, 1, "item"))
 
 	out.Reset()
 	conditional := &compiler.FastLoopConditionalPlan{

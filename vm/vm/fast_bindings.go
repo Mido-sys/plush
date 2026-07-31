@@ -147,6 +147,27 @@ func (b *fastRenderBindings) setLocalAndContext(index int, value interface{}) {
 	b.ctx.Set(b.names[index], value)
 }
 
+func (b *fastRenderBindings) assignExistingLocalAndContext(index int, value interface{}) bool {
+	if b == nil || index < 0 || index >= len(b.names) {
+		return false
+	}
+	if b.ctx == nil {
+		b.setLocal(index, value)
+		return true
+	}
+	if id, ok := b.bindingID(index); ok {
+		if updater, ok := b.ctx.(interface{ UpdateID(int, interface{}) bool }); ok && updater.UpdateID(id, value) {
+			b.setLocal(index, value)
+			return true
+		}
+	}
+	if b.ctx.Update(b.names[index], value) {
+		b.setLocal(index, value)
+		return true
+	}
+	return false
+}
+
 func (b fastRenderBindings) syncLocalValuesFromContext() {
 	if b.ctx == nil || len(b.localOK) == 0 || len(b.localVals) == 0 {
 		return
@@ -238,6 +259,9 @@ func fastContextValue(ctx hctx.Context, name string) (interface{}, bool) {
 func fastLineError(line int, err error) error {
 	if err == nil {
 		return nil
+	}
+	if plush.IsTemplateTraceError(err) {
+		return err
 	}
 	if line <= 0 {
 		line = 1

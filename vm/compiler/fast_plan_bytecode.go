@@ -178,6 +178,7 @@ func fastLoopPlanFromFunction(fn *object.CompiledFunction, constants []object.Ob
 
 		switch op {
 		case code.OpReturn:
+			loop.PartFlagsSet = true
 			return loop, true
 		case code.OpWriteHTML:
 			value, ok := htmlConstantValue(constants, operands[0])

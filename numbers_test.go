@@ -44,3 +44,71 @@ func Test_Render_Allows_Many_Numeric_Types(t *testing.T) {
 	r.NoError(err)
 	r.Equal("1 2 3", s)
 }
+
+func Test_Identifier_With_Digits_And_Unary_Minus(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		values   map[string]interface{}
+		expected string
+	}{
+		{
+			name:  "float64 identifier",
+			input: `<%= -my123greet %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "-5.5",
+		},
+		{
+			name:  "float64 identifier plus integer literal",
+			input: `<%= -my123greet + 10 %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "4.5",
+		},
+		{
+			name:  "float64 identifier minus integer literal",
+			input: `<%= -my123greet - 10 %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "-15.5",
+		},
+		{
+			name:  "float64 identifier plus negative int64 identifier",
+			input: `<%= -my123greet + my123greet2 %>`,
+			values: map[string]interface{}{
+				"my123greet":  float64(5.5),
+				"my123greet2": int64(-10),
+			},
+			expected: "-15.5",
+		},
+		{
+			name:  "int64 identifier plus float64 identifier",
+			input: `<%= -my123greet + my123greet2 %>`,
+			values: map[string]interface{}{
+				"my123greet":  int64(10),
+				"my123greet2": float64(5.5),
+			},
+			expected: "-4.5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := require.New(t)
+			ctx := plush.NewContext()
+
+			for name, value := range tt.values {
+				ctx.Set(name, value)
+			}
+
+			s, err := plush.Render(tt.input, ctx)
+
+			r.NoError(err)
+			r.Equal(tt.expected, s)
+		})
+	}
+}

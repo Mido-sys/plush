@@ -433,8 +433,11 @@ func Test_Compiler_Fast_Value_And_Partial_Data_Helper_Edges(t *testing.T) {
 	_, ok = fastValuePlanFromIndexExpression(plan, parseCompilerExpression(t, `1[0]`).(*ast.IndexExpression), false, 1)
 	require.False(t, ok)
 
-	_, ok = fastValuePlanFromIndexExpression(plan, parseCompilerExpression(t, `items[key]`).(*ast.IndexExpression), false, 1)
-	require.False(t, ok)
+	value, ok = fastValuePlanFromIndexExpression(plan, parseCompilerExpression(t, `items[key]`).(*ast.IndexExpression), false, 1)
+	require.True(t, ok)
+	require.Equal(t, FastValueIndex, value.Kind)
+	require.Equal(t, FastValueName, value.Left.Kind)
+	require.Equal(t, FastValueName, value.Right.Kind)
 
 	_, ok = fastPartialDataPlanFromExpression(plan, &ast.Identifier{Value: "name"}, 1)
 	require.False(t, ok)
@@ -516,11 +519,13 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	_, ok = fastValuePlanFromLoopIndex(loop, &ast.Identifier{Value: "product"}, 1)
 	require.False(t, ok)
 
-	_, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `other[0]`), 1)
-	require.False(t, ok)
+	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `other[0]`), 1)
+	require.True(t, ok)
+	require.Equal(t, FastValueIndex, value.Kind)
 
-	_, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `product[dynamic]`), 1)
-	require.False(t, ok)
+	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `product[dynamic]`), 1)
+	require.True(t, ok)
+	require.Equal(t, FastValueIndex, value.Kind)
 
 	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `product.Tags[0].Name`), 1)
 	require.True(t, ok)
@@ -585,7 +590,7 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 		Iterable: &ast.Identifier{Value: "nil"},
 		Block:    &ast.BlockStatement{},
 	}, 1)
-	require.False(t, ok)
+	require.True(t, ok)
 
 	fastLoop, ok := fastLoopPlanFromExpression(plan, &ast.ForExpression{
 		KeyName:   "i",
@@ -605,7 +610,7 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 
 	parts := []FastLoopPart{}
 	require.False(t, appendFastLoopStatements(plan, loop, &parts, []ast.Statement{&ast.BlockStatement{}}))
-	require.False(t, appendFastLoopStatement(plan, loop, &parts, &ast.ReturnStatement{Type: token.RETURN, ReturnValue: &ast.Identifier{Value: "product"}}))
+	require.True(t, appendFastLoopStatement(plan, loop, &parts, &ast.ReturnStatement{Type: token.RETURN, ReturnValue: &ast.Identifier{Value: "product"}}))
 	require.False(t, appendFastLoopStatement(plan, loop, &parts, &ast.ExpressionStatement{Expression: &ast.Identifier{Value: "notHTML"}}))
 
 	parts = nil
@@ -1579,7 +1584,7 @@ func Test_Bytecode_Feature_Flags(t *testing.T) {
 	}
 }
 
-func Test_Fast_Render_Rejects_Block_Helper_Assignment(t *testing.T) {
+func Test_Fast_Render_Plans_Block_Helper_Assignment(t *testing.T) {
 	program, err := parser.Parse(`<% let value = "before" %><%= run() { value = "after" } %><%= value %>`)
 	require.NoError(t, err)
 
@@ -1587,8 +1592,12 @@ func Test_Fast_Render_Rejects_Block_Helper_Assignment(t *testing.T) {
 	require.NoError(t, compiler.Compile(program))
 
 	bytecode := compiler.Bytecode()
-	require.Nil(t, bytecode.FastRenderPlan)
-	require.NotEmpty(t, bytecode.FastReject)
+	require.NotNil(t, bytecode.FastRenderPlan, bytecode.FastReject)
+	require.Empty(t, bytecode.FastReject)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 3)
+	require.Equal(t, FastRenderSegmentBlockCall, bytecode.FastRenderPlan.Segments[1].Kind)
+	require.NotNil(t, bytecode.FastRenderPlan.Segments[1].BlockCall)
+	require.NotNil(t, bytecode.FastRenderPlan.Segments[1].BlockCall.BlockBytecode)
 }
 
 func Test_Mixed_Static_Runs_Are_Coalesced_Without_Marking_Template_Static(t *testing.T) {
@@ -2000,7 +2009,7 @@ func Test_Fast_Render_Plan_Includes_Script_Loop_Control(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Block_Helper_Calls(t *testing.T) {
-	program, err := parser.Parse(`<%= for (_, product) in products { %><%= form({id: product.ID, path: cartPath()}) { %><span><%= product.Name %></span><% } %><% } %>`)
+	program, err := parser.Parse(`<%= for (_, item) in items { %><%= wrap({id: item.ID, path: itemPath()}) { %><span><%= item.Name %></span><% } %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2016,7 +2025,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Block_Helper_Calls(t *testing.T) {
 	require.Len(t, loop.Parts, 1)
 	require.Equal(t, FastLoopPartBlockCall, loop.Parts[0].Kind)
 	require.NotNil(t, loop.Parts[0].BlockCall)
-	require.Equal(t, "form", loop.Parts[0].BlockCall.Name)
+	require.Equal(t, "wrap", loop.Parts[0].BlockCall.Name)
 	require.Len(t, loop.Parts[0].BlockCall.Args, 1)
 	require.NotNil(t, loop.Parts[0].BlockCall.BlockBytecode)
 	require.NotEmpty(t, loop.Parts[0].BlockCall.BlockSource)
@@ -2392,7 +2401,7 @@ func Test_Fast_Render_Plan_Includes_Block_Helper_Call_With_Hash_Arguments(t *tes
 }
 
 func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Output_Tags(t *testing.T) {
-	program, err := parser.Parse(`<%= form({action: path}) { %><%= f.InputTag({name: "A"}) %><%= f.InputTag({name: "B"}) %><button>Go</button><% } %>`)
+	program, err := parser.Parse(`<%= wrap({action: path}) { %><%= builder.RenderControl({name: "A"}) %><%= builder.RenderControl({name: "B"}) %><button>Go</button><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2403,18 +2412,18 @@ func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Output_Tags(t *testing.
 	require.Empty(t, bytecode.FastReject)
 	block := bytecode.FastRenderPlan.Segments[0].BlockCall
 	require.NotNil(t, block)
-	require.Contains(t, block.BlockSource, `<%= f.InputTag`)
+	require.Contains(t, block.BlockSource, `<%= builder.RenderControl`)
 	require.Contains(t, block.BlockSource, `<button>Go</button>`)
 	require.NotNil(t, block.BlockBytecode)
 }
 
-func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Shipping_Form(t *testing.T) {
-	input := `<%= form({action: shippingEstimatorPath(), method: "POST", id: "shippingEstimate"}) { %>
-	<%= f.InputTag({name:"CartAdd[0].CartAddProductID", value: product.ProductId}) %>
-	<%= f.InputTag({name: "CartAdd[0].CartAddVariantID[]", value: product.ProductVariants[0].VariantId}) %>
-	<%= f.InputTag({name:"CartAdd[0].CartAddVariantAddQty", value: "1"}) %>
-	<%= f.InputTag({type:"text",label:"Shipping First Name", name:"Shipping.FirstName", value:"test"} ) %>
-<button class="btn btn-success" role="submit">Get ESTIMATED Rates</button>
+func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Form_Controls(t *testing.T) {
+	input := `<%= form({action: submitPath(), method: "POST", id: "sampleForm"}) { %>
+	<%= builder.RenderControl({name:"Record.ID", value: record.ID}) %>
+	<%= builder.RenderControl({name: "Record.OptionID[]", value: record.Options[0].ID}) %>
+	<%= builder.RenderControl({name:"Record.Quantity", value: "1"}) %>
+	<%= builder.RenderControl({type:"text", label:"Display Name", name:"Profile.DisplayName", value:"test"} ) %>
+<button class="btn btn-success" role="submit">Save</button>
 <% } %>`
 	program, err := parser.Parse(input)
 	require.NoError(t, err)
@@ -2426,6 +2435,24 @@ func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Shipping_Form(t *testin
 	require.NotNil(t, bytecode.FastRenderPlan, bytecode.FastReject)
 	require.Empty(t, bytecode.FastReject)
 	require.NotNil(t, bytecode.FastRenderPlan.Segments[0].BlockCall.BlockBytecode)
+}
+
+func Test_Fast_Render_Plan_Block_Helper_Allows_Local_Assignment_Setup(t *testing.T) {
+	input := `<%= wrap({}) { %><% let options = {} %><% for (_, item) in items { %><% options[item.Key] = item.Value %><% } %><%= builder.RenderControl({name: options[active], type: "hidden"}) %><% } %>`
+	program, err := parser.Parse(input)
+	require.NoError(t, err)
+
+	compiler := New()
+	require.NoError(t, compiler.Compile(program))
+
+	bytecode := compiler.Bytecode()
+	require.NotNil(t, bytecode.FastRenderPlan, bytecode.FastReject)
+	require.Empty(t, bytecode.FastReject)
+
+	block := bytecode.FastRenderPlan.Segments[0].BlockCall
+	require.NotNil(t, block)
+	require.NotNil(t, block.BlockBytecode)
+	require.NotNil(t, block.BlockBytecode.FastRenderPlan)
 }
 
 func Test_Fast_Render_Plan_Includes_Top_Level_Let(t *testing.T) {
@@ -2648,14 +2675,19 @@ func Test_Fast_Render_Plan_Includes_Partial_Data_Helper_Call(t *testing.T) {
 	require.Equal(t, "prefix", value.Call.Args[1].Value)
 }
 
-func Test_Fast_Render_Plan_Skips_Partial_Data_Map_Layout(t *testing.T) {
+func Test_Fast_Render_Plan_Uses_Helper_Call_For_Partial_Data_Map_Layout(t *testing.T) {
 	program, err := parser.Parse(`<%= partial("row.plush", {name: name, layout: "shell"}) %>`)
 	require.NoError(t, err)
 
 	compiler := New()
 	require.NoError(t, compiler.Compile(program))
 
-	require.Nil(t, compiler.Bytecode().FastRenderPlan)
+	bytecode := compiler.Bytecode()
+	require.NotNil(t, bytecode.FastRenderPlan, bytecode.FastReject)
+	require.Empty(t, bytecode.FastReject)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
+	require.Equal(t, FastRenderSegmentCall, bytecode.FastRenderPlan.Segments[0].Kind)
+	require.Equal(t, "partial", bytecode.FastRenderPlan.Segments[0].Call.Name)
 }
 
 func Test_Direct_Write_Call_Fusion_Chains(t *testing.T) {

@@ -46,38 +46,23 @@ func evalFastValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fas
 	case compiler.FastValueConcat:
 		return evalFastConcatValue(value, ctx, bindings, nil, nil, base, false)
 	case compiler.FastValueCall:
-		return evalFastCallValuePlan(value.Call, nil, ctx, bindings, nil, nil, nil)
+		result, ok, err := evalFastCallValuePlan(value.Call, nil, ctx, bindings, nil, nil, nil)
+		if err != nil || !ok || len(value.Path) == 0 {
+			return result, ok, err
+		}
+		result, err = evalFastPathSteps(result, value.Path, ctx, bindings, nil, nil, false)
+		if err != nil {
+			return nil, true, err
+		}
+		return result, true, nil
 	case compiler.FastValueArray:
 		return evalFastArrayValue(value.Elements, ctx, bindings, base)
 	case compiler.FastValueHash:
 		return evalFastHashValue(value.Pairs, ctx, bindings, base)
 	case compiler.FastValuePath:
-		raw := base
-		if value.NameIndex >= 0 {
-			var ok bool
-			raw, ok = bindings.value(value.NameIndex)
-			if !ok {
-				if value.NullOnMissing {
-					return nil, true, nil
-				}
-				return nil, false, nil
-			}
-		}
-		if result, handled, err := evalFastFieldChainValue(value, raw, ctx); handled || err != nil {
-			return result, true, err
-		}
-		if result, handled, err := evalFastAccessChainValue(value, raw, ctx); handled || err != nil {
-			return result, true, err
-		}
-		for i := range value.Path {
-			step := &value.Path[i]
-			var err error
-			raw, err = evalFastPathStep(raw, step, ctx)
-			if err != nil {
-				return nil, true, err
-			}
-		}
-		return raw, true, nil
+		return evalFastPathValue(value, ctx, bindings, base, nil, nil, false)
+	case compiler.FastValueIndex:
+		return evalFastIndexPlanValue(value, ctx, bindings, nil, nil, base, false)
 	default:
 		return nil, false, nil
 	}
@@ -95,16 +80,38 @@ func evalFastArrayValue(elements []compiler.FastValuePlan, ctx hctx.Context, bin
 	return out, true, nil
 }
 
-func evalFastHashValue(pairs []compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, base interface{}) (map[string]interface{}, bool, error) {
-	out := make(map[string]interface{}, len(pairs))
+func evalFastHashValue(pairs []compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, base interface{}) (interface{}, bool, error) {
+	if fastValuePairsUseStaticStringKeys(pairs) {
+		out := make(map[string]interface{}, len(pairs))
+		for i := range pairs {
+			value, ok, err := evalFastValue(&pairs[i].Value, ctx, bindings, base)
+			if err != nil || !ok {
+				return nil, ok, err
+			}
+			out[pairs[i].Key] = value
+		}
+		return out, true, nil
+	}
+	out := make(map[object.HashKey]object.HashPair, len(pairs))
 	for i := range pairs {
 		value, ok, err := evalFastValue(&pairs[i].Value, ctx, bindings, base)
 		if err != nil || !ok {
 			return nil, ok, err
 		}
-		out[pairs[i].Key] = value
+		key, ok, err := evalFastHashPairKey(&pairs[i], ctx, bindings, base)
+		if err != nil || !ok {
+			return nil, ok, err
+		}
+		hashKey, ok := key.(object.Hashable)
+		if !ok {
+			return nil, true, fastLineError(pairs[i].Line, fmt.Errorf("unusable as hash key: %s", key.Type()))
+		}
+		out[hashKey.HashKey()] = object.HashPair{
+			Key:   key,
+			Value: object.Wrap(value),
+		}
 	}
-	return out, true, nil
+	return &object.Hash{Pairs: out}, true, nil
 }
 
 func evalFastLoopValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}) (interface{}, bool, error) {
@@ -121,11 +128,23 @@ func evalFastLoopValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings
 	case compiler.FastValueConcat:
 		return evalFastConcatValue(value, ctx, bindings, loopKey, loopValue, nil, true)
 	case compiler.FastValueCall:
-		return evalFastLoopCallValuePlan(value.Call, ctx, bindings, loopKey, loopValue)
+		result, ok, err := evalFastLoopCallValuePlan(value.Call, ctx, bindings, loopKey, loopValue)
+		if err != nil || !ok || len(value.Path) == 0 {
+			return result, ok, err
+		}
+		result, err = evalFastPathSteps(result, value.Path, ctx, bindings, loopKey, loopValue, true)
+		if err != nil {
+			return nil, true, err
+		}
+		return result, true, nil
 	case compiler.FastValueArray:
 		return evalFastLoopArrayValue(value.Elements, ctx, bindings, loopKey, loopValue)
 	case compiler.FastValueHash:
 		return evalFastLoopHashValue(value.Pairs, ctx, bindings, loopKey, loopValue)
+	case compiler.FastValuePath:
+		return evalFastPathValue(value, ctx, bindings, loopValue, loopKey, loopValue, true)
+	case compiler.FastValueIndex:
+		return evalFastIndexPlanValue(value, ctx, bindings, loopKey, loopValue, nil, true)
 	default:
 		return evalFastValue(value, ctx, bindings, loopValue)
 	}
@@ -143,16 +162,140 @@ func evalFastLoopArrayValue(elements []compiler.FastValuePlan, ctx hctx.Context,
 	return out, true, nil
 }
 
-func evalFastLoopHashValue(pairs []compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}) (map[string]interface{}, bool, error) {
-	out := make(map[string]interface{}, len(pairs))
+func evalFastLoopHashValue(pairs []compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}) (interface{}, bool, error) {
+	if fastValuePairsUseStaticStringKeys(pairs) {
+		out := make(map[string]interface{}, len(pairs))
+		for i := range pairs {
+			value, ok, err := evalFastLoopValue(&pairs[i].Value, ctx, bindings, loopKey, loopValue)
+			if err != nil || !ok {
+				return nil, ok, err
+			}
+			out[pairs[i].Key] = value
+		}
+		return out, true, nil
+	}
+	out := make(map[object.HashKey]object.HashPair, len(pairs))
 	for i := range pairs {
 		value, ok, err := evalFastLoopValue(&pairs[i].Value, ctx, bindings, loopKey, loopValue)
 		if err != nil || !ok {
 			return nil, ok, err
 		}
-		out[pairs[i].Key] = value
+		key, ok, err := evalFastLoopHashPairKey(&pairs[i], ctx, bindings, loopKey, loopValue)
+		if err != nil || !ok {
+			return nil, ok, err
+		}
+		hashKey, ok := key.(object.Hashable)
+		if !ok {
+			return nil, true, fastLineError(pairs[i].Line, fmt.Errorf("unusable as hash key: %s", key.Type()))
+		}
+		out[hashKey.HashKey()] = object.HashPair{
+			Key:   key,
+			Value: object.Wrap(value),
+		}
 	}
-	return out, true, nil
+	return &object.Hash{Pairs: out}, true, nil
+}
+
+func fastValuePairsUseStaticStringKeys(pairs []compiler.FastValuePair) bool {
+	for i := range pairs {
+		if pairs[i].KeyPlan != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func evalFastHashPairKey(pair *compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, base interface{}) (object.Object, bool, error) {
+	if pair == nil {
+		return object.NullObject, true, nil
+	}
+	if pair.KeyPlan == nil {
+		return &object.String{Value: pair.Key}, true, nil
+	}
+	key, ok, err := evalFastValue(pair.KeyPlan, ctx, bindings, base)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return object.Wrap(key), true, nil
+}
+
+func evalFastLoopHashPairKey(pair *compiler.FastValuePair, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}) (object.Object, bool, error) {
+	if pair == nil {
+		return object.NullObject, true, nil
+	}
+	if pair.KeyPlan == nil {
+		return &object.String{Value: pair.Key}, true, nil
+	}
+	key, ok, err := evalFastLoopValue(pair.KeyPlan, ctx, bindings, loopKey, loopValue)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return object.Wrap(key), true, nil
+}
+
+func evalFastPathValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fastRenderBindings, base interface{}, loopKey, loopValue interface{}, loopAware bool) (interface{}, bool, error) {
+	if value == nil || value.Kind != compiler.FastValuePath {
+		return nil, false, nil
+	}
+	raw := base
+	if value.NameIndex >= 0 {
+		var ok bool
+		raw, ok = bindings.value(value.NameIndex)
+		if !ok {
+			if value.NullOnMissing {
+				return nil, true, nil
+			}
+			return nil, false, nil
+		}
+	}
+	if !fastPathStepsNeedRuntimeBindings(value.Path) {
+		if result, handled, err := evalFastFieldChainValue(value, raw, ctx); handled || err != nil {
+			return result, true, err
+		}
+		if result, handled, err := evalFastAccessChainValue(value, raw, ctx); handled || err != nil {
+			return result, true, err
+		}
+	}
+	result, err := evalFastPathSteps(raw, value.Path, ctx, bindings, loopKey, loopValue, loopAware)
+	if err != nil {
+		return nil, true, err
+	}
+	return result, true, nil
+}
+
+func evalFastIndexPlanValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}, base interface{}, loopAware bool) (interface{}, bool, error) {
+	if value == nil || value.Kind != compiler.FastValueIndex || value.Left == nil || value.Right == nil {
+		return nil, false, nil
+	}
+	left, ok, err := evalFastCompoundOperand(value.Left, ctx, bindings, loopKey, loopValue, base, loopAware)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		if value.NullOnMissing {
+			return nil, true, nil
+		}
+		return nil, false, nil
+	}
+	index, ok, err := evalFastCompoundOperand(value.Right, ctx, bindings, loopKey, loopValue, base, loopAware)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	result, err := fastIndexGoValue(left, index)
+	if err != nil {
+		return nil, true, fastLineError(value.Line, err)
+	}
+	if len(value.Path) == 0 {
+		return result, true, nil
+	}
+	result, err = evalFastPathSteps(result, value.Path, ctx, bindings, loopKey, loopValue, loopAware)
+	if err != nil {
+		return nil, true, err
+	}
+	return result, true, nil
 }
 
 func evalFastLoopCallValuePlan(call *compiler.FastCallPlan, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}) (interface{}, bool, error) {
@@ -182,14 +325,25 @@ func evalFastPrefixValue(value *compiler.FastValuePlan, ctx hctx.Context, bindin
 	if value == nil || value.Kind != compiler.FastValuePrefix || value.Right == nil {
 		return nil, false, nil
 	}
-	if value.Operator != "!" {
-		return nil, true, fastLineError(value.Line, fmt.Errorf("unknown fast prefix operator: %s", value.Operator))
-	}
 	right, ok, err := evalFastCompoundOperand(value.Right, ctx, bindings, loopKey, loopValue, base, loopAware)
 	if err != nil {
 		return nil, true, err
 	}
-	return !(ok && isTruthyFastValue(right)), true, nil
+	switch value.Operator {
+	case "!":
+		return !(ok && isTruthyFastValue(right)), true, nil
+	case "-":
+		if !ok {
+			right = nil
+		}
+		result, err := evalFastMinusOperator(right)
+		if err != nil {
+			return nil, true, fastLineError(value.Line, err)
+		}
+		return result, true, nil
+	default:
+		return nil, true, fastLineError(value.Line, fmt.Errorf("unknown fast prefix operator: %s", value.Operator))
+	}
 }
 
 func evalFastConcatValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue, base interface{}, loopAware bool) (interface{}, bool, error) {
@@ -227,6 +381,9 @@ func evalFastCompoundOperand(value *compiler.FastValuePlan, ctx hctx.Context, bi
 func evalFastAddOperator(left, right interface{}) (interface{}, error) {
 	left = fastAddGoValue(left)
 	right = fastAddGoValue(right)
+	if appended, handled, err := fastNativeSliceAppend(left, right); handled || err != nil {
+		return appended, err
+	}
 	if _, ok := left.(string); ok {
 		return fmt.Sprint(left) + fmt.Sprint(right), nil
 	}
@@ -249,6 +406,31 @@ func evalFastAddOperator(left, right interface{}) (interface{}, error) {
 		}
 	}
 	return nil, fmt.Errorf("unable to operate (+) on %T and %T", left, right)
+}
+
+func fastNativeSliceAppend(left, right interface{}) (interface{}, bool, error) {
+	if left == nil {
+		return nil, false, nil
+	}
+	rv := reflect.ValueOf(left)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil, false, nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Slice {
+		return nil, false, nil
+	}
+	elem := rv.Type().Elem()
+	val := reflect.ValueOf(right)
+	if !val.IsValid() {
+		val = reflect.Zero(elem)
+	} else if elem.Kind() != reflect.Interface && !val.Type().AssignableTo(elem) {
+		return nil, true, fmt.Errorf("cannot append '%v' (untyped %s constant) as %s value in assignment", right, val.Type(), elem)
+	}
+	appended := reflect.Append(rv, val)
+	return appended.Interface(), true, nil
 }
 
 func fastAddGoValue(value interface{}) interface{} {
@@ -277,7 +459,8 @@ func evalFastInfixValue(value *compiler.FastValuePlan, ctx hctx.Context, binding
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	leftOK := ok
+	if !leftOK {
 		left = nil
 	}
 	if loopAware {
@@ -288,14 +471,131 @@ func evalFastInfixValue(value *compiler.FastValuePlan, ctx hctx.Context, binding
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	rightOK := ok
+	if !rightOK {
 		right = nil
 	}
 	result, err := evalFastInfixOperator(value.Operator, left, right)
 	if err != nil {
-		return nil, true, fastLineError(value.Line, err)
+		return nil, true, fastLineError(value.Line, annotateFastInfixError(value, leftOK, rightOK, left, right, err))
 	}
 	return result, true, nil
+}
+
+func annotateFastInfixError(value *compiler.FastValuePlan, leftOK, rightOK bool, left, right interface{}, err error) error {
+	if err == nil || value == nil {
+		return err
+	}
+	expression := fastValuePlanExpression(value)
+	if expression == "" {
+		return err
+	}
+	notes := make([]string, 0, 2)
+	if note := fastInfixNilOperandNote(value.Left, leftOK, left); note != "" {
+		notes = append(notes, note)
+	}
+	if note := fastInfixNilOperandNote(value.Right, rightOK, right); note != "" {
+		notes = append(notes, note)
+	}
+	if len(notes) == 0 {
+		return err
+	}
+	message := strings.TrimSpace(err.Error()) + " while evaluating " + expression + "; " + strings.Join(notes, "; ")
+	return fmt.Errorf("%s", message)
+}
+
+func fastInfixNilOperandNote(value *compiler.FastValuePlan, ok bool, raw interface{}) string {
+	if ok && !(fastConditionOperandValue{raw: raw}).isNil() {
+		return ""
+	}
+	name := fastValuePlanExpression(value)
+	if name == "" {
+		return ""
+	}
+	return name + " is nil or missing"
+}
+
+func fastValuePlanExpression(value *compiler.FastValuePlan) string {
+	if value == nil {
+		return ""
+	}
+	switch value.Kind {
+	case compiler.FastValueName, compiler.FastValueLoopKey:
+		return value.Value
+	case compiler.FastValueString:
+		return strconv.Quote(value.Value)
+	case compiler.FastValueInteger:
+		return strconv.FormatInt(value.IntValue, 10)
+	case compiler.FastValueFloat:
+		return strconv.FormatFloat(value.FloatValue, 'f', -1, 64)
+	case compiler.FastValueBool:
+		return strconv.FormatBool(value.BoolValue)
+	case compiler.FastValuePath:
+		return fastPathValueExpression(value)
+	case compiler.FastValueIndex:
+		return fastIndexValueExpression(value)
+	case compiler.FastValueInfix, compiler.FastValueConcat:
+		left := fastValuePlanExpression(value.Left)
+		right := fastValuePlanExpression(value.Right)
+		if left == "" || right == "" || value.Operator == "" {
+			return ""
+		}
+		return left + " " + value.Operator + " " + right
+	case compiler.FastValuePrefix:
+		right := fastValuePlanExpression(value.Right)
+		if right == "" {
+			return ""
+		}
+		return value.Operator + right
+	case compiler.FastValueCall:
+		if value.Call != nil && value.Call.Name != "" {
+			return value.Call.Name + "(...)"
+		}
+	}
+	return ""
+}
+
+func fastPathValueExpression(value *compiler.FastValuePlan) string {
+	if value == nil {
+		return ""
+	}
+	expression := value.Value
+	for i := range value.Path {
+		step := value.Path[i]
+		switch step.Kind {
+		case compiler.FastPathStepProperty:
+			if step.Full != "" {
+				expression = step.Full
+			} else if expression == "" {
+				expression = step.Value
+			} else {
+				expression += "." + step.Value
+			}
+		case compiler.FastPathStepIndexInteger:
+			expression += "[" + strconv.Itoa(step.Index) + "]"
+		case compiler.FastPathStepIndexString:
+			expression += "[" + strconv.Quote(step.Value) + "]"
+		case compiler.FastPathStepCall:
+			if expression == "" {
+				expression = step.Value + "()"
+			} else {
+				expression += "()"
+			}
+		}
+	}
+	return expression
+}
+
+func fastIndexValueExpression(value *compiler.FastValuePlan) string {
+	if value == nil {
+		return ""
+	}
+	left := fastValuePlanExpression(value.Left)
+	right := fastValuePlanExpression(value.Right)
+	if left == "" || right == "" {
+		return ""
+	}
+	return left + "[" + right + "]"
 }
 
 func evalFastLogicalInfixValue(value *compiler.FastValuePlan, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue, base interface{}, loopAware bool) (interface{}, bool, error) {
@@ -356,11 +656,37 @@ func evalFastInfixOperator(operator string, left, right interface{}) (interface{
 		return evalFastConditionInfixOperator(operator, leftValue, rightValue)
 	case "<=":
 		return evalFastConditionInfixOperator(operator, leftValue, rightValue)
+	case "~=":
+		pattern := fmt.Sprint(fastAddGoValue(right))
+		re, err := cachedRegex(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't compile regex %s", fastAddGoValue(right))
+		}
+		return re.MatchString(fmt.Sprint(fastAddGoValue(left))), nil
 	case "-", "*", "/":
 		return evalFastNumericArithmeticOperator(operator, left, right)
 	default:
 		return nil, fmt.Errorf("unknown fast infix operator: %s", operator)
 	}
+}
+
+func evalFastMinusOperator(value interface{}) (interface{}, error) {
+	value = fastAddGoValue(value)
+	if f, ok := value.(float32); ok {
+		return -float64(f), nil
+	}
+	if f, ok := value.(float64); ok {
+		return -f, nil
+	}
+	n, ok := numericValueFromGo(value)
+	if !ok {
+		return nil, fmt.Errorf("unsupported type for negation: %T", value)
+	}
+	i, ok := n.int64()
+	if !ok {
+		return nil, fmt.Errorf("unsupported type for negation: %T", value)
+	}
+	return -i, nil
 }
 
 func evalFastNumericArithmeticOperator(operator string, left, right interface{}) (interface{}, error) {
@@ -451,12 +777,14 @@ func canUseFastTopLevelAccessChain(value *compiler.FastValuePlan) bool {
 		case compiler.FastPathStepProperty:
 			if step.Method {
 				return i == len(value.Path)-2 &&
-					value.Path[len(value.Path)-1].Kind == compiler.FastPathStepCall
+					value.Path[len(value.Path)-1].Kind == compiler.FastPathStepCall &&
+					len(value.Path[len(value.Path)-1].Args) == 0
 			}
 		case compiler.FastPathStepIndexInteger, compiler.FastPathStepIndexString:
 			continue
 		case compiler.FastPathStepCall:
 			return i == len(value.Path)-1 &&
+				len(step.Args) == 0 &&
 				i > 0 &&
 				value.Path[i-1].Kind == compiler.FastPathStepProperty &&
 				value.Path[i-1].Method
@@ -1337,7 +1665,34 @@ func fieldAccessError(receiver, full, name string) error {
 	return fmt.Errorf("cannot return value obtained from unexported field or method '%s'", name)
 }
 
+func fastPathStepsNeedRuntimeBindings(steps []compiler.FastPathStep) bool {
+	for i := range steps {
+		step := &steps[i]
+		if len(step.Args) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func evalFastPathSteps(base interface{}, steps []compiler.FastPathStep, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}, loopAware bool) (interface{}, error) {
+	raw := base
+	for i := range steps {
+		step := &steps[i]
+		var err error
+		raw, err = evalFastPathStepWithBindings(raw, step, ctx, bindings, loopKey, loopValue, loopAware)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return raw, nil
+}
+
 func evalFastPathStep(base interface{}, step *compiler.FastPathStep, ctx hctx.Context) (interface{}, error) {
+	return evalFastPathStepWithBindings(base, step, ctx, fastRenderBindings{}, nil, nil, false)
+}
+
+func evalFastPathStepWithBindings(base interface{}, step *compiler.FastPathStep, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}, loopAware bool) (interface{}, error) {
 	switch step.Kind {
 	case compiler.FastPathStepProperty:
 		if err := spendFastTraversal(ctx, step.Line); err != nil {
@@ -1368,7 +1723,22 @@ func evalFastPathStep(base interface{}, step *compiler.FastPathStep, ctx hctx.Co
 		if err := spendFastFunctionCall(ctx, step.Value, step.Line); err != nil {
 			return nil, err
 		}
-		value, err := fastCallValue(step.Value, base, nil, ctx, &step.CallCache)
+		var args *fastCallArgs
+		var argStore fastCallArgs
+		if len(step.Args) > 0 {
+			for i := range step.Args {
+				arg, ok, err := evalFastCompoundOperand(&step.Args[i], ctx, bindings, loopKey, loopValue, nil, loopAware)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					return nil, fastLineError(step.Args[i].Line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(&step.Args[i])))
+				}
+				argStore.Append(arg)
+			}
+			args = &argStore
+		}
+		value, err := fastCallValue(step.Value, base, args, ctx, &step.CallCache)
 		if err != nil {
 			return nil, fastLineError(step.Line, err)
 		}
@@ -1474,4 +1844,209 @@ func fastStringIndexValue(left interface{}, index string) (interface{}, error) {
 	default:
 		return nil, fmt.Errorf("could not index %T with %T", left, index)
 	}
+}
+
+func fastIndexGoValue(left, index interface{}) (interface{}, error) {
+	switch index := index.(type) {
+	case int:
+		return fastIndexValue(left, index)
+	case int8:
+		return fastIndexValue(left, int(index))
+	case int16:
+		return fastIndexValue(left, int(index))
+	case int32:
+		return fastIndexValue(left, int(index))
+	case int64:
+		return fastIndexValue(left, int(index))
+	case uint:
+		return fastIndexValue(left, int(index))
+	case uint8:
+		return fastIndexValue(left, int(index))
+	case uint16:
+		return fastIndexValue(left, int(index))
+	case uint32:
+		return fastIndexValue(left, int(index))
+	case uint64:
+		return fastIndexValue(left, int(index))
+	case string:
+		return fastStringIndexValue(left, index)
+	}
+	if obj, ok := left.(object.Object); ok {
+		switch obj := obj.(type) {
+		case *object.Hash:
+			key := object.Wrap(index)
+			hashKey, ok := key.(object.Hashable)
+			if !ok {
+				return nil, fmt.Errorf("unusable as hash key: %s", key.Type())
+			}
+			if pair, ok := obj.Pairs[hashKey.HashKey()]; ok {
+				return object.ToGo(pair.Value), nil
+			}
+			return nil, nil
+		default:
+			left = object.ToGo(obj)
+		}
+	}
+	rv, nilValue, ok := fastIndexRootValue(left)
+	if nilValue {
+		return nil, nil
+	}
+	if !ok {
+		return nil, fmt.Errorf("could not index %T with %T", left, index)
+	}
+	if rv.Kind() != reflect.Map {
+		return nil, fmt.Errorf("can't access Slice/Array with a non int Index (%v)", index)
+	}
+	key, err := fastReflectMapKey(rv.Type().Key(), index)
+	if err != nil {
+		return nil, err
+	}
+	val := rv.MapIndex(key)
+	if !val.IsValid() {
+		return nil, nil
+	}
+	return fastReflectInterface(val), nil
+}
+
+func setFastIndexGoValue(left, index, value interface{}) error {
+	raw := left
+	switch left := raw.(type) {
+	case *object.Array:
+		i, ok := toInt(object.Wrap(index))
+		if !ok {
+			return fmt.Errorf("can't access Slice/Array with a non int Index (%v)", index)
+		}
+		if i < 0 || int(i) >= len(left.Elements) {
+			return fmt.Errorf("array index out of bounds, got index %d, while array size is %d", i, len(left.Elements))
+		}
+		left.Elements[int(i)] = object.Wrap(value)
+		return nil
+	case *object.Hash:
+		key := object.Wrap(index)
+		hashKey, ok := key.(object.Hashable)
+		if !ok {
+			return fmt.Errorf("unusable as hash key: %s", key.Type())
+		}
+		left.Pairs[hashKey.HashKey()] = object.HashPair{Key: key, Value: object.Wrap(value)}
+		return nil
+	case object.Object:
+		raw = object.ToGo(left)
+	}
+	rv, nilValue, ok := fastIndexRootValue(raw)
+	if nilValue || !ok {
+		return fmt.Errorf("could not index %T with %T", raw, index)
+	}
+	switch rv.Kind() {
+	case reflect.Map:
+		key, err := fastReflectMapKey(rv.Type().Key(), index)
+		if err != nil {
+			return err
+		}
+		val, err := fastReflectAssignableValue(value, rv.Type().Elem())
+		if err != nil {
+			return err
+		}
+		rv.SetMapIndex(key, val)
+		return nil
+	case reflect.Array, reflect.Slice:
+		i, ok := fastReflectIndexInt(index)
+		if !ok {
+			return fmt.Errorf("can't access Slice/Array with a non int Index (%v)", index)
+		}
+		if i < 0 || rv.Len()-1 < i {
+			return fmt.Errorf("array index out of bounds, got index %d, while array size is %d", i, rv.Len())
+		}
+		slot := rv.Index(i)
+		if !slot.CanSet() {
+			return fmt.Errorf("cannot assign to index %d of %T", i, raw)
+		}
+		val, err := fastReflectAssignableValue(value, slot.Type())
+		if err != nil {
+			return err
+		}
+		slot.Set(val)
+		return nil
+	default:
+		return fmt.Errorf("could not index %T with %T", raw, index)
+	}
+}
+
+func fastIndexRootValue(raw interface{}) (reflect.Value, bool, bool) {
+	if raw == nil {
+		return reflect.Value{}, true, true
+	}
+	rv := reflect.ValueOf(raw)
+	rv = unwrapFastFieldChainValue(rv)
+	if !rv.IsValid() {
+		return reflect.Value{}, true, true
+	}
+	switch rv.Kind() {
+	case reflect.Array, reflect.Slice, reflect.Map:
+		return rv, false, true
+	default:
+		return reflect.Value{}, false, false
+	}
+}
+
+func fastReflectMapKey(keyType reflect.Type, index interface{}) (reflect.Value, error) {
+	key := reflect.ValueOf(index)
+	if !key.IsValid() {
+		return reflect.Value{}, fmt.Errorf("cannot use <nil> as %s value in map index", keyType)
+	}
+	if key.Type().AssignableTo(keyType) {
+		return key, nil
+	}
+	if key.Type().ConvertibleTo(keyType) {
+		return key.Convert(keyType), nil
+	}
+	if keyType.Kind() != reflect.Interface && key.Kind() != keyType.Kind() {
+		return reflect.Value{}, fmt.Errorf("cannot use %v (%s constant) as %s value in map index", index, key.Kind().String(), keyType.String())
+	}
+	return reflect.Value{}, fmt.Errorf("cannot use %v (%s constant) as %s value in map index", index, key.Type().String(), keyType.String())
+}
+
+func fastReflectIndexInt(index interface{}) (int, bool) {
+	switch index := index.(type) {
+	case int:
+		return index, true
+	case int8:
+		return int(index), true
+	case int16:
+		return int(index), true
+	case int32:
+		return int(index), true
+	case int64:
+		return int(index), true
+	case uint:
+		return int(index), true
+	case uint8:
+		return int(index), true
+	case uint16:
+		return int(index), true
+	case uint32:
+		return int(index), true
+	case uint64:
+		return int(index), true
+	default:
+		return 0, false
+	}
+}
+
+func fastReflectAssignableValue(value interface{}, target reflect.Type) (reflect.Value, error) {
+	if value == nil {
+		switch target.Kind() {
+		case reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.Func:
+			return reflect.Zero(target), nil
+		default:
+			return reflect.Value{}, fmt.Errorf("cannot use '<nil>' as %s value in assignment", target)
+		}
+	}
+	val := reflect.ValueOf(value)
+	if val.Type().AssignableTo(target) {
+		return val, nil
+	}
+	if val.Type().ConvertibleTo(target) {
+		return val.Convert(target), nil
+	}
+	return reflect.Value{}, fmt.Errorf("cannot use '%v' (untyped %s constant) as %s value in assignment", value, val.Type(), target)
 }

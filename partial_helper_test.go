@@ -75,6 +75,22 @@ func Test_Partial_Helper_Nested_Partial_Path_Handling(t *testing.T) {
 	r.Equal("CODE3 PRINT /fake/templates/testing/code-3.plush.html", normalized)
 }
 
+func Test_Partial_Helper_Error_Includes_Parent_And_Partial_Filenames(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/row.plush", name)
+			return "first\n<%= missing %>", nil
+		},
+	})
+	ctx.Set(meta.TemplateBaseFileNameKey, "application")
+	ctx.Set(meta.TemplateFileKey, "application.plush")
+	ctx.Set(meta.TemplateExtensionKey, "plush")
+
+	_, err := plush.RenderInterpreter("<p>top</p>\n<%= partial(\"partials/row.plush\") %>", ctx)
+	require.Error(t, err)
+	require.EqualError(t, err, `application.plush:2:partials/row.plush:2: "missing": unknown identifier`)
+}
+
 func Test_Partial_Helper_Invalid_Feeder_Function(t *testing.T) {
 	r := require.New(t)
 

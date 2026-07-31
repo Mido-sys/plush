@@ -19,13 +19,103 @@ func tryRenderFastBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (strin
 	if bytecode == nil || bytecode.FastRenderPlan == nil {
 		return "", false, nil
 	}
-	return renderFastPlanWithBindingPlan(bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx))
+	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
+		defer restorePartial()
+	}
+	return renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx))
+}
+
+func fastRenderPlanUsesGenericVM(plan *compiler.FastRenderPlan) bool {
+	if plan == nil {
+		return false
+	}
+	return fastRenderSegmentsUseGenericVM(plan.Segments)
+}
+
+func fastRenderSegmentsUseGenericVM(segments []compiler.FastRenderSegment) bool {
+	for i := range segments {
+		segment := &segments[i]
+		switch segment.Kind {
+		case compiler.FastRenderSegmentGeneric:
+			return true
+		case compiler.FastRenderSegmentConditional:
+			if segment.Conditional == nil {
+				continue
+			}
+			for branchIndex := range segment.Conditional.Branches {
+				if fastRenderSegmentsUseGenericVM(segment.Conditional.Branches[branchIndex].Segments) {
+					return true
+				}
+			}
+			if fastRenderSegmentsUseGenericVM(segment.Conditional.ElseSegments) {
+				return true
+			}
+		case compiler.FastRenderSegmentLoop:
+			if fastLoopPartsUseGenericVM(segment.Loop) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fastLoopPartsUseGenericVM(loop *compiler.FastLoopPlan) bool {
+	if loop == nil {
+		return false
+	}
+	for i := range loop.Parts {
+		part := &loop.Parts[i]
+		switch part.Kind {
+		case compiler.FastLoopPartConditional:
+			if part.Conditional == nil {
+				continue
+			}
+			for branchIndex := range part.Conditional.Branches {
+				if fastLoopPartSliceUsesGenericVM(part.Conditional.Branches[branchIndex].Parts) {
+					return true
+				}
+			}
+			if fastLoopPartSliceUsesGenericVM(part.Conditional.ElseParts) {
+				return true
+			}
+		case compiler.FastLoopPartLoop:
+			if fastLoopPartsUseGenericVM(part.Loop) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fastLoopPartSliceUsesGenericVM(parts []compiler.FastLoopPart) bool {
+	for i := range parts {
+		part := &parts[i]
+		switch part.Kind {
+		case compiler.FastLoopPartConditional:
+			if part.Conditional == nil {
+				continue
+			}
+			for branchIndex := range part.Conditional.Branches {
+				if fastLoopPartSliceUsesGenericVM(part.Conditional.Branches[branchIndex].Parts) {
+					return true
+				}
+			}
+			if fastLoopPartSliceUsesGenericVM(part.Conditional.ElseParts) {
+				return true
+			}
+		case compiler.FastLoopPartLoop:
+			if fastLoopPartsUseGenericVM(part.Loop) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // renderFastPlanWithBindingPlan tries the prepared fast plan variants in order:
 // static-name, simple, mixed. Each variant must preserve Plush rendering
 // semantics or decline so the normal VM can handle the template.
-func renderFastPlanWithBindingPlan(plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan) (string, bool, error) {
+func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan) (string, bool, error) {
 	if plan == nil {
 		return "", false, nil
 	}
@@ -59,7 +149,7 @@ func renderFastPlanWithBindingPlan(plan *compiler.FastRenderPlan, ctx hctx.Conte
 		}
 	}
 
-	ok, err := renderFastMixedPlan(&out, ctx, bindings, mixed)
+	ok, err := renderFastMixedPlan(&out, ctx, bindings, mixed, bytecode)
 	if !ok || err != nil {
 		return "", ok, err
 	}
@@ -93,7 +183,7 @@ func renderFastPlanInlineWithBindings(out *strings.Builder, plan *compiler.FastR
 	if grow := fastOutputGrowSize(mixed, bindings); grow > 0 {
 		scratch.Grow(grow)
 	}
-	ok, err := renderFastMixedPlan(&scratch, ctx, bindings, mixed)
+	ok, err := renderFastMixedPlan(&scratch, ctx, bindings, mixed, nil)
 	if !ok || err != nil {
 		return ok, err
 	}
@@ -161,12 +251,15 @@ func fastLoopGrowSize(loop *compiler.FastLoopPlan) int {
 	if loop == nil {
 		return 0
 	}
+	if loop.Silent {
+		return 0
+	}
 	size := loop.StaticSize
 	for i := range loop.Parts {
 		switch loop.Parts[i].Kind {
 		case compiler.FastLoopPartKey:
 			size += 4
-		case compiler.FastLoopPartValue, compiler.FastLoopPartValueProperty, compiler.FastLoopPartValuePath, compiler.FastLoopPartCall, compiler.FastLoopPartPartial:
+		case compiler.FastLoopPartValue, compiler.FastLoopPartValueProperty, compiler.FastLoopPartValuePath, compiler.FastLoopPartCall, compiler.FastLoopPartPartial, compiler.FastLoopPartReturn:
 			size += 16
 		case compiler.FastLoopPartConditional:
 			size += fastLoopConditionalGrowSize(loop.Parts[i].Conditional)
@@ -201,7 +294,7 @@ func fastLoopPartsGrowSize(parts []compiler.FastLoopPart) int {
 			continue
 		case compiler.FastLoopPartKey:
 			size += 4
-		case compiler.FastLoopPartValue, compiler.FastLoopPartValueProperty, compiler.FastLoopPartValuePath, compiler.FastLoopPartCall, compiler.FastLoopPartPartial:
+		case compiler.FastLoopPartValue, compiler.FastLoopPartValueProperty, compiler.FastLoopPartValuePath, compiler.FastLoopPartCall, compiler.FastLoopPartPartial, compiler.FastLoopPartReturn:
 			size += 16
 		case compiler.FastLoopPartConditional:
 			size += fastLoopConditionalGrowSize(parts[i].Conditional)
@@ -284,6 +377,8 @@ func buildFastMixedPlan(plan *compiler.FastRenderPlan) *fastMixedPlan {
 			blockCall:     segment.BlockCall,
 			conditional:   segment.Conditional,
 			partial:       segment.Partial,
+			generic:       segment.Generic,
+			assignTarget:  segment.AssignTarget,
 			propertyCache: segment.PropertyCache,
 			outputCache:   segment.OutputCache,
 		}
@@ -315,6 +410,10 @@ func buildFastMixedPlan(plan *compiler.FastRenderPlan) *fastMixedPlan {
 			op.kind = fastMixedOpLet
 		case compiler.FastRenderSegmentAssign:
 			op.kind = fastMixedOpAssign
+		case compiler.FastRenderSegmentReturn:
+			op.kind = fastMixedOpReturn
+		case compiler.FastRenderSegmentGeneric:
+			op.kind = fastMixedOpGeneric
 		default:
 			op.kind = fastMixedOpStatic
 		}
@@ -507,6 +606,8 @@ func fastMixedOpsFromSegments(segments []compiler.FastRenderSegment) []fastMixed
 			blockCall:     segment.BlockCall,
 			conditional:   segment.Conditional,
 			partial:       segment.Partial,
+			generic:       segment.Generic,
+			assignTarget:  segment.AssignTarget,
 			propertyCache: segment.PropertyCache,
 			outputCache:   segment.OutputCache,
 		}
@@ -538,6 +639,10 @@ func fastMixedOpsFromSegments(segments []compiler.FastRenderSegment) []fastMixed
 			op.kind = fastMixedOpLet
 		case compiler.FastRenderSegmentAssign:
 			op.kind = fastMixedOpAssign
+		case compiler.FastRenderSegmentReturn:
+			op.kind = fastMixedOpReturn
+		case compiler.FastRenderSegmentGeneric:
+			op.kind = fastMixedOpGeneric
 		default:
 			op.kind = fastMixedOpStatic
 		}
@@ -563,6 +668,9 @@ func buildFastSimpleValuePlan(plan fastSimpleNameBinder, value *compiler.FastVal
 			prepared.lookupIndex = plan.bindNameIndex(value.NameIndex)
 		}
 	case compiler.FastValuePath:
+		if fastPathStepsNeedRuntimeBindings(value.Path) {
+			return nil
+		}
 		prepared.lookupIndex = plan.bindNameIndex(value.NameIndex)
 	case compiler.FastValueInfix:
 		if value.Left == nil || value.Right == nil {
@@ -594,6 +702,9 @@ func buildFastSimpleValuePlan(plan fastSimpleNameBinder, value *compiler.FastVal
 		if value.Call == nil {
 			return nil
 		}
+		if len(value.Path) > 0 {
+			return nil
+		}
 		prepared.lookupIndex = plan.bindNameIndex(value.Call.NameIndex)
 		if len(value.Call.Args) > 0 {
 			prepared.args = make([]*fastSimpleValuePlan, 0, len(value.Call.Args))
@@ -617,6 +728,9 @@ func buildFastSimpleValuePlan(plan fastSimpleNameBinder, value *compiler.FastVal
 			}
 		}
 	case compiler.FastValueHash:
+		if !fastValuePairsUseStaticStringKeys(value.Pairs) {
+			return nil
+		}
 		if len(value.Pairs) > 0 {
 			prepared.args = make([]*fastSimpleValuePlan, 0, len(value.Pairs))
 			for i := range value.Pairs {
@@ -627,6 +741,8 @@ func buildFastSimpleValuePlan(plan fastSimpleNameBinder, value *compiler.FastVal
 				prepared.args = append(prepared.args, pairValue)
 			}
 		}
+	case compiler.FastValueIndex:
+		return nil
 	case compiler.FastValueString, compiler.FastValueInteger, compiler.FastValueFloat, compiler.FastValueBool:
 		// Literal operands do not need binding slots.
 	default:
@@ -1007,6 +1123,9 @@ func evalFastSimpleValue(plan *fastSimpleValuePlan, ctx hctx.Context, bindings f
 	case compiler.FastValueHash:
 		return evalFastSimpleHashValue(plan, ctx, bindings, values, oks, base)
 	case compiler.FastValuePath:
+		if fastPathStepsNeedRuntimeBindings(value.Path) {
+			return evalFastPathValue(value, ctx, bindings, base, nil, nil, false)
+		}
 		raw := base
 		if value.NameIndex >= 0 {
 			var ok bool
@@ -1159,19 +1278,21 @@ func evalFastSimpleInfixValue(plan *fastSimpleValuePlan, ctx hctx.Context, bindi
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	leftOK := ok
+	if !leftOK {
 		left = nil
 	}
 	right, ok, err := evalFastSimpleValue(plan.right, ctx, bindings, values, oks, base)
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	rightOK := ok
+	if !rightOK {
 		right = nil
 	}
 	result, err := evalFastInfixOperator(value.Operator, left, right)
 	if err != nil {
-		return nil, true, fastLineError(value.Line, err)
+		return nil, true, fastLineError(value.Line, annotateFastInfixError(value, leftOK, rightOK, left, right, err))
 	}
 	return result, true, nil
 }
@@ -1180,14 +1301,25 @@ func evalFastSimplePrefixValue(plan *fastSimpleValuePlan, ctx hctx.Context, bind
 	if plan == nil || plan.value == nil || plan.value.Kind != compiler.FastValuePrefix || plan.right == nil {
 		return nil, false, nil
 	}
-	if plan.value.Operator != "!" {
-		return nil, true, fastLineError(plan.value.Line, fmt.Errorf("unknown fast prefix operator: %s", plan.value.Operator))
-	}
 	right, ok, err := evalFastSimpleValue(plan.right, ctx, bindings, values, oks, base)
 	if err != nil {
 		return nil, true, err
 	}
-	return !(ok && isTruthyFastValue(right)), true, nil
+	switch plan.value.Operator {
+	case "!":
+		return !(ok && isTruthyFastValue(right)), true, nil
+	case "-":
+		if !ok {
+			right = nil
+		}
+		result, err := evalFastMinusOperator(right)
+		if err != nil {
+			return nil, true, fastLineError(plan.value.Line, err)
+		}
+		return result, true, nil
+	default:
+		return nil, true, fastLineError(plan.value.Line, fmt.Errorf("unknown fast prefix operator: %s", plan.value.Operator))
+	}
 }
 
 func evalFastSimpleConcatValue(plan *fastSimpleValuePlan, ctx hctx.Context, bindings fastRenderBindings, values []interface{}, oks []bool, base interface{}) (interface{}, bool, error) {
@@ -1245,9 +1377,13 @@ func evalFastSimpleLogicalInfixValue(plan *fastSimpleValuePlan, ctx hctx.Context
 	return ok && isTruthyFastValue(right), true, nil
 }
 
-func renderFastMixedPlan(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, plan *fastMixedPlan) (bool, error) {
+func renderFastMixedPlan(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, plan *fastMixedPlan, bytecodes ...*compiler.Bytecode) (bool, error) {
 	if plan == nil {
 		return false, nil
+	}
+	var bytecode *compiler.Bytecode
+	if len(bytecodes) > 0 {
+		bytecode = bytecodes[0]
 	}
 	for i := range plan.ops {
 		op := &plan.ops[i]
@@ -1381,9 +1517,20 @@ func renderFastMixedPlan(out *strings.Builder, ctx hctx.Context, bindings fastRe
 			}
 			bindings.setLocalAndContext(op.nameIndex, value)
 		case fastMixedOpAssign:
-			if err := assignFastValue(ctx, &bindings, op.value, op.nameIndex, &op.valuePlan, op.line); err != nil {
+			if err := assignFastSegmentValue(ctx, &bindings, op.assignTarget, op.value, op.nameIndex, &op.valuePlan, op.line); err != nil {
 				return true, err
 			}
+		case fastMixedOpReturn:
+			if err := writeFastReturnSegment(out, ctx, bindings, &op.valuePlan, op.line); err != nil {
+				return true, err
+			}
+			return true, nil
+		case fastMixedOpGeneric:
+			ok, err := renderFastGenericSegment(out, ctx, bytecode, op.generic)
+			if !ok || err != nil {
+				return ok, err
+			}
+			return true, nil
 		default:
 			return false, nil
 		}
@@ -1477,15 +1624,55 @@ func renderFastSegments(out *strings.Builder, ctx hctx.Context, bindings fastRen
 			}
 			bindings.setLocalAndContext(segment.NameIndex, value)
 		case compiler.FastRenderSegmentAssign:
-			if err := assignFastValue(ctx, &bindings, segment.Value, segment.NameIndex, &segment.ValuePlan, segment.Line); err != nil {
+			if err := assignFastSegmentValue(ctx, &bindings, segment.AssignTarget, segment.Value, segment.NameIndex, &segment.ValuePlan, segment.Line); err != nil {
 				return true, err
 			}
+		case compiler.FastRenderSegmentReturn:
+			if err := writeFastReturnSegment(out, ctx, bindings, &segment.ValuePlan, segment.Line); err != nil {
+				return true, err
+			}
+			return true, nil
+		case compiler.FastRenderSegmentGeneric:
+			return false, nil
 		default:
 			return false, nil
 		}
 	}
 
 	return true, nil
+}
+
+func renderFastGenericSegment(out *strings.Builder, ctx hctx.Context, bytecode *compiler.Bytecode, generic *compiler.FastGenericPlan) (bool, error) {
+	if out == nil || bytecode == nil || generic == nil || !generic.WholeTemplate {
+		return false, nil
+	}
+	genericBytecode := *bytecode
+	genericBytecode.FastRenderPlan = nil
+	rendered, err := renderBytecodeVMWithState(&genericBytecode, ctx, "", false, "")
+	if err != nil {
+		return true, err
+	}
+	out.WriteString(rendered)
+	return true, nil
+}
+
+func writeFastReturnSegment(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, valuePlan *compiler.FastValuePlan, line int) error {
+	value, ok, err := evalFastValue(valuePlan, ctx, bindings, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fastLineError(line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(valuePlan)))
+	}
+	writeFastGoValue(out, ctx, value)
+	return nil
+}
+
+func assignFastSegmentValue(ctx hctx.Context, bindings *fastRenderBindings, target *compiler.FastAssignTarget, name string, nameIndex int, valuePlan *compiler.FastValuePlan, line int) error {
+	if target == nil || target.Kind == compiler.FastAssignTargetName {
+		return assignFastValue(ctx, bindings, name, nameIndex, valuePlan, line)
+	}
+	return assignFastIndexValue(ctx, bindings, target, valuePlan, line)
 }
 
 func assignFastValue(ctx hctx.Context, bindings *fastRenderBindings, name string, nameIndex int, valuePlan *compiler.FastValuePlan, line int) error {
@@ -1505,6 +1692,42 @@ func assignFastValue(ctx hctx.Context, bindings *fastRenderBindings, name string
 	if err := spendFastAssignment(ctx, line); err != nil {
 		return err
 	}
-	bindings.setLocalAndContext(nameIndex, value)
+	if !bindings.assignExistingLocalAndContext(nameIndex, value) {
+		return fastLineError(line, fmt.Errorf("%q: unknown identifier", name))
+	}
+	return nil
+}
+
+func assignFastIndexValue(ctx hctx.Context, bindings *fastRenderBindings, target *compiler.FastAssignTarget, valuePlan *compiler.FastValuePlan, line int) error {
+	if bindings == nil || target == nil || target.Kind != compiler.FastAssignTargetIndex {
+		return fastLineError(line, fmt.Errorf("unsupported assignment target"))
+	}
+	container, ok, err := evalFastValue(&target.Container, ctx, *bindings, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fastLineError(target.Line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(&target.Container)))
+	}
+	index, ok, err := evalFastValue(&target.Index, ctx, *bindings, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fastLineError(target.Line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(&target.Index)))
+	}
+	value, ok, err := evalFastValue(valuePlan, ctx, *bindings, nil)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fastLineError(line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(valuePlan)))
+	}
+	if err := spendFastAssignment(ctx, line); err != nil {
+		return err
+	}
+	if err := setFastIndexGoValue(container, index, value); err != nil {
+		return fastLineError(line, err)
+	}
 	return nil
 }

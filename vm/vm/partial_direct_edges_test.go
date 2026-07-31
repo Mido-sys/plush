@@ -688,7 +688,7 @@ func Test_VM_Fast_No_Data_Partial_Fallback_Edge_Branches(t *testing.T) {
 	})
 	handled, err = renderFastNoDataPartialInto(&out, "edge_fallback_error.html", feederErrCtx, 12)
 	require.True(t, handled)
-	require.ErrorContains(t, err, "line 12: fallback missing")
+	require.ErrorContains(t, err, "line 12:edge_fallback_error.html: fallback missing")
 
 	metadataCtx := plush.NewContextWith(map[string]interface{}{
 		"partialFeeder": func(string) (string, error) {

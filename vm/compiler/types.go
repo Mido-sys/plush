@@ -54,6 +54,8 @@ const (
 	FastRenderSegmentPartial
 	FastRenderSegmentLet
 	FastRenderSegmentAssign
+	FastRenderSegmentReturn
+	FastRenderSegmentGeneric
 )
 
 type FastRenderSegment struct {
@@ -71,6 +73,8 @@ type FastRenderSegment struct {
 	BlockCall     *FastBlockCallPlan
 	Conditional   *FastConditionalPlan
 	Partial       *FastPartialPlan
+	Generic       *FastGenericPlan
+	AssignTarget  *FastAssignTarget
 	PropertyCache object.InlineCacheSlot
 	CallCache     object.InlineCacheSlot
 	OutputCache   object.InlineCacheSlot
@@ -104,6 +108,8 @@ const (
 	FastLoopPartBlockCall
 	FastLoopPartPartial
 	FastLoopPartLet
+	FastLoopPartAssign
+	FastLoopPartReturn
 )
 
 type FastLoopPart struct {
@@ -117,6 +123,7 @@ type FastLoopPart struct {
 	Call          *FastCallPlan
 	BlockCall     *FastBlockCallPlan
 	Partial       *FastPartialPlan
+	AssignTarget  *FastAssignTarget
 	Conditional   *FastLoopConditionalPlan
 	Loop          *FastLoopPlan
 	PropertyCache object.InlineCacheSlot
@@ -131,6 +138,10 @@ type FastLoopPlan struct {
 	OuterNames        []string
 	Parts             []FastLoopPart
 	StaticSize        int
+	Silent            bool
+	HasLet            bool
+	HasAssign         bool
+	PartFlagsSet      bool
 	Line              int
 }
 
@@ -151,6 +162,7 @@ const (
 	FastValueConcat
 	FastValueArray
 	FastValueHash
+	FastValueIndex
 )
 
 type FastPathStepKind uint8
@@ -181,9 +193,10 @@ type FastValuePlan struct {
 }
 
 type FastValuePair struct {
-	Key   string
-	Value FastValuePlan
-	Line  int
+	Key     string
+	KeyPlan *FastValuePlan
+	Value   FastValuePlan
+	Line    int
 }
 
 type FastPathStep struct {
@@ -194,14 +207,32 @@ type FastPathStep struct {
 	Full          string
 	Method        bool
 	Line          int
+	Args          []FastValuePlan
 	PropertyCache object.InlineCacheSlot
 	CallCache     object.InlineCacheSlot
+}
+
+type FastAssignTargetKind uint8
+
+const (
+	FastAssignTargetName FastAssignTargetKind = iota
+	FastAssignTargetIndex
+)
+
+type FastAssignTarget struct {
+	Kind      FastAssignTargetKind
+	Name      string
+	NameIndex int
+	Container FastValuePlan
+	Index     FastValuePlan
+	Line      int
 }
 
 type FastCallPlan struct {
 	Name      string
 	NameIndex int
 	Args      []FastValuePlan
+	Silent    bool
 	Line      int
 	Cache     object.InlineCacheSlot
 }
@@ -213,6 +244,7 @@ type FastBlockCallPlan struct {
 	Block         *ast.BlockStatement
 	BlockSource   string
 	BlockBytecode *Bytecode
+	Silent        bool
 	Line          int
 	Cache         object.InlineCacheSlot
 }
@@ -227,6 +259,12 @@ type FastPartialDataPair struct {
 	Key   string
 	Value FastValuePlan
 	Line  int
+}
+
+type FastGenericPlan struct {
+	WholeTemplate bool
+	Reason        string
+	Line          int
 }
 
 type FastConditionalBranch struct {

@@ -331,7 +331,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 	if rendered, ok, err := tryRenderFastBytecode(cachedBytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
-				d.FastPath = plush.RenderFastPathFast
+				d.FastPath = renderFastPathForPlan(cachedBytecode.FastRenderPlan)
 			})
 		}
 		return rendered, err
@@ -387,7 +387,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 				if ok {
 					plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 						d.VMBytecodeCache = plush.VMBytecodeCacheHit
-						d.FastPath = plush.RenderFastPathFast
+						d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
 					})
 				}
 				return rendered, err
@@ -456,7 +456,7 @@ func renderSourceCachedBytecode(source string, ctx hctx.Context, bytecode *compi
 	if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, "", func(d *plush.RenderDiagnostics) {
-				d.FastPath = plush.RenderFastPathFast
+				d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
 			})
 		}
 		return rendered, err
@@ -509,7 +509,7 @@ func renderBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, erro
 	if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
-				d.FastPath = plush.RenderFastPathFast
+				d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
 			})
 		}
 		return rendered, err
@@ -528,6 +528,13 @@ func renderBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, erro
 		}
 	}
 	return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, "")
+}
+
+func renderFastPathForPlan(plan *compiler.FastRenderPlan) string {
+	if fastRenderPlanUsesGenericVM(plan) {
+		return plush.RenderFastPathGeneric
+	}
+	return plush.RenderFastPathFast
 }
 
 func punchHoleCacheState(ctx hctx.Context) (string, bool, string, bool) {

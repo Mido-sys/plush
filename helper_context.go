@@ -19,16 +19,26 @@ type HelperContext struct {
 	compiler    *compiler
 	block       *ast.BlockStatement
 	blockRunner func(hctx.Context) (string, error)
+	callLine    int
 }
 
 // NewHelperContext returns a HelperContext that can execute an optional block
 // using the supplied runner. It is used by alternate execution engines that
 // need to interoperate with helpers accepting plush.HelperContext.
 func NewHelperContext(ctx hctx.Context, runner func(hctx.Context) (string, error)) HelperContext {
+	return NewHelperContextWithLine(ctx, runner, 0)
+}
+
+func NewHelperContextWithLine(ctx hctx.Context, runner func(hctx.Context) (string, error), line int) HelperContext {
 	return HelperContext{
 		Context:     ctx,
 		blockRunner: runner,
+		callLine:    line,
 	}
+}
+
+func (h HelperContext) CallLine() int {
+	return h.callLine
 }
 
 // Render a string with the current context

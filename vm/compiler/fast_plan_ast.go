@@ -174,9 +174,6 @@ func fastRenderBuildLoopStatementReject(plan *FastRenderPlan, loop *FastLoopPlan
 		}
 		return rejectFastRender(stmt, "fast render builder declined loop expression statement: "+fastExpressionSummary(stmt.Expression))
 	case *ast.ReturnStatement:
-		if stmt.Type != token.E_START {
-			return rejectFastRender(stmt, "fast render builder declined loop non-output return")
-		}
 		return fastRenderBuildLoopOutputReject(plan, loop, stmt.ReturnValue, lineForNode(stmt))
 	default:
 		return rejectFastRender(stmt, "fast render builder declined loop statement")
@@ -240,13 +237,46 @@ func firstFastRenderStatementReject(plan *FastRenderPlan, loop *FastLoopPlan, st
 func fastRenderStatementReject(plan *FastRenderPlan, loop *FastLoopPlan, stmt ast.Statement, inLoop bool) FastRenderReject {
 	switch stmt := stmt.(type) {
 	case *ast.ExpressionStatement:
+		if isFastCommentStatement(stmt) {
+			return FastRenderReject{}
+		}
 		if _, ok := stmt.Expression.(*ast.HTMLLiteral); ok {
 			return FastRenderReject{}
 		}
 		if inLoop {
-			switch stmt.Expression.(type) {
+			switch expr := stmt.Expression.(type) {
 			case *ast.BreakExpression, *ast.ContinueExpression:
 				return FastRenderReject{}
+			case *ast.CallExpression:
+				if expr.Block != nil {
+					if _, ok := fastSilentLoopBlockCallPlanFromExpression(plan, loop, expr, lineForNode(stmt)); ok {
+						return FastRenderReject{}
+					}
+					return fastRenderLoopBlockCallReject(plan, loop, expr, lineForNode(stmt))
+				}
+				if _, ok := fastSilentLoopCallPlanFromExpression(plan, loop, expr, lineForNode(stmt)); ok {
+					return FastRenderReject{}
+				}
+				return fastRenderCallReject(plan, expr, lineForNode(stmt))
+			case *ast.ForExpression:
+				if _, ok := fastSilentNestedLoopPlanFromExpression(plan, loop, expr, lineForNode(stmt)); ok {
+					return FastRenderReject{}
+				}
+				return fastRenderLoopReject(plan, loop, expr, lineForNode(stmt))
+			case *ast.AssignExpression:
+				parts := []FastLoopPart{}
+				if appendFastLoopAssignExpression(plan, loop, &parts, expr, lineForNode(stmt)) {
+					return FastRenderReject{}
+				}
+				return fastRenderValueReject(plan, expr.Value, "loop assignment value")
+			case *ast.IndexExpression:
+				if expr.Value != nil {
+					parts := []FastLoopPart{}
+					if appendFastLoopIndexAssignExpression(plan, loop, &parts, expr, lineForNode(stmt)) {
+						return FastRenderReject{}
+					}
+					return fastRenderIndexAssignReject(plan, loop, expr, lineForNode(stmt), true)
+				}
 			}
 		}
 		if ifExpression, ok := stmt.Expression.(*ast.IfExpression); ok {
@@ -271,14 +301,42 @@ func fastRenderStatementReject(plan *FastRenderPlan, loop *FastLoopPlan, stmt as
 				}
 				return fastRenderValueReject(plan, assign.Value, "assignment value")
 			}
+			if index, ok := stmt.Expression.(*ast.IndexExpression); ok && index.Value != nil {
+				segments := []FastRenderSegment{}
+				if appendFastIndexAssignExpression(plan, &segments, index, lineForNode(stmt)) {
+					return FastRenderReject{}
+				}
+				return fastRenderIndexAssignReject(plan, nil, index, lineForNode(stmt), false)
+			}
+			if forExpression, ok := stmt.Expression.(*ast.ForExpression); ok {
+				if _, ok := fastSilentLoopPlanFromExpression(plan, forExpression, lineForNode(stmt)); ok {
+					return FastRenderReject{}
+				}
+				return fastRenderLoopReject(plan, nil, forExpression, lineForNode(stmt))
+			}
+			if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok && callExpression.Block != nil {
+				if _, ok := fastSilentBlockCallPlanFromExpression(plan, callExpression, lineForNode(stmt)); ok {
+					return FastRenderReject{}
+				}
+				return fastRenderBlockCallReject(plan, callExpression, lineForNode(stmt))
+			}
+			if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok {
+				if _, ok := fastSilentCallPlanFromExpression(plan, callExpression, lineForNode(stmt)); ok {
+					return FastRenderReject{}
+				}
+				return fastRenderCallReject(plan, callExpression, lineForNode(stmt))
+			}
 		}
 		return rejectFastRender(stmt, "script expression statements are not fast-planned: "+fastExpressionSummary(stmt.Expression))
 	case *ast.ReturnStatement:
-		if stmt.Type != token.E_START {
-			return rejectFastRender(stmt, "non-output return statements are not fast-planned")
-		}
 		if inLoop {
 			return fastRenderLoopOutputReject(plan, loop, stmt.ReturnValue, lineForNode(stmt))
+		}
+		if stmt.Type != token.E_START {
+			if _, ok := fastValuePlanFromExpression(plan, stmt.ReturnValue, false, lineForNode(stmt.ReturnValue)); ok {
+				return FastRenderReject{}
+			}
+			return fastRenderValueReject(plan, stmt.ReturnValue, "return value")
 		}
 		return fastRenderOutputReject(plan, stmt.ReturnValue, lineForNode(stmt))
 	case *ast.LetStatement:
@@ -298,6 +356,17 @@ func fastRenderStatementReject(plan *FastRenderPlan, loop *FastLoopPlan, stmt as
 	default:
 		return rejectFastRender(stmt, "unsupported statement type for fast render")
 	}
+}
+
+func isFastCommentStatement(stmt *ast.ExpressionStatement) bool {
+	if stmt == nil {
+		return false
+	}
+	literal, ok := stmt.Expression.(*ast.StringLiteral)
+	if !ok || literal.Value != "" {
+		return false
+	}
+	return stmt.Token.Type == token.C_START || literal.Token.Type == token.E_END
 }
 
 func fastRenderOutputReject(plan *FastRenderPlan, expr ast.Expression, line int) FastRenderReject {
@@ -365,7 +434,7 @@ func fastRenderLoopReject(plan *FastRenderPlan, parent *FastLoopPlan, expr *ast.
 	if !ok {
 		return fastRenderValueReject(plan, expr.Iterable, "for iterable")
 	}
-	if iterable.Value == "nil" || !fastLoopIterableValueSupported(iterable) {
+	if !fastLoopIterableValueSupported(iterable) {
 		return FastRenderReject{Line: lineForNode(expr.Iterable), Reason: "unsupported for iterable for fast render: " + fastValuePlanSummary(iterable)}
 	}
 	loop := &FastLoopPlan{
@@ -403,7 +472,7 @@ func fastRenderLoopOutputReject(plan *FastRenderPlan, loop *FastLoopPlan, expr a
 		if _, ok := fastPartialPlanFromCall(plan, expr, line); ok {
 			return FastRenderReject{}
 		}
-		if _, ok := fastValuePlanFromLoopCall(loop, expr, line); ok {
+		if _, ok := fastValuePlanFromLoopCallWithPlan(plan, loop, expr, line); ok {
 			return FastRenderReject{}
 		}
 		if root, ok := fastLoopExpressionRootName(expr); ok && fastLoopHasOuterName(loop, root) {
@@ -419,7 +488,7 @@ func fastRenderLoopOutputReject(plan *FastRenderPlan, loop *FastLoopPlan, expr a
 		if _, ok := fastValuePlanFromLoopOperand(plan, loop, expr, false, line); ok {
 			return FastRenderReject{}
 		}
-		if _, ok := fastValuePlanFromLoopIndex(loop, expr, line); ok {
+		if _, ok := fastValuePlanFromLoopIndexWithPlan(plan, loop, expr, line); ok {
 			return FastRenderReject{}
 		}
 		return fastRenderValueReject(plan, expr, "loop output expression")
@@ -539,8 +608,8 @@ func fastRenderValueReject(plan *FastRenderPlan, expr ast.Expression, role strin
 			})
 		}
 		for _, key := range keys {
-			if _, ok := fastPartialDataKey(key); !ok {
-				return FastRenderReject{Line: lineForNode(key), Reason: role + ": hash literal keys must be identifiers or strings"}
+			if _, _, ok := fastHashLiteralKeyPlan(plan, key, lineForNode(key)); !ok {
+				return FastRenderReject{Line: lineForNode(key), Reason: role + ": unsupported hash literal key for fast render"}
 			}
 			value := expr.Pairs[key]
 			if _, ok := fastValuePlanFromExpression(plan, value, false, lineForNode(value)); !ok {
@@ -713,6 +782,22 @@ func appendFastStatements(plan *FastRenderPlan, segments *[]FastRenderSegment, s
 	return true
 }
 
+func appendFastOutputBlockStatements(plan *FastRenderPlan, segments *[]FastRenderSegment, statements []ast.Statement) bool {
+	for _, stmt := range statements {
+		if !appendFastOutputBlockStatement(plan, segments, stmt) {
+			return false
+		}
+	}
+	return true
+}
+
+func appendFastOutputBlockStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, stmt ast.Statement) bool {
+	if ret, ok := stmt.(*ast.ReturnStatement); ok {
+		return appendFastOutputExpression(plan, segments, ret.ReturnValue, lineForNode(ret))
+	}
+	return appendFastStatement(plan, segments, stmt)
+}
+
 func appendFastSilentStatements(plan *FastRenderPlan, segments *[]FastRenderSegment, statements []ast.Statement) bool {
 	for _, stmt := range statements {
 		if !appendFastSilentStatement(plan, segments, stmt) {
@@ -725,12 +810,59 @@ func appendFastSilentStatements(plan *FastRenderPlan, segments *[]FastRenderSegm
 func appendFastSilentStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, stmt ast.Statement) bool {
 	switch stmt := stmt.(type) {
 	case *ast.ExpressionStatement:
+		if isFastCommentStatement(stmt) {
+			return true
+		}
 		if html, ok := stmt.Expression.(*ast.HTMLLiteral); ok {
 			appendFastStatic(plan, segments, html.Value)
 			return true
 		}
 		if assign, ok := stmt.Expression.(*ast.AssignExpression); ok {
 			return appendFastAssignExpression(plan, segments, assign, lineForNode(stmt))
+		}
+		if index, ok := stmt.Expression.(*ast.IndexExpression); ok && index.Value != nil {
+			return appendFastIndexAssignExpression(plan, segments, index, lineForNode(stmt))
+		}
+		if forExpression, ok := stmt.Expression.(*ast.ForExpression); ok {
+			loop, ok := fastSilentLoopPlanFromExpression(plan, forExpression, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*segments = append(*segments, FastRenderSegment{
+				Kind: FastRenderSegmentLoop,
+				Loop: loop,
+				Line: lineForNode(stmt),
+			})
+			plan.NameCount++
+			return true
+		}
+		if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok {
+			if callExpression.Block != nil {
+				call, ok := fastSilentBlockCallPlanFromExpression(plan, callExpression, lineForNode(stmt))
+				if !ok {
+					return false
+				}
+				*segments = append(*segments, FastRenderSegment{
+					Kind:      FastRenderSegmentBlockCall,
+					Value:     call.Name,
+					BlockCall: call,
+					Line:      lineForNode(stmt),
+				})
+				plan.NameCount++
+				return true
+			}
+			call, ok := fastSilentCallPlanFromExpression(plan, callExpression, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*segments = append(*segments, FastRenderSegment{
+				Kind:  FastRenderSegmentCall,
+				Value: call.Name,
+				Call:  call,
+				Line:  lineForNode(stmt),
+			})
+			plan.NameCount++
+			return true
 		}
 		if ifExpression, ok := stmt.Expression.(*ast.IfExpression); ok {
 			conditional, ok := fastSilentConditionalPlanFromExpression(plan, ifExpression, lineForNode(stmt))
@@ -748,6 +880,8 @@ func appendFastSilentStatement(plan *FastRenderPlan, segments *[]FastRenderSegme
 		return false
 	case *ast.ReturnStatement:
 		return appendFastOutputExpression(plan, segments, stmt.ReturnValue, lineForNode(stmt))
+	case *ast.LetStatement:
+		return appendFastLetStatement(plan, segments, stmt)
 	default:
 		return false
 	}
@@ -756,12 +890,59 @@ func appendFastSilentStatement(plan *FastRenderPlan, segments *[]FastRenderSegme
 func appendFastStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, stmt ast.Statement) bool {
 	switch stmt := stmt.(type) {
 	case *ast.ExpressionStatement:
+		if isFastCommentStatement(stmt) {
+			return true
+		}
 		if html, ok := stmt.Expression.(*ast.HTMLLiteral); ok {
 			appendFastStatic(plan, segments, html.Value)
 			return true
 		}
 		if assign, ok := stmt.Expression.(*ast.AssignExpression); ok {
 			return appendFastAssignExpression(plan, segments, assign, lineForNode(stmt))
+		}
+		if index, ok := stmt.Expression.(*ast.IndexExpression); ok && index.Value != nil {
+			return appendFastIndexAssignExpression(plan, segments, index, lineForNode(stmt))
+		}
+		if forExpression, ok := stmt.Expression.(*ast.ForExpression); ok {
+			loop, ok := fastSilentLoopPlanFromExpression(plan, forExpression, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*segments = append(*segments, FastRenderSegment{
+				Kind: FastRenderSegmentLoop,
+				Loop: loop,
+				Line: lineForNode(stmt),
+			})
+			plan.NameCount++
+			return true
+		}
+		if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok {
+			if callExpression.Block != nil {
+				call, ok := fastSilentBlockCallPlanFromExpression(plan, callExpression, lineForNode(stmt))
+				if !ok {
+					return false
+				}
+				*segments = append(*segments, FastRenderSegment{
+					Kind:      FastRenderSegmentBlockCall,
+					Value:     call.Name,
+					BlockCall: call,
+					Line:      lineForNode(stmt),
+				})
+				plan.NameCount++
+				return true
+			}
+			call, ok := fastSilentCallPlanFromExpression(plan, callExpression, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*segments = append(*segments, FastRenderSegment{
+				Kind:  FastRenderSegmentCall,
+				Value: call.Name,
+				Call:  call,
+				Line:  lineForNode(stmt),
+			})
+			plan.NameCount++
+			return true
 		}
 		if ifExpression, ok := stmt.Expression.(*ast.IfExpression); ok {
 			conditional, ok := fastSilentConditionalPlanFromExpression(plan, ifExpression, lineForNode(stmt))
@@ -778,15 +959,32 @@ func appendFastStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, st
 		}
 		return false
 	case *ast.ReturnStatement:
-		if stmt.Type != token.E_START {
-			return false
+		if stmt.Type == token.E_START {
+			return appendFastOutputExpression(plan, segments, stmt.ReturnValue, lineForNode(stmt))
 		}
-		return appendFastOutputExpression(plan, segments, stmt.ReturnValue, lineForNode(stmt))
+		return appendFastReturnStatement(plan, segments, stmt)
 	case *ast.LetStatement:
 		return appendFastLetStatement(plan, segments, stmt)
 	default:
 		return false
 	}
+}
+
+func appendFastReturnStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, stmt *ast.ReturnStatement) bool {
+	if stmt == nil {
+		return false
+	}
+	value, ok := fastValuePlanFromExpression(plan, stmt.ReturnValue, false, lineForNode(stmt.ReturnValue))
+	if !ok {
+		return false
+	}
+	*segments = append(*segments, FastRenderSegment{
+		Kind:      FastRenderSegmentReturn,
+		ValuePlan: value,
+		Line:      lineForNode(stmt),
+	})
+	plan.NameCount++
+	return true
 }
 
 func appendFastLetStatement(plan *FastRenderPlan, segments *[]FastRenderSegment, stmt *ast.LetStatement) bool {
@@ -821,7 +1019,32 @@ func appendFastAssignExpression(plan *FastRenderPlan, segments *[]FastRenderSegm
 		Value:     expr.Name.Value,
 		NameIndex: plan.bindName(expr.Name.Value),
 		ValuePlan: value,
-		Line:      line,
+		AssignTarget: &FastAssignTarget{
+			Kind:      FastAssignTargetName,
+			Name:      expr.Name.Value,
+			NameIndex: plan.bindName(expr.Name.Value),
+			Line:      line,
+		},
+		Line: line,
+	})
+	plan.NameCount++
+	return true
+}
+
+func appendFastIndexAssignExpression(plan *FastRenderPlan, segments *[]FastRenderSegment, expr *ast.IndexExpression, line int) bool {
+	target, ok := fastAssignIndexTargetFromExpression(plan, nil, expr, line, false)
+	if !ok {
+		return false
+	}
+	value, ok := fastValuePlanFromExpression(plan, expr.Value, false, lineForNode(expr.Value))
+	if !ok || !fastAssignValueSupported(value) {
+		return false
+	}
+	*segments = append(*segments, FastRenderSegment{
+		Kind:         FastRenderSegmentAssign,
+		ValuePlan:    value,
+		AssignTarget: &target,
+		Line:         line,
 	})
 	plan.NameCount++
 	return true
@@ -829,11 +1052,77 @@ func appendFastAssignExpression(plan *FastRenderPlan, segments *[]FastRenderSegm
 
 func fastAssignValueSupported(value FastValuePlan) bool {
 	switch value.Kind {
-	case FastValueName, FastValueString, FastValueInteger, FastValueFloat, FastValueBool, FastValuePath, FastValueCall, FastValuePrefix:
+	case FastValueName, FastValueString, FastValueInteger, FastValueFloat, FastValueBool, FastValuePath, FastValueCall, FastValuePrefix, FastValueInfix, FastValueConcat, FastValueArray, FastValueHash, FastValueIndex:
 		return true
 	default:
 		return false
 	}
+}
+
+func fastAssignIndexTargetFromExpression(plan *FastRenderPlan, loop *FastLoopPlan, expr *ast.IndexExpression, line int, inLoop bool) (FastAssignTarget, bool) {
+	if expr == nil || expr.Left == nil || expr.Index == nil || expr.Value == nil || expr.Callee != nil {
+		return FastAssignTarget{}, false
+	}
+	container, ok := fastValuePlanForAssignOperand(plan, loop, expr.Left, false, lineForNode(expr.Left), inLoop)
+	if !ok {
+		return FastAssignTarget{}, false
+	}
+	index, ok := fastValuePlanForAssignOperand(plan, loop, expr.Index, false, lineForNode(expr.Index), inLoop)
+	if !ok || !fastIndexOperandSupported(index) {
+		return FastAssignTarget{}, false
+	}
+	return FastAssignTarget{
+		Kind:      FastAssignTargetIndex,
+		Container: container,
+		Index:     index,
+		Line:      line,
+	}, true
+}
+
+func fastValuePlanForAssignOperand(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, nullOnMissing bool, line int, inLoop bool) (FastValuePlan, bool) {
+	if inLoop {
+		return fastValuePlanFromLoopOperand(plan, loop, expr, nullOnMissing, line)
+	}
+	return fastValuePlanFromExpression(plan, expr, nullOnMissing, line)
+}
+
+func fastIndexOperandSupported(value FastValuePlan) bool {
+	switch value.Kind {
+	case FastValueName, FastValueString, FastValueInteger, FastValueFloat, FastValueBool, FastValuePath, FastValueCall, FastValuePrefix, FastValueInfix, FastValueConcat, FastValueIndex, FastValueLoopKey:
+		return true
+	default:
+		return false
+	}
+}
+
+func fastIndexContainerSupported(value FastValuePlan) bool {
+	switch value.Kind {
+	case FastValueName, FastValuePath, FastValueCall, FastValueArray, FastValueHash, FastValueIndex:
+		return true
+	default:
+		return false
+	}
+}
+
+func fastRenderIndexAssignReject(plan *FastRenderPlan, loop *FastLoopPlan, expr *ast.IndexExpression, line int, inLoop bool) FastRenderReject {
+	if expr == nil {
+		return FastRenderReject{Line: line, Reason: "nil index assignment is not fast-planned"}
+	}
+	if expr.Callee != nil {
+		return rejectFastRender(expr, "assignment target: chained index assignments are not fast-planned")
+	}
+	if _, ok := fastValuePlanForAssignOperand(plan, loop, expr.Left, false, lineForNode(expr.Left), inLoop); !ok {
+		return fastRenderValueReject(plan, expr.Left, "assignment target")
+	}
+	index, ok := fastValuePlanForAssignOperand(plan, loop, expr.Index, false, lineForNode(expr.Index), inLoop)
+	if !ok || !fastIndexOperandSupported(index) {
+		return fastRenderValueReject(plan, expr.Index, "assignment index")
+	}
+	value, ok := fastValuePlanForAssignOperand(plan, loop, expr.Value, false, lineForNode(expr.Value), inLoop)
+	if !ok || !fastAssignValueSupported(value) {
+		return fastRenderValueReject(plan, expr.Value, "assignment value")
+	}
+	return rejectFastRender(expr, "unsupported index assignment target for fast render")
 }
 
 func appendFastOutputExpression(plan *FastRenderPlan, segments *[]FastRenderSegment, expr ast.Expression, line int) bool {
@@ -1036,7 +1325,7 @@ func fastValuePlanFromHashLiteral(plan *FastRenderPlan, expr *ast.HashLiteral, l
 	}
 	pairs := make([]FastValuePair, 0, len(keys))
 	for _, keyExpr := range keys {
-		key, ok := fastPartialDataKey(keyExpr)
+		key, keyPlan, ok := fastHashLiteralKeyPlan(plan, keyExpr, lineForNode(keyExpr))
 		if !ok {
 			return FastValuePlan{}, false
 		}
@@ -1046,9 +1335,10 @@ func fastValuePlanFromHashLiteral(plan *FastRenderPlan, expr *ast.HashLiteral, l
 			return FastValuePlan{}, false
 		}
 		pairs = append(pairs, FastValuePair{
-			Key:   key,
-			Value: value,
-			Line:  lineForNode(valueExpr),
+			Key:     key,
+			KeyPlan: keyPlan,
+			Value:   value,
+			Line:    lineForNode(valueExpr),
 		})
 	}
 	return FastValuePlan{
@@ -1056,6 +1346,26 @@ func fastValuePlanFromHashLiteral(plan *FastRenderPlan, expr *ast.HashLiteral, l
 		Pairs: pairs,
 		Line:  line,
 	}, true
+}
+
+func fastHashLiteralKeyPlan(plan *FastRenderPlan, expr ast.Expression, line int) (string, *FastValuePlan, bool) {
+	if key, ok := fastPartialDataKey(expr); ok {
+		return key, nil, true
+	}
+	value, ok := fastValuePlanFromExpression(plan, expr, false, line)
+	if !ok || !fastHashLiteralKeySupported(value) {
+		return "", nil, false
+	}
+	return "", &value, true
+}
+
+func fastHashLiteralKeySupported(value FastValuePlan) bool {
+	switch value.Kind {
+	case FastValueString, FastValueInteger, FastValueBool:
+		return true
+	default:
+		return false
+	}
 }
 
 func fastValuePlanFromInfixExpression(plan *FastRenderPlan, expr *ast.InfixExpression, line int) (FastValuePlan, bool) {
@@ -1086,7 +1396,12 @@ func fastValuePlanFromInfixExpression(plan *FastRenderPlan, expr *ast.InfixExpre
 }
 
 func fastValuePlanFromPrefixExpression(plan *FastRenderPlan, expr *ast.PrefixExpression, line int) (FastValuePlan, bool) {
-	if expr == nil || expr.Operator != "!" || expr.Right == nil {
+	if expr == nil || expr.Right == nil {
+		return FastValuePlan{}, false
+	}
+	switch expr.Operator {
+	case "!", "-":
+	default:
 		return FastValuePlan{}, false
 	}
 	right, ok := fastValuePlanFromExpression(plan, expr.Right, true, lineForNode(expr.Right))
@@ -1156,16 +1471,46 @@ func fastValuePlanFromIdentifier(plan *FastRenderPlan, ident *ast.Identifier, nu
 func fastValuePlanFromIndexExpression(plan *FastRenderPlan, exp *ast.IndexExpression, nullOnMissing bool, line int) (FastValuePlan, bool) {
 	value, ok := fastValuePlanFromExpression(plan, exp.Left, nullOnMissing, line)
 	if !ok || !value.canUsePath() {
-		return FastValuePlan{}, false
+		return fastValuePlanFromDynamicIndexExpression(plan, exp, nullOnMissing, line)
 	}
 	indexStep, ok := fastIndexStepFromExpression(exp.Index, line)
 	if !ok {
+		return fastValuePlanFromDynamicIndexExpression(plan, exp, nullOnMissing, line)
+	}
+	appendFastValuePathStep(&value, indexStep)
+	if exp.Callee != nil {
+		if !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.Callee, lastChainPart(exp.Left), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromExpression(plan, arg, false, argLine)
+		}) {
+			return FastValuePlan{}, false
+		}
+	}
+	return value, true
+}
+
+func fastValuePlanFromDynamicIndexExpression(plan *FastRenderPlan, exp *ast.IndexExpression, nullOnMissing bool, line int) (FastValuePlan, bool) {
+	if exp == nil || exp.Left == nil || exp.Index == nil {
 		return FastValuePlan{}, false
 	}
-	value.Kind = FastValuePath
-	value.Path = append(value.Path, indexStep)
+	left, ok := fastValuePlanFromExpression(plan, exp.Left, nullOnMissing, lineForNode(exp.Left))
+	if !ok || !fastIndexContainerSupported(left) {
+		return FastValuePlan{}, false
+	}
+	index, ok := fastValuePlanFromExpression(plan, exp.Index, false, lineForNode(exp.Index))
+	if !ok || !fastIndexOperandSupported(index) {
+		return FastValuePlan{}, false
+	}
+	value := FastValuePlan{
+		Kind:          FastValueIndex,
+		Left:          &left,
+		Right:         &index,
+		NullOnMissing: nullOnMissing,
+		Line:          line,
+	}
 	if exp.Callee != nil {
-		if !appendFastReceiverCallee(&value, exp.Callee, lastChainPart(exp.Left), line) {
+		if !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.Callee, lastChainPart(exp.Left), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromExpression(plan, arg, false, argLine)
+		}) {
 			return FastValuePlan{}, false
 		}
 	}
@@ -1176,8 +1521,28 @@ func fastValuePlanFromCallExpression(plan *FastRenderPlan, exp *ast.CallExpressi
 	if exp.Block != nil {
 		return FastValuePlan{}, false
 	}
+	if exp.ChainCallee != nil {
+		root := *exp
+		root.ChainCallee = nil
+		if call, ok := fastCallPlanFromExpression(plan, &root, line); ok {
+			value := FastValuePlan{
+				Kind: FastValueCall,
+				Call: call,
+				Line: line,
+			}
+			if !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+				return fastValuePlanFromExpression(plan, arg, false, argLine)
+			}) {
+				return FastValuePlan{}, false
+			}
+			return value, true
+		}
+	}
 	if ident, ok := exp.Function.(*ast.Identifier); ok {
 		parts := identifierParts(ident)
+		if len(parts) > 1 && len(exp.Arguments) > 0 {
+			return fastValuePlanFromReceiverCallExpression(plan, exp, parts, nullOnMissing, line)
+		}
 		if len(parts) > 1 && len(exp.Arguments) == 0 {
 			value := FastValuePlan{
 				Kind:          FastValuePath,
@@ -1194,16 +1559,15 @@ func fastValuePlanFromCallExpression(plan *FastRenderPlan, exp *ast.CallExpressi
 				Value: callExpressionName(exp),
 				Line:  line,
 			})
-			if exp.ChainCallee != nil && !appendFastReceiverCallee(&value, exp.ChainCallee, lastChainPart(exp.Function), line) {
+			if exp.ChainCallee != nil && !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+				return fastValuePlanFromExpression(plan, arg, false, argLine)
+			}) {
 				return FastValuePlan{}, false
 			}
 			return value, true
 		}
 	}
 	if call, ok := fastCallPlanFromExpression(plan, exp, line); ok {
-		if call.Name == "partial" {
-			return FastValuePlan{}, false
-		}
 		return FastValuePlan{
 			Kind: FastValueCall,
 			Call: call,
@@ -1215,25 +1579,44 @@ func fastValuePlanFromCallExpression(plan *FastRenderPlan, exp *ast.CallExpressi
 		if !ok || !value.canUsePath() {
 			return FastValuePlan{}, false
 		}
-		value.Kind = FastValuePath
-		value.Path = append(value.Path, FastPathStep{
+		appendFastValuePathStep(&value, FastPathStep{
 			Kind:  FastPathStepCall,
 			Value: callExpressionName(exp),
 			Line:  line,
 		})
-		if exp.ChainCallee != nil && !appendFastReceiverCallee(&value, exp.ChainCallee, lastChainPart(exp.Function), line) {
+		if exp.ChainCallee != nil && !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromExpression(plan, arg, false, argLine)
+		}) {
 			return FastValuePlan{}, false
 		}
 		return value, true
 	}
-	return FastValuePlan{}, false
+	value, ok := fastValuePlanFromExpression(plan, exp.Function, nullOnMissing, line)
+	if !ok || !value.canUsePath() {
+		return FastValuePlan{}, false
+	}
+	callStep := FastPathStep{
+		Kind:  FastPathStepCall,
+		Value: callExpressionName(exp),
+		Line:  line,
+	}
+	for _, arg := range exp.Arguments {
+		argPlan, ok := fastValuePlanFromExpression(plan, arg, false, lineForNode(arg))
+		if !ok {
+			return FastValuePlan{}, false
+		}
+		callStep.Args = append(callStep.Args, argPlan)
+	}
+	appendFastValuePathStep(&value, callStep)
+	if exp.ChainCallee != nil && !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+		return fastValuePlanFromExpression(plan, arg, false, argLine)
+	}) {
+		return FastValuePlan{}, false
+	}
+	return value, true
 }
 
-func (v FastValuePlan) canUsePath() bool {
-	return v.Kind == FastValueName || v.Kind == FastValuePath
-}
-
-func appendFastReceiverCallee(value *FastValuePlan, exp ast.Expression, base string, line int) bool {
+func appendFastReceiverCalleeWithArgumentPlanner(value *FastValuePlan, exp ast.Expression, base string, line int, argPlan func(ast.Expression, int) (FastValuePlan, bool)) bool {
 	switch exp := exp.(type) {
 	case *ast.Identifier:
 		receiver := base
@@ -1247,7 +1630,7 @@ func appendFastReceiverCallee(value *FastValuePlan, exp ast.Expression, base str
 		}
 		return true
 	case *ast.IndexExpression:
-		if !appendFastReceiverCallee(value, exp.Left, base, line) {
+		if !appendFastReceiverCalleeWithArgumentPlanner(value, exp.Left, base, line, argPlan) {
 			return false
 		}
 		indexStep, ok := fastIndexStepFromExpression(exp.Index, line)
@@ -1256,11 +1639,11 @@ func appendFastReceiverCallee(value *FastValuePlan, exp ast.Expression, base str
 		}
 		value.Path = append(value.Path, indexStep)
 		if exp.Callee != nil {
-			return appendFastReceiverCallee(value, exp.Callee, lastChainPart(exp.Left), line)
+			return appendFastReceiverCalleeWithArgumentPlanner(value, exp.Callee, lastChainPart(exp.Left), line, argPlan)
 		}
 		return true
 	case *ast.CallExpression:
-		if exp.Block != nil || len(exp.Arguments) != 0 {
+		if exp.Block != nil {
 			return false
 		}
 		if ident, ok := exp.Function.(*ast.Identifier); ok {
@@ -1274,21 +1657,88 @@ func appendFastReceiverCallee(value *FastValuePlan, exp ast.Expression, base str
 				value.Path = append(value.Path, fastPropertyStep(property, receiver, full, line, i == len(parts)-1))
 				receiver = full
 			}
-		} else if !appendFastReceiverCallee(value, exp.Function, base, line) {
+		} else if !appendFastReceiverCalleeWithArgumentPlanner(value, exp.Function, base, line, argPlan) {
 			return false
 		}
-		value.Path = append(value.Path, FastPathStep{
+		callStep := FastPathStep{
 			Kind:  FastPathStepCall,
 			Value: callExpressionName(exp),
 			Line:  line,
-		})
+		}
+		for _, arg := range exp.Arguments {
+			if argPlan == nil {
+				return false
+			}
+			planned, ok := argPlan(arg, lineForNode(arg))
+			if !ok {
+				return false
+			}
+			callStep.Args = append(callStep.Args, planned)
+		}
+		value.Path = append(value.Path, callStep)
 		if exp.ChainCallee != nil {
-			return appendFastReceiverCallee(value, exp.ChainCallee, lastChainPart(exp.Function), line)
+			return appendFastReceiverCalleeWithArgumentPlanner(value, exp.ChainCallee, lastChainPart(exp.Function), line, argPlan)
 		}
 		return true
 	default:
 		return false
 	}
+}
+
+func appendFastReceiverCallee(value *FastValuePlan, exp ast.Expression, base string, line int) bool {
+	return appendFastReceiverCalleeWithArgumentPlanner(value, exp, base, line, nil)
+}
+
+func fastValuePlanFromReceiverCallExpression(plan *FastRenderPlan, exp *ast.CallExpression, parts []string, nullOnMissing bool, line int) (FastValuePlan, bool) {
+	if exp == nil || exp.Block != nil || len(parts) < 2 || parts[0] == "" {
+		return FastValuePlan{}, false
+	}
+	value := FastValuePlan{
+		Kind:          FastValuePath,
+		Value:         parts[0],
+		NameIndex:     plan.bindName(parts[0]),
+		NullOnMissing: nullOnMissing,
+		Line:          line,
+	}
+	receiver := parts[0]
+	for i, property := range parts[1:] {
+		full := receiver + "." + property
+		value.Path = append(value.Path, fastPropertyStep(property, receiver, full, line, i == len(parts[1:])-1))
+		receiver = full
+	}
+	callStep := FastPathStep{
+		Kind:  FastPathStepCall,
+		Value: callExpressionName(exp),
+		Line:  line,
+	}
+	for _, arg := range exp.Arguments {
+		argPlan, ok := fastValuePlanFromExpression(plan, arg, false, lineForNode(arg))
+		if !ok {
+			return FastValuePlan{}, false
+		}
+		callStep.Args = append(callStep.Args, argPlan)
+	}
+	value.Path = append(value.Path, callStep)
+	if exp.ChainCallee != nil && !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+		return fastValuePlanFromExpression(plan, arg, false, argLine)
+	}) {
+		return FastValuePlan{}, false
+	}
+	return value, true
+}
+
+func (v FastValuePlan) canUsePath() bool {
+	return v.Kind == FastValueName || v.Kind == FastValuePath || v.Kind == FastValueIndex || v.Kind == FastValueCall
+}
+
+func appendFastValuePathStep(value *FastValuePlan, step FastPathStep) {
+	if value == nil {
+		return
+	}
+	if value.Kind == FastValueName {
+		value.Kind = FastValuePath
+	}
+	value.Path = append(value.Path, step)
 }
 
 func fastPropertyStep(property, receiver, full string, line int, method bool) FastPathStep {
@@ -1335,7 +1785,7 @@ func fastCallPlanFromExpression(plan *FastRenderPlan, exp *ast.CallExpression, l
 		return nil, false
 	}
 	ident, ok := exp.Function.(*ast.Identifier)
-	if !ok || ident.Callee != nil || ident.Value == "" || ident.Value == "nil" || ident.Value == "partial" {
+	if !ok || !fastPlainHelperIdentifier(ident) || ident.Value == "nil" {
 		return nil, false
 	}
 	call := &FastCallPlan{
@@ -1350,6 +1800,15 @@ func fastCallPlanFromExpression(plan *FastRenderPlan, exp *ast.CallExpression, l
 		}
 		call.Args = append(call.Args, value)
 	}
+	return call, true
+}
+
+func fastSilentCallPlanFromExpression(plan *FastRenderPlan, exp *ast.CallExpression, line int) (*FastCallPlan, bool) {
+	call, ok := fastCallPlanFromExpression(plan, exp, line)
+	if !ok {
+		return nil, false
+	}
+	call.Silent = true
 	return call, true
 }
 
@@ -1381,86 +1840,190 @@ func fastBlockCallPlanFromExpression(plan *FastRenderPlan, exp *ast.CallExpressi
 	return call, true
 }
 
-func fastBlockCanRenderFromSource(block *ast.BlockStatement) bool {
-	return block != nil && !fastBlockStatementsHaveAssignment(block.Statements)
+func fastSilentBlockCallPlanFromExpression(plan *FastRenderPlan, exp *ast.CallExpression, line int) (*FastBlockCallPlan, bool) {
+	call, ok := fastBlockCallPlanFromExpression(plan, exp, line)
+	if !ok {
+		return nil, false
+	}
+	call.Silent = true
+	return call, true
 }
 
-func fastBlockStatementsHaveAssignment(statements []ast.Statement) bool {
+func fastBlockCanRenderFromSource(block *ast.BlockStatement) bool {
+	if block == nil {
+		return false
+	}
+	return true
+}
+
+func fastBlockStatementsAllowScopedAssignments(statements []ast.Statement, locals map[string]struct{}) (map[string]struct{}, bool) {
+	scoped := cloneFastBlockLocals(locals)
 	for _, stmt := range statements {
-		if fastBlockStatementHasAssignment(stmt) {
-			return true
+		var ok bool
+		scoped, ok = fastBlockStatementAllowScopedAssignments(stmt, scoped)
+		if !ok {
+			return nil, false
 		}
 	}
-	return false
+	return scoped, true
 }
 
-func fastBlockStatementHasAssignment(stmt ast.Statement) bool {
+func fastBlockStatementAllowScopedAssignments(stmt ast.Statement, locals map[string]struct{}) (map[string]struct{}, bool) {
 	switch stmt := stmt.(type) {
 	case nil:
-		return false
+		return locals, true
 	case *ast.ExpressionStatement:
-		return fastBlockExpressionHasAssignment(stmt.Expression)
+		return locals, fastBlockExpressionAssignmentsAreScoped(stmt.Expression, locals)
 	case *ast.ReturnStatement:
-		return fastBlockExpressionHasAssignment(stmt.ReturnValue)
+		return locals, fastBlockExpressionAssignmentsAreScoped(stmt.ReturnValue, locals)
 	case *ast.LetStatement:
-		return fastBlockExpressionHasAssignment(stmt.Value)
+		if !fastBlockExpressionAssignmentsAreScoped(stmt.Value, locals) {
+			return nil, false
+		}
+		if stmt.Name != nil && stmt.Name.Value != "" && stmt.Name.Callee == nil {
+			locals = cloneFastBlockLocals(locals)
+			locals[stmt.Name.Value] = struct{}{}
+		}
+		return locals, true
 	case *ast.BlockStatement:
-		return fastBlockStatementsHaveAssignment(stmt.Statements)
+		_, ok := fastBlockStatementsAllowScopedAssignments(stmt.Statements, locals)
+		return locals, ok
 	default:
-		return false
+		return locals, true
 	}
 }
 
-func fastBlockExpressionHasAssignment(expr ast.Expression) bool {
+func fastBlockExpressionAssignmentsAreScoped(expr ast.Expression, locals map[string]struct{}) bool {
 	switch expr := expr.(type) {
 	case nil:
-		return false
-	case *ast.AssignExpression:
 		return true
+	case *ast.AssignExpression:
+		if expr.Name == nil || !fastBlockLocalExists(locals, expr.Name.Value) {
+			return false
+		}
+		return fastBlockExpressionAssignmentsAreScoped(expr.Value, locals)
 	case *ast.PrefixExpression:
-		return fastBlockExpressionHasAssignment(expr.Right)
+		return fastBlockExpressionAssignmentsAreScoped(expr.Right, locals)
 	case *ast.InfixExpression:
-		return fastBlockExpressionHasAssignment(expr.Left) || fastBlockExpressionHasAssignment(expr.Right)
+		return fastBlockExpressionAssignmentsAreScoped(expr.Left, locals) && fastBlockExpressionAssignmentsAreScoped(expr.Right, locals)
 	case *ast.IndexExpression:
-		return fastBlockExpressionHasAssignment(expr.Left) || fastBlockExpressionHasAssignment(expr.Index) || fastBlockExpressionHasAssignment(expr.Callee)
+		if expr.Value != nil {
+			root, ok := fastBlockAssignmentRoot(expr.Left)
+			if !ok || !fastBlockLocalExists(locals, root) {
+				return false
+			}
+			return fastBlockExpressionAssignmentsAreScoped(expr.Left, locals) &&
+				fastBlockExpressionAssignmentsAreScoped(expr.Index, locals) &&
+				fastBlockExpressionAssignmentsAreScoped(expr.Value, locals) &&
+				fastBlockExpressionAssignmentsAreScoped(expr.Callee, locals)
+		}
+		return fastBlockExpressionAssignmentsAreScoped(expr.Left, locals) &&
+			fastBlockExpressionAssignmentsAreScoped(expr.Index, locals) &&
+			fastBlockExpressionAssignmentsAreScoped(expr.Callee, locals)
 	case *ast.CallExpression:
-		if fastBlockExpressionHasAssignment(expr.Function) || fastBlockExpressionHasAssignment(expr.ChainCallee) {
-			return true
+		if !fastBlockExpressionAssignmentsAreScoped(expr.Function, locals) || !fastBlockExpressionAssignmentsAreScoped(expr.ChainCallee, locals) {
+			return false
 		}
 		for _, arg := range expr.Arguments {
-			if fastBlockExpressionHasAssignment(arg) {
-				return true
+			if !fastBlockExpressionAssignmentsAreScoped(arg, locals) {
+				return false
 			}
 		}
-		return expr.Block != nil && fastBlockStatementsHaveAssignment(expr.Block.Statements)
+		if expr.Block != nil {
+			_, ok := fastBlockStatementsAllowScopedAssignments(expr.Block.Statements, locals)
+			return ok
+		}
+		return true
 	case *ast.IfExpression:
-		if fastBlockExpressionHasAssignment(expr.Condition) || (expr.Block != nil && fastBlockStatementsHaveAssignment(expr.Block.Statements)) {
-			return true
+		if !fastBlockExpressionAssignmentsAreScoped(expr.Condition, locals) {
+			return false
+		}
+		if expr.Block != nil {
+			if _, ok := fastBlockStatementsAllowScopedAssignments(expr.Block.Statements, locals); !ok {
+				return false
+			}
 		}
 		for _, elseIf := range expr.ElseIf {
-			if elseIf != nil && (fastBlockExpressionHasAssignment(elseIf.Condition) || (elseIf.Block != nil && fastBlockStatementsHaveAssignment(elseIf.Block.Statements))) {
-				return true
+			if elseIf == nil {
+				continue
+			}
+			if !fastBlockExpressionAssignmentsAreScoped(elseIf.Condition, locals) {
+				return false
+			}
+			if elseIf.Block != nil {
+				if _, ok := fastBlockStatementsAllowScopedAssignments(elseIf.Block.Statements, locals); !ok {
+					return false
+				}
 			}
 		}
-		return expr.ElseBlock != nil && fastBlockStatementsHaveAssignment(expr.ElseBlock.Statements)
+		if expr.ElseBlock != nil {
+			_, ok := fastBlockStatementsAllowScopedAssignments(expr.ElseBlock.Statements, locals)
+			return ok
+		}
+		return true
 	case *ast.ForExpression:
-		return fastBlockExpressionHasAssignment(expr.Iterable) || (expr.Block != nil && fastBlockStatementsHaveAssignment(expr.Block.Statements))
+		if !fastBlockExpressionAssignmentsAreScoped(expr.Iterable, locals) {
+			return false
+		}
+		if expr.Block == nil {
+			return true
+		}
+		loopLocals := cloneFastBlockLocals(locals)
+		if expr.KeyName != "" && expr.KeyName != "_" {
+			loopLocals[expr.KeyName] = struct{}{}
+		}
+		if expr.ValueName != "" && expr.ValueName != "_" {
+			loopLocals[expr.ValueName] = struct{}{}
+		}
+		_, ok := fastBlockStatementsAllowScopedAssignments(expr.Block.Statements, loopLocals)
+		return ok
 	case *ast.ArrayLiteral:
 		for _, element := range expr.Elements {
-			if fastBlockExpressionHasAssignment(element) {
-				return true
+			if !fastBlockExpressionAssignmentsAreScoped(element, locals) {
+				return false
 			}
 		}
-		return false
+		return true
 	case *ast.HashLiteral:
 		for key, value := range expr.Pairs {
-			if fastBlockExpressionHasAssignment(key) || fastBlockExpressionHasAssignment(value) {
-				return true
+			if !fastBlockExpressionAssignmentsAreScoped(key, locals) || !fastBlockExpressionAssignmentsAreScoped(value, locals) {
+				return false
 			}
 		}
-		return false
+		return true
 	default:
+		return true
+	}
+}
+
+func cloneFastBlockLocals(locals map[string]struct{}) map[string]struct{} {
+	clone := make(map[string]struct{}, len(locals)+1)
+	for name := range locals {
+		clone[name] = struct{}{}
+	}
+	return clone
+}
+
+func fastBlockLocalExists(locals map[string]struct{}, name string) bool {
+	if name == "" {
 		return false
+	}
+	_, ok := locals[name]
+	return ok
+}
+
+func fastBlockAssignmentRoot(expr ast.Expression) (string, bool) {
+	switch expr := expr.(type) {
+	case *ast.Identifier:
+		parts := identifierParts(expr)
+		if len(parts) == 0 {
+			return "", false
+		}
+		return parts[0], true
+	case *ast.IndexExpression:
+		return fastBlockAssignmentRoot(expr.Left)
+	default:
+		return "", false
 	}
 }
 
@@ -1583,7 +2146,7 @@ func fastConditionalPlanFromExpression(plan *FastRenderPlan, expr *ast.IfExpress
 		return nil, false
 	}
 	firstSegments := []FastRenderSegment{}
-	if !appendFastStatements(plan, &firstSegments, expr.Block.Statements) {
+	if !appendFastOutputBlockStatements(plan, &firstSegments, expr.Block.Statements) {
 		return nil, false
 	}
 	conditional.Branches = append(conditional.Branches, FastConditionalBranch{
@@ -1600,7 +2163,7 @@ func fastConditionalPlanFromExpression(plan *FastRenderPlan, expr *ast.IfExpress
 			return nil, false
 		}
 		segments := []FastRenderSegment{}
-		if !appendFastStatements(plan, &segments, elseIf.Block.Statements) {
+		if !appendFastOutputBlockStatements(plan, &segments, elseIf.Block.Statements) {
 			return nil, false
 		}
 		conditional.Branches = append(conditional.Branches, FastConditionalBranch{
@@ -1611,7 +2174,7 @@ func fastConditionalPlanFromExpression(plan *FastRenderPlan, expr *ast.IfExpress
 	}
 	if expr.ElseBlock != nil {
 		segments := []FastRenderSegment{}
-		if !appendFastStatements(plan, &segments, expr.ElseBlock.Statements) {
+		if !appendFastOutputBlockStatements(plan, &segments, expr.ElseBlock.Statements) {
 			return nil, false
 		}
 		conditional.ElseSegments = segments
@@ -1675,6 +2238,9 @@ func firstFastSilentStatementReject(plan *FastRenderPlan, statements []ast.State
 func fastSilentStatementReject(plan *FastRenderPlan, stmt ast.Statement) FastRenderReject {
 	switch stmt := stmt.(type) {
 	case *ast.ExpressionStatement:
+		if isFastCommentStatement(stmt) {
+			return FastRenderReject{}
+		}
 		if _, ok := stmt.Expression.(*ast.HTMLLiteral); ok {
 			return FastRenderReject{}
 		}
@@ -1684,6 +2250,31 @@ func fastSilentStatementReject(plan *FastRenderPlan, stmt ast.Statement) FastRen
 				return FastRenderReject{}
 			}
 			return fastRenderValueReject(plan, assign.Value, "script assignment value")
+		}
+		if index, ok := stmt.Expression.(*ast.IndexExpression); ok && index.Value != nil {
+			segments := []FastRenderSegment{}
+			if appendFastIndexAssignExpression(plan, &segments, index, lineForNode(stmt)) {
+				return FastRenderReject{}
+			}
+			return fastRenderIndexAssignReject(plan, nil, index, lineForNode(stmt), false)
+		}
+		if forExpression, ok := stmt.Expression.(*ast.ForExpression); ok {
+			if _, ok := fastSilentLoopPlanFromExpression(plan, forExpression, lineForNode(stmt)); ok {
+				return FastRenderReject{}
+			}
+			return fastRenderLoopReject(plan, nil, forExpression, lineForNode(stmt))
+		}
+		if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok && callExpression.Block != nil {
+			if _, ok := fastSilentBlockCallPlanFromExpression(plan, callExpression, lineForNode(stmt)); ok {
+				return FastRenderReject{}
+			}
+			return fastRenderBlockCallReject(plan, callExpression, lineForNode(stmt))
+		}
+		if callExpression, ok := stmt.Expression.(*ast.CallExpression); ok {
+			if _, ok := fastSilentCallPlanFromExpression(plan, callExpression, lineForNode(stmt)); ok {
+				return FastRenderReject{}
+			}
+			return fastRenderCallReject(plan, callExpression, lineForNode(stmt))
 		}
 		if ifExpression, ok := stmt.Expression.(*ast.IfExpression); ok {
 			return fastSilentConditionalReject(plan, ifExpression, lineForNode(stmt))
@@ -1695,7 +2286,11 @@ func fastSilentStatementReject(plan *FastRenderPlan, stmt ast.Statement) FastRen
 		}
 		return fastRenderOutputReject(plan, stmt.ReturnValue, lineForNode(stmt))
 	case *ast.LetStatement:
-		return rejectFastRender(stmt, "let statements inside script if bodies are not fast-planned")
+		segments := []FastRenderSegment{}
+		if appendFastLetStatement(plan, &segments, stmt) {
+			return FastRenderReject{}
+		}
+		return fastRenderValueReject(plan, stmt.Value, "script if let value")
 	default:
 		return rejectFastRender(stmt, "unsupported script if body statement type for fast render")
 	}
@@ -1759,16 +2354,28 @@ func fastLoopPlanFromExpression(plan *FastRenderPlan, expr *ast.ForExpression, l
 	return fastLoopPlanFromExpressionWithOuterNames(plan, nil, expr, line)
 }
 
+func fastSilentLoopPlanFromExpression(plan *FastRenderPlan, expr *ast.ForExpression, line int) (*FastLoopPlan, bool) {
+	return fastLoopPlanFromExpressionWithOuterNamesAndSilent(plan, nil, expr, line, true)
+}
+
 func fastNestedLoopPlanFromExpression(plan *FastRenderPlan, parent *FastLoopPlan, expr *ast.ForExpression, line int) (*FastLoopPlan, bool) {
 	return fastLoopPlanFromExpressionWithOuterNames(plan, fastLoopOuterNames(parent), expr, line)
 }
 
+func fastSilentNestedLoopPlanFromExpression(plan *FastRenderPlan, parent *FastLoopPlan, expr *ast.ForExpression, line int) (*FastLoopPlan, bool) {
+	return fastLoopPlanFromExpressionWithOuterNamesAndSilent(plan, fastLoopOuterNames(parent), expr, line, true)
+}
+
 func fastLoopPlanFromExpressionWithOuterNames(plan *FastRenderPlan, outerNames []string, expr *ast.ForExpression, line int) (*FastLoopPlan, bool) {
+	return fastLoopPlanFromExpressionWithOuterNamesAndSilent(plan, outerNames, expr, line, false)
+}
+
+func fastLoopPlanFromExpressionWithOuterNamesAndSilent(plan *FastRenderPlan, outerNames []string, expr *ast.ForExpression, line int, silent bool) (*FastLoopPlan, bool) {
 	if expr == nil || expr.Block == nil {
 		return nil, false
 	}
 	iterable, ok := fastValuePlanFromExpression(plan, expr.Iterable, false, lineForNode(expr.Iterable))
-	if !ok || iterable.Value == "nil" || !fastLoopIterableValueSupported(iterable) {
+	if !ok || !fastLoopIterableValueSupported(iterable) {
 		return nil, false
 	}
 	loop := &FastLoopPlan{
@@ -1778,11 +2385,13 @@ func fastLoopPlanFromExpressionWithOuterNames(plan *FastRenderPlan, outerNames [
 		KeyName:           expr.KeyName,
 		ValueName:         expr.ValueName,
 		OuterNames:        append([]string(nil), outerNames...),
+		Silent:            silent,
 		Line:              line,
 	}
 	if !appendFastLoopStatements(plan, loop, &loop.Parts, expr.Block.Statements) {
 		return nil, false
 	}
+	loop.PartFlagsSet = true
 	return loop, true
 }
 
@@ -1807,6 +2416,9 @@ func appendFastLoopStatements(plan *FastRenderPlan, loop *FastLoopPlan, parts *[
 func appendFastLoopStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]FastLoopPart, stmt ast.Statement) bool {
 	switch stmt := stmt.(type) {
 	case *ast.ExpressionStatement:
+		if isFastCommentStatement(stmt) {
+			return true
+		}
 		switch expr := stmt.Expression.(type) {
 		case *ast.HTMLLiteral:
 			appendFastLoopStatic(plan, loop, parts, expr.Value)
@@ -1816,6 +2428,49 @@ func appendFastLoopStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]
 			return true
 		case *ast.ContinueExpression:
 			appendFastLoopControlPart(parts, FastLoopPartContinue, lineForNode(stmt))
+			return true
+		case *ast.AssignExpression:
+			return appendFastLoopAssignExpression(plan, loop, parts, expr, lineForNode(stmt))
+		case *ast.IndexExpression:
+			if expr.Value != nil {
+				return appendFastLoopIndexAssignExpression(plan, loop, parts, expr, lineForNode(stmt))
+			}
+			return false
+		case *ast.CallExpression:
+			if expr.Block == nil {
+				call, ok := fastSilentLoopCallPlanFromExpression(plan, loop, expr, lineForNode(stmt))
+				if !ok {
+					return false
+				}
+				*parts = append(*parts, FastLoopPart{
+					Kind:  FastLoopPartCall,
+					Value: call.Name,
+					Call:  call,
+					Line:  lineForNode(stmt),
+				})
+				return true
+			}
+			blockCall, ok := fastSilentLoopBlockCallPlanFromExpression(plan, loop, expr, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*parts = append(*parts, FastLoopPart{
+				Kind:      FastLoopPartBlockCall,
+				Value:     blockCall.Name,
+				BlockCall: blockCall,
+				Line:      lineForNode(stmt),
+			})
+			return true
+		case *ast.ForExpression:
+			nested, ok := fastSilentNestedLoopPlanFromExpression(plan, loop, expr, lineForNode(stmt))
+			if !ok {
+				return false
+			}
+			*parts = append(*parts, FastLoopPart{
+				Kind: FastLoopPartLoop,
+				Loop: nested,
+				Line: lineForNode(stmt),
+			})
 			return true
 		case *ast.IfExpression:
 			conditional, ok := fastSilentLoopConditionalPlanFromExpression(plan, loop, expr, lineForNode(stmt))
@@ -1833,7 +2488,7 @@ func appendFastLoopStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]
 		}
 	case *ast.ReturnStatement:
 		if stmt.Type != token.E_START {
-			return false
+			return appendFastLoopReturnStatement(plan, loop, parts, stmt)
 		}
 		return appendFastLoopOutputParts(plan, loop, parts, stmt.ReturnValue, lineForNode(stmt))
 	case *ast.LetStatement:
@@ -1841,6 +2496,82 @@ func appendFastLoopStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]
 	default:
 		return false
 	}
+}
+
+func appendFastLoopReturnStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]FastLoopPart, stmt *ast.ReturnStatement) bool {
+	if stmt == nil {
+		return false
+	}
+	value, ok := fastValuePlanFromLoopOperand(plan, loop, stmt.ReturnValue, false, lineForNode(stmt.ReturnValue))
+	if !ok {
+		return false
+	}
+	*parts = append(*parts, FastLoopPart{
+		Kind:      FastLoopPartReturn,
+		ValuePlan: value,
+		Line:      lineForNode(stmt),
+	})
+	plan.NameCount++
+	return true
+}
+
+func appendFastLoopAssignExpression(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]FastLoopPart, expr *ast.AssignExpression, line int) bool {
+	if expr == nil || expr.Name == nil || expr.Name.Callee != nil || expr.Name.Value == "" || expr.Value == nil {
+		return false
+	}
+	if !fastLoopAssignTargetSupported(loop, expr.Name.Value) {
+		return false
+	}
+	value, ok := fastValuePlanFromLoopOperand(plan, loop, expr.Value, false, lineForNode(expr.Value))
+	if !ok || !fastAssignValueSupported(value) {
+		return false
+	}
+	*parts = append(*parts, FastLoopPart{
+		Kind:      FastLoopPartAssign,
+		Value:     expr.Name.Value,
+		NameIndex: plan.bindName(expr.Name.Value),
+		ValuePlan: value,
+		AssignTarget: &FastAssignTarget{
+			Kind:      FastAssignTargetName,
+			Name:      expr.Name.Value,
+			NameIndex: plan.bindName(expr.Name.Value),
+			Line:      line,
+		},
+		Line: line,
+	})
+	loop.HasAssign = true
+	plan.NameCount++
+	return true
+}
+
+func appendFastLoopIndexAssignExpression(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]FastLoopPart, expr *ast.IndexExpression, line int) bool {
+	target, ok := fastAssignIndexTargetFromExpression(plan, loop, expr, line, true)
+	if !ok {
+		return false
+	}
+	value, ok := fastValuePlanFromLoopOperand(plan, loop, expr.Value, false, lineForNode(expr.Value))
+	if !ok || !fastAssignValueSupported(value) {
+		return false
+	}
+	*parts = append(*parts, FastLoopPart{
+		Kind:         FastLoopPartAssign,
+		ValuePlan:    value,
+		AssignTarget: &target,
+		Line:         line,
+	})
+	loop.HasAssign = true
+	plan.NameCount++
+	return true
+}
+
+func fastLoopAssignTargetSupported(loop *FastLoopPlan, name string) bool {
+	if loop == nil || name == "" || name == "_" {
+		return false
+	}
+	if fastLoopHasOuterName(loop, name) {
+		return false
+	}
+	return true
 }
 
 func appendFastLoopLetStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts *[]FastLoopPart, stmt *ast.LetStatement) bool {
@@ -1858,6 +2589,7 @@ func appendFastLoopLetStatement(plan *FastRenderPlan, loop *FastLoopPlan, parts 
 		ValuePlan: value,
 		Line:      lineForNode(stmt),
 	})
+	loop.HasLet = true
 	plan.NameCount++
 	return true
 }
@@ -1969,7 +2701,7 @@ func appendFastLoopOutputParts(plan *FastRenderPlan, loop *FastLoopPlan, parts *
 			})
 			return true
 		}
-		if value, ok := fastValuePlanFromLoopCall(loop, expr, line); ok {
+		if value, ok := fastValuePlanFromLoopCallWithPlan(plan, loop, expr, line); ok {
 			*parts = append(*parts, FastLoopPart{Kind: FastLoopPartValuePath, ValuePlan: value, Line: line})
 			return true
 		}
@@ -1988,6 +2720,10 @@ func appendFastLoopOutputParts(plan *FastRenderPlan, loop *FastLoopPlan, parts *
 				Call:  call,
 				Line:  line,
 			})
+			return true
+		}
+		if value, ok := fastValuePlanFromLoopOperand(plan, loop, expr, false, line); ok {
+			*parts = append(*parts, FastLoopPart{Kind: FastLoopPartValuePath, ValuePlan: value, Line: line})
 			return true
 		}
 		return false
@@ -2087,6 +2823,52 @@ func fastSilentLoopConditionalPlanFromExpression(plan *FastRenderPlan, loop *Fas
 	return conditional, true
 }
 
+func fastLoopPartsHaveAssignmentLetConflict(parts []FastLoopPart, inheritedLets map[string]struct{}) bool {
+	letNames := inheritedLets
+	for i := range parts {
+		part := &parts[i]
+		switch part.Kind {
+		case FastLoopPartLet:
+			if letNames == nil {
+				letNames = make(map[string]struct{}, 1)
+			}
+			letNames[part.Value] = struct{}{}
+		case FastLoopPartAssign:
+			if _, ok := letNames[part.Value]; ok {
+				return true
+			}
+		case FastLoopPartConditional:
+			if part.Conditional == nil {
+				continue
+			}
+			for branchIndex := range part.Conditional.Branches {
+				if fastLoopPartsHaveAssignmentLetConflict(part.Conditional.Branches[branchIndex].Parts, cloneFastLoopLetNames(letNames)) {
+					return true
+				}
+			}
+			if fastLoopPartsHaveAssignmentLetConflict(part.Conditional.ElseParts, cloneFastLoopLetNames(letNames)) {
+				return true
+			}
+		case FastLoopPartLoop:
+			if part.Loop != nil && fastLoopPartsHaveAssignmentLetConflict(part.Loop.Parts, nil) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cloneFastLoopLetNames(names map[string]struct{}) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	clone := make(map[string]struct{}, len(names))
+	for name := range names {
+		clone[name] = struct{}{}
+	}
+	return clone
+}
+
 func fastValuePlanFromLoopCondition(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, line int) (FastValuePlan, bool) {
 	if prefix, ok := expr.(*ast.PrefixExpression); ok {
 		return fastValuePlanFromLoopPrefix(plan, loop, prefix, line)
@@ -2125,7 +2907,12 @@ func fastValuePlanFromLoopInfix(plan *FastRenderPlan, loop *FastLoopPlan, expr *
 }
 
 func fastValuePlanFromLoopPrefix(plan *FastRenderPlan, loop *FastLoopPlan, expr *ast.PrefixExpression, line int) (FastValuePlan, bool) {
-	if expr == nil || expr.Operator != "!" || expr.Right == nil {
+	if expr == nil || expr.Right == nil {
+		return FastValuePlan{}, false
+	}
+	switch expr.Operator {
+	case "!", "-":
+	default:
 		return FastValuePlan{}, false
 	}
 	right, ok := fastValuePlanFromLoopOperand(plan, loop, expr.Right, true, lineForNode(expr.Right))
@@ -2163,7 +2950,7 @@ func fastValuePlanFromLoopConcat(plan *FastRenderPlan, loop *FastLoopPlan, expr 
 
 func fastInfixOperator(operator string) bool {
 	switch operator {
-	case "-", "*", "/", "==", "!=", "<", ">", "<=", ">=", "&&", "||":
+	case "-", "*", "/", "==", "!=", "~=", "<", ">", "<=", ">=", "&&", "||":
 		return true
 	default:
 		return false
@@ -2179,9 +2966,19 @@ func fastValuePlanFromLoopOperand(plan *FastRenderPlan, loop *FastLoopPlan, expr
 		return fastValuePlanFromLoopArrayLiteral(plan, loop, expr, line)
 	case *ast.HashLiteral:
 		return fastValuePlanFromLoopHashLiteral(plan, loop, expr, line)
+	case *ast.IndexExpression:
+		return fastValuePlanFromLoopIndexWithPlan(plan, loop, expr, line)
+	case *ast.StringLiteral:
+		return FastValuePlan{Kind: FastValueString, Value: expr.Value, Line: line}, true
+	case *ast.IntegerLiteral:
+		return FastValuePlan{Kind: FastValueInteger, IntValue: int64(expr.Value), Line: line}, true
+	case *ast.FloatLiteral:
+		return FastValuePlan{Kind: FastValueFloat, FloatValue: expr.Value, Line: line}, true
+	case *ast.Boolean:
+		return FastValuePlan{Kind: FastValueBool, BoolValue: expr.Value, Line: line}, true
 	}
 	if call, ok := expr.(*ast.CallExpression); ok {
-		if value, ok := fastValuePlanFromLoopCall(loop, call, line); ok {
+		if value, ok := fastValuePlanFromLoopCallWithPlan(plan, loop, call, line); ok {
 			return value, true
 		}
 		if planned, ok := fastLoopCallPlanFromExpression(plan, loop, call, line); ok {
@@ -2206,7 +3003,7 @@ func fastValuePlanFromLoopOperand(plan *FastRenderPlan, loop *FastLoopPlan, expr
 			return FastValuePlan{}, false
 		}
 		if root == loop.ValueName {
-			return fastValuePlanFromLoopExpression(loop, expr, line)
+			return fastValuePlanFromLoopExpression(plan, loop, expr, line)
 		}
 		if fastLoopHasOuterName(loop, root) {
 			return fastValuePlanFromExpression(plan, expr, nullOnMissing, line)
@@ -2249,7 +3046,7 @@ func fastValuePlanFromLoopHashLiteral(plan *FastRenderPlan, loop *FastLoopPlan, 
 	}
 	pairs := make([]FastValuePair, 0, len(keys))
 	for _, keyExpr := range keys {
-		key, ok := fastPartialDataKey(keyExpr)
+		key, keyPlan, ok := fastLoopHashLiteralKeyPlan(plan, loop, keyExpr, lineForNode(keyExpr))
 		if !ok {
 			return FastValuePlan{}, false
 		}
@@ -2259,9 +3056,10 @@ func fastValuePlanFromLoopHashLiteral(plan *FastRenderPlan, loop *FastLoopPlan, 
 			return FastValuePlan{}, false
 		}
 		pairs = append(pairs, FastValuePair{
-			Key:   key,
-			Value: value,
-			Line:  lineForNode(valueExpr),
+			Key:     key,
+			KeyPlan: keyPlan,
+			Value:   value,
+			Line:    lineForNode(valueExpr),
 		})
 	}
 	return FastValuePlan{
@@ -2271,12 +3069,23 @@ func fastValuePlanFromLoopHashLiteral(plan *FastRenderPlan, loop *FastLoopPlan, 
 	}, true
 }
 
+func fastLoopHashLiteralKeyPlan(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, line int) (string, *FastValuePlan, bool) {
+	if key, ok := fastPartialDataKey(expr); ok {
+		return key, nil, true
+	}
+	value, ok := fastValuePlanFromLoopOperand(plan, loop, expr, false, line)
+	if !ok || !fastHashLiteralKeySupported(value) {
+		return "", nil, false
+	}
+	return "", &value, true
+}
+
 func fastLoopCallPlanFromExpression(plan *FastRenderPlan, loop *FastLoopPlan, exp *ast.CallExpression, line int) (*FastCallPlan, bool) {
 	if plan == nil || loop == nil || exp == nil || exp.Block != nil || exp.ChainCallee != nil {
 		return nil, false
 	}
 	ident, ok := exp.Function.(*ast.Identifier)
-	if !ok || ident.Callee != nil || ident.Value == "" || ident.Value == "nil" || ident.Value == "partial" {
+	if !ok || !fastPlainHelperIdentifier(ident) || ident.Value == "nil" {
 		return nil, false
 	}
 	call := &FastCallPlan{
@@ -2291,6 +3100,15 @@ func fastLoopCallPlanFromExpression(plan *FastRenderPlan, loop *FastLoopPlan, ex
 		}
 		call.Args = append(call.Args, value)
 	}
+	return call, true
+}
+
+func fastSilentLoopCallPlanFromExpression(plan *FastRenderPlan, loop *FastLoopPlan, exp *ast.CallExpression, line int) (*FastCallPlan, bool) {
+	call, ok := fastLoopCallPlanFromExpression(plan, loop, exp, line)
+	if !ok {
+		return nil, false
+	}
+	call.Silent = true
 	return call, true
 }
 
@@ -2319,6 +3137,15 @@ func fastLoopBlockCallPlanFromExpression(plan *FastRenderPlan, loop *FastLoopPla
 		}
 		call.Args = append(call.Args, value)
 	}
+	return call, true
+}
+
+func fastSilentLoopBlockCallPlanFromExpression(plan *FastRenderPlan, loop *FastLoopPlan, exp *ast.CallExpression, line int) (*FastBlockCallPlan, bool) {
+	call, ok := fastLoopBlockCallPlanFromExpression(plan, loop, exp, line)
+	if !ok {
+		return nil, false
+	}
+	call.Silent = true
 	return call, true
 }
 
@@ -2394,45 +3221,118 @@ func isFastLoopKeyIdentifier(loop *FastLoopPlan, expr ast.Expression) bool {
 }
 
 func fastValuePlanFromLoopIndex(loop *FastLoopPlan, expr ast.Expression, line int) (FastValuePlan, bool) {
+	return fastValuePlanFromLoopIndexWithPlan(&FastRenderPlan{}, loop, expr, line)
+}
+
+func fastValuePlanFromLoopIndexWithPlan(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, line int) (FastValuePlan, bool) {
 	index, ok := expr.(*ast.IndexExpression)
 	if !ok {
 		return FastValuePlan{}, false
 	}
-	value, ok := fastValuePlanFromLoopExpressionWithMethod(loop, index.Left, line, false)
+	value, ok := fastValuePlanFromLoopExpressionWithMethodWithPlan(plan, loop, index.Left, line, false)
 	if !ok {
-		return FastValuePlan{}, false
+		return fastValuePlanFromLoopDynamicIndex(plan, loop, index, line)
 	}
 	indexStep, ok := fastIndexStepFromExpression(index.Index, line)
 	if !ok {
-		return FastValuePlan{}, false
+		return fastValuePlanFromLoopDynamicIndex(plan, loop, index, line)
 	}
 	value.Path = append(value.Path, indexStep)
-	if index.Callee != nil && !appendFastReceiverCallee(&value, index.Callee, lastChainPart(index.Left), line) {
+	if index.Callee != nil {
+		if !appendFastReceiverCalleeWithArgumentPlanner(&value, index.Callee, lastChainPart(index.Left), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromLoopCallArgument(plan, loop, arg, argLine)
+		}) {
+			return FastValuePlan{}, false
+		}
+	}
+	return value, true
+}
+
+func fastValuePlanFromLoopDynamicIndex(plan *FastRenderPlan, loop *FastLoopPlan, expr *ast.IndexExpression, line int) (FastValuePlan, bool) {
+	if expr == nil || expr.Left == nil || expr.Index == nil {
 		return FastValuePlan{}, false
+	}
+	left, ok := fastValuePlanFromLoopOperand(plan, loop, expr.Left, false, lineForNode(expr.Left))
+	if !ok {
+		return FastValuePlan{}, false
+	}
+	index, ok := fastValuePlanFromLoopOperand(plan, loop, expr.Index, false, lineForNode(expr.Index))
+	if !ok || !fastIndexOperandSupported(index) {
+		return FastValuePlan{}, false
+	}
+	value := FastValuePlan{
+		Kind:  FastValueIndex,
+		Left:  &left,
+		Right: &index,
+		Line:  line,
+	}
+	if expr.Callee != nil {
+		if !appendFastReceiverCalleeWithArgumentPlanner(&value, expr.Callee, lastChainPart(expr.Left), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromLoopCallArgument(plan, loop, arg, argLine)
+		}) {
+			return FastValuePlan{}, false
+		}
 	}
 	return value, true
 }
 
 func fastValuePlanFromLoopCall(loop *FastLoopPlan, exp *ast.CallExpression, line int) (FastValuePlan, bool) {
-	if exp == nil || exp.Block != nil || len(exp.Arguments) != 0 {
+	return fastValuePlanFromLoopCallWithPlan(&FastRenderPlan{}, loop, exp, line)
+}
+
+func fastValuePlanFromLoopCallWithPlan(plan *FastRenderPlan, loop *FastLoopPlan, exp *ast.CallExpression, line int) (FastValuePlan, bool) {
+	if exp == nil || exp.Block != nil {
 		return FastValuePlan{}, false
 	}
-	value, ok := fastValuePlanFromLoopExpressionWithMethod(loop, exp.Function, line, true)
+	if exp.ChainCallee != nil {
+		root := *exp
+		root.ChainCallee = nil
+		if call, ok := fastLoopCallPlanFromExpression(plan, loop, &root, line); ok {
+			value := FastValuePlan{
+				Kind: FastValueCall,
+				Call: call,
+				Line: line,
+			}
+			if !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+				return fastValuePlanFromLoopCallArgument(plan, loop, arg, argLine)
+			}) {
+				return FastValuePlan{}, false
+			}
+			return value, true
+		}
+	}
+	value, ok := fastValuePlanFromLoopExpressionWithMethodWithPlan(plan, loop, exp.Function, line, true)
 	if !ok {
 		return FastValuePlan{}, false
 	}
-	value.Path = append(value.Path, FastPathStep{Kind: FastPathStepCall, Value: callExpressionName(exp), Line: line})
-	if exp.ChainCallee != nil && !appendFastReceiverCallee(&value, exp.ChainCallee, lastChainPart(exp.Function), line) {
-		return FastValuePlan{}, false
+	callStep := FastPathStep{Kind: FastPathStepCall, Value: callExpressionName(exp), Line: line}
+	for _, arg := range exp.Arguments {
+		argPlan, ok := fastValuePlanFromLoopCallArgument(plan, loop, arg, lineForNode(arg))
+		if !ok {
+			return FastValuePlan{}, false
+		}
+		callStep.Args = append(callStep.Args, argPlan)
+	}
+	appendFastValuePathStep(&value, callStep)
+	if exp.ChainCallee != nil {
+		if !appendFastReceiverCalleeWithArgumentPlanner(&value, exp.ChainCallee, lastChainPart(exp.Function), line, func(arg ast.Expression, argLine int) (FastValuePlan, bool) {
+			return fastValuePlanFromLoopCallArgument(plan, loop, arg, argLine)
+		}) {
+			return FastValuePlan{}, false
+		}
 	}
 	return value, true
 }
 
-func fastValuePlanFromLoopExpression(loop *FastLoopPlan, expr ast.Expression, line int) (FastValuePlan, bool) {
-	return fastValuePlanFromLoopExpressionWithMethod(loop, expr, line, false)
+func fastValuePlanFromLoopExpression(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, line int) (FastValuePlan, bool) {
+	return fastValuePlanFromLoopExpressionWithMethodWithPlan(plan, loop, expr, line, false)
 }
 
 func fastValuePlanFromLoopExpressionWithMethod(loop *FastLoopPlan, expr ast.Expression, line int, markLastPropertyAsMethod bool) (FastValuePlan, bool) {
+	return fastValuePlanFromLoopExpressionWithMethodWithPlan(&FastRenderPlan{}, loop, expr, line, markLastPropertyAsMethod)
+}
+
+func fastValuePlanFromLoopExpressionWithMethodWithPlan(plan *FastRenderPlan, loop *FastLoopPlan, expr ast.Expression, line int, markLastPropertyAsMethod bool) (FastValuePlan, bool) {
 	switch expr := expr.(type) {
 	case *ast.Identifier:
 		parts := identifierParts(expr)
@@ -2449,9 +3349,9 @@ func fastValuePlanFromLoopExpressionWithMethod(loop *FastLoopPlan, expr ast.Expr
 		}
 		return value, true
 	case *ast.IndexExpression:
-		return fastValuePlanFromLoopIndex(loop, expr, line)
+		return fastValuePlanFromLoopIndexWithPlan(plan, loop, expr, line)
 	case *ast.CallExpression:
-		return fastValuePlanFromLoopCall(loop, expr, line)
+		return fastValuePlanFromLoopCallWithPlan(plan, loop, expr, line)
 	default:
 		return FastValuePlan{}, false
 	}

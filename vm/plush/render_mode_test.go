@@ -161,7 +161,7 @@ func Test_Root_Render_Mode_VM_Writes_Diagnostics_To_Context(t *testing.T) {
 	require.NotZero(t, diagnostics.EngineDuration)
 }
 
-func Test_Root_Render_Mode_VM_Generic_Fallback_Uses_Interpreter(t *testing.T) {
+func Test_Root_Render_Mode_VM_Generic_Segment_Stays_In_VM(t *testing.T) {
 	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
 	defer rootplush.SetRenderMode(previousMode)
 	previousFallback := rootplush.SetVMGenericFallback(true)
@@ -175,10 +175,10 @@ func Test_Root_Render_Mode_VM_Generic_Fallback_Uses_Interpreter(t *testing.T) {
 	diagnostics, ok := rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
 	require.Equal(t, rootplush.RenderModeNameVM, diagnostics.Mode)
-	require.Equal(t, rootplush.RenderFastPathInterpreterFallback, diagnostics.FastPath)
+	require.Equal(t, rootplush.RenderFastPathGeneric, diagnostics.FastPath)
 }
 
-func Test_Root_Render_Mode_VM_Generic_Fallback_Keeps_Bytecode_Cache(t *testing.T) {
+func Test_Root_Render_Mode_VM_Generic_Segment_Keeps_Bytecode_Cache(t *testing.T) {
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -188,7 +188,7 @@ func Test_Root_Render_Mode_VM_Generic_Fallback_Keeps_Bytecode_Cache(t *testing.T
 	previousFallback := rootplush.SetVMGenericFallback(true)
 	defer rootplush.SetVMGenericFallback(previousFallback)
 
-	filename := "render-mode-vm-fallback-cache.plush"
+	filename := "render-mode-vm-generic-cache.plush"
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
@@ -206,10 +206,10 @@ func Test_Root_Render_Mode_VM_Generic_Fallback_Keeps_Bytecode_Cache(t *testing.T
 	diagnostics, ok = rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
 	require.Equal(t, rootplush.VMBytecodeCacheHit, diagnostics.VMBytecodeCache)
-	require.Equal(t, rootplush.RenderFastPathInterpreterFallback, diagnostics.FastPath)
+	require.Equal(t, rootplush.RenderFastPathGeneric, diagnostics.FastPath)
 }
 
-func Test_Root_Render_Mode_VM_Generic_Fallback_Renders_Partials_With_Interpreter(t *testing.T) {
+func Test_Root_Render_Mode_VM_Generic_Segment_Renders_Partials_In_VM(t *testing.T) {
 	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
 	defer rootplush.SetRenderMode(previousMode)
 	previousFallback := rootplush.SetVMGenericFallback(true)
@@ -221,7 +221,7 @@ func Test_Root_Render_Mode_VM_Generic_Fallback_Renders_Partials_With_Interpreter
 		require.Equal(t, "row.plush", name)
 		return `<% let title = "Row" %><%= title %>`, nil
 	})
-	ctx.Set(meta.TemplateFileKey, "render-mode-vm-fallback-partial.plush")
+	ctx.Set(meta.TemplateFileKey, "render-mode-vm-generic-partial.plush")
 
 	out, err := rootplush.Render(`<% let forceBytecode = fn() { return "x" } %><%= partial("row.plush", {}) %>`, ctx)
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func Test_Root_Render_Mode_VM_Generic_Fallback_Renders_Partials_With_Interpreter
 
 	diagnostics, ok := rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
-	require.Equal(t, rootplush.RenderFastPathInterpreterFallback, diagnostics.FastPath)
+	require.Equal(t, rootplush.RenderFastPathGeneric, diagnostics.FastPath)
 	require.Zero(t, diagnostics.VMHotspots.PartialCalls)
 }
 

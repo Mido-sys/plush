@@ -1166,33 +1166,33 @@ func Test_VM_Fast_Render_Script_Loop_Control(t *testing.T) {
 }
 
 func Test_VM_Fast_Render_Loop_Block_Helper_Sees_Current_Value(t *testing.T) {
-	type product struct {
+	type item struct {
 		ID   int
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (_, product) in products { %><%= form({id: product.ID, path: cartPath()}) { %><span><%= product.Name %></span><% } %><% } %>`)
+	tmpl, err := Compile(`<%= for (_, item) in items { %><%= wrap({id: item.ID, path: itemPath()}) { %><span><%= item.Name %></span><% } %><% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	require.Empty(t, tmpl.bytecode.FastReject)
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"products": []product{{ID: 1, Name: "<A>"}, {ID: 2, Name: "B"}},
-		"cartPath": func() string {
-			return "/cart"
+		"items": []item{{ID: 1, Name: "<A>"}, {ID: 2, Name: "B"}},
+		"itemPath": func() string {
+			return "/items"
 		},
-		"form": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+		"wrap": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
 			body, err := help.Block()
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(fmt.Sprintf(`<form action="%s" id="%v">%s</form>`, data["path"], data["id"], body)), nil
+			return template.HTML(fmt.Sprintf(`<section data-path="%s" id="%v">%s</section>`, data["path"], data["id"], body)), nil
 		},
 	})
 
 	out, err := tmpl.Render(ctx)
 	require.NoError(t, err)
-	require.Equal(t, `<form action="/cart" id="1"><span>&lt;A&gt;</span></form><form action="/cart" id="2"><span>B</span></form>`, out)
+	require.Equal(t, `<section data-path="/items" id="1"><span>&lt;A&gt;</span></section><section data-path="/items" id="2"><span>B</span></section>`, out)
 
 	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
@@ -1625,6 +1625,22 @@ func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
 	out, err := Render(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
 	require.NoError(t, err)
 	require.Contains(t, out, "<span class=\"token\">#123456</span>")
+}
+
+func Test_VM_Partial_Error_Includes_Parent_And_Partial_Filenames(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/row.plush", name)
+			return "first\n<%= missing %>", nil
+		},
+	})
+	ctx.Set(meta.TemplateBaseFileNameKey, "application")
+	ctx.Set(meta.TemplateFileKey, "application.plush")
+	ctx.Set(meta.TemplateExtensionKey, "plush")
+
+	_, err := Render("<p>top</p>\n<%= partial(\"partials/row.plush\") %>", ctx)
+	require.Error(t, err)
+	require.EqualError(t, err, `application.plush:2:partials/row.plush:2: "missing": unknown identifier`)
 }
 
 func Test_VM_Partial_Sees_Top_Level_Let_Alias_From_Pointer_Config(t *testing.T) {
@@ -2798,6 +2814,16 @@ func Test_VM_Fast_Top_Level_Infix_Output_Preserves_Missing_Ordered_Error(t *test
 	_, err := Render(`<%= undefined > 3 %>`, plush.NewContext())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unable to operate (>)`)
+	require.Contains(t, err.Error(), `while evaluating undefined > 3`)
+	require.Contains(t, err.Error(), `undefined is nil or missing`)
+}
+
+func Test_VM_Fast_Conditional_Missing_Ordered_Error_Names_Operand(t *testing.T) {
+	_, err := Render(`<%= if (productNumberOfReviews > 0) { %>yes<% } %>`, plush.NewContext())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unable to operate (>)`)
+	require.Contains(t, err.Error(), `while evaluating productNumberOfReviews > 0`)
+	require.Contains(t, err.Error(), `productNumberOfReviews is nil or missing`)
 }
 
 func Test_VM_Fast_Struct_Loop_Specializes_Conditional_Part_Automatically(t *testing.T) {
@@ -3296,7 +3322,9 @@ func Test_VM_Cached_Bytecode_Entry_Renders_VM_Only_Bytecode(t *testing.T) {
 	bytecode, ok := entry.VMBytecode.(*compiler.Bytecode)
 	require.True(t, ok)
 	require.False(t, bytecode.Static)
-	require.Nil(t, bytecode.FastRenderPlan)
+	require.NotNil(t, bytecode.FastRenderPlan)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
+	require.Equal(t, compiler.FastRenderSegmentGeneric, bytecode.FastRenderPlan.Segments[0].Kind)
 
 	ctx = plush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
