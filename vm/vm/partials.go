@@ -1598,7 +1598,7 @@ func renderLinkedPartialBytecode(link *partialBytecodeLink, ctx hctx.Context, fi
 	if link.source != "" && shouldFallbackPartialBytecode(bytecode) {
 		return renderInterpreterFallback(link.source, ctx, filename)
 	}
-	if bytecode.FastRenderPlan != nil {
+	if !bytecode.HasHoles && bytecode.FastRenderPlan != nil {
 		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx)); ok || err != nil {
 			return rendered, err
 		}

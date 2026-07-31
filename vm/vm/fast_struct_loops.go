@@ -414,6 +414,9 @@ func fastStructLoopCallArgStatic(kind fastStructLoopCallArgKind) bool {
 func evalFastStructLoopStaticCallArgReflect(plan *fastStructLoopCallArgPlan, bindings fastRenderBindings, expected reflect.Type, name string, pos int) (reflect.Value, error) {
 	value, ok := evalFastStructLoopStaticCallArgValue(plan, bindings)
 	if !ok {
+		if plan.value.NullOnMissing {
+			return reflect.Zero(expected), nil
+		}
 		return reflect.Value{}, fastLineError(plan.line, fmt.Errorf("%q: unknown identifier", plan.value.Value))
 	}
 	return fastReflectArgForCall(name, pos, value, expected)
@@ -509,6 +512,10 @@ func evalFastStructLoopCallPlanArgs(plan *fastStructLoopCallPlan, ctx hctx.Conte
 			return err
 		}
 		if !ok {
+			if plan.args[i].value.NullOnMissing {
+				args.Append(nil)
+				continue
+			}
 			return fastLineError(plan.args[i].line, fmt.Errorf("%q: unknown identifier", plan.args[i].value.Value))
 		}
 		args.Append(value)
@@ -709,6 +716,9 @@ func evalFastStructLoopCallArgReflect(plan *fastStructLoopCallArgPlan, ctx hctx.
 			return reflect.Value{}, err
 		}
 		if !ok {
+			if plan.value.NullOnMissing {
+				return reflect.Zero(expected), nil
+			}
 			return reflect.Value{}, fastLineError(plan.line, fmt.Errorf("%q: unknown identifier", plan.value.Value))
 		}
 		return fastReflectArgForCall(name, pos, value, expected)

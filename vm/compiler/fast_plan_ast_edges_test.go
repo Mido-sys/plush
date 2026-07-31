@@ -28,9 +28,14 @@ func compilerFast_Test_Return(expr ast.Expression) *ast.ReturnStatement {
 
 func Test_Fast_Render_AST_Program_And_Static_Edges(t *testing.T) {
 	require.Nil(t, fastRenderPlanFromProgram(nil))
-	require.Nil(t, fastRenderPlanFromProgram(&ast.Program{Statements: []ast.Statement{
+	staticPlan := fastRenderPlanFromProgram(&ast.Program{Statements: []ast.Statement{
 		&ast.ExpressionStatement{Expression: &ast.HTMLLiteral{Value: "static"}},
-	}}))
+	}})
+	require.NotNil(t, staticPlan)
+	require.Empty(t, staticPlan.Bindings)
+	require.Len(t, staticPlan.Segments, 1)
+	require.Equal(t, FastRenderSegmentStatic, staticPlan.Segments[0].Kind)
+	require.Equal(t, "static", staticPlan.Segments[0].Value)
 
 	plan := &FastRenderPlan{}
 	segments := []FastRenderSegment{}
@@ -115,6 +120,19 @@ func Test_Fast_Render_AST_Value_Plan_Edges(t *testing.T) {
 	}, false, 3)
 	require.True(t, ok)
 	require.Equal(t, FastValueIndex, value.Kind)
+
+	value, ok = fastValuePlanFromExpression(plan, parseFast_Test_Expression(t, `custom(missing.Value)`), true, 4)
+	require.True(t, ok)
+	require.Equal(t, FastValueCall, value.Kind)
+	require.Len(t, value.Call.Args, 1)
+	require.True(t, value.Call.Args[0].NullOnMissing)
+
+	value, ok = fastValuePlanFromExpression(plan, parseFast_Test_Expression(t, `custom(missing.Value)`), false, 4)
+	require.True(t, ok)
+	require.Equal(t, FastValueCall, value.Kind)
+	require.Len(t, value.Call.Args, 1)
+	require.False(t, value.Call.Args[0].NullOnMissing)
+
 	_, ok = fastValuePlanFromIndexExpression(plan, &ast.IndexExpression{
 		Left:   &ast.Identifier{Value: "items"},
 		Index:  &ast.IntegerLiteral{Value: 0},
@@ -394,7 +412,7 @@ func Test_Fast_Render_AST_Loop_Edge_Branches(t *testing.T) {
 	loopCallPlan, ok := fastLoopCallPlanFromExpression(plan, loop, &ast.CallExpression{
 		Function:  &ast.Identifier{Value: "label"},
 		Arguments: []ast.Expression{&ast.HashLiteral{}},
-	}, 1)
+	}, 1, false)
 	require.True(t, ok)
 	require.NotNil(t, loopCallPlan)
 	require.Len(t, loopCallPlan.Args, 1)
@@ -407,7 +425,8 @@ func Test_Fast_Render_AST_Loop_Edge_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "product", root)
 
-	value, ok = fastValuePlanFromLoopIndex(loop, &ast.IndexExpression{Left: &ast.Identifier{Value: "product.Name"}, Index: &ast.Identifier{Value: "bad"}}, 1)
+	itemLoop := &FastLoopPlan{KeyName: "i", ValueName: "item"}
+	value, ok = fastValuePlanFromLoopIndex(itemLoop, &ast.IndexExpression{Left: &ast.Identifier{Value: "item.Name"}, Index: &ast.Identifier{Value: "bad"}}, 1)
 	require.True(t, ok)
 	require.Equal(t, FastValueIndex, value.Kind)
 	_, ok = fastValuePlanFromLoopIndex(loop, &ast.IndexExpression{

@@ -82,13 +82,13 @@ func Test_Partial_Helper_Error_Includes_Parent_And_Partial_Filenames(t *testing.
 			return "first\n<%= missing %>", nil
 		},
 	})
-	ctx.Set(meta.TemplateBaseFileNameKey, "application")
-	ctx.Set(meta.TemplateFileKey, "application.plush")
+	ctx.Set(meta.TemplateBaseFileNameKey, "layout")
+	ctx.Set(meta.TemplateFileKey, "layout.plush")
 	ctx.Set(meta.TemplateExtensionKey, "plush")
 
 	_, err := plush.RenderInterpreter("<p>top</p>\n<%= partial(\"partials/row.plush\") %>", ctx)
 	require.Error(t, err)
-	require.EqualError(t, err, `application.plush:2:partials/row.plush:2: "missing": unknown identifier`)
+	require.EqualError(t, err, `layout.plush:2:partials/row.plush:2: "missing": unknown identifier`)
 }
 
 func Test_Partial_Helper_Invalid_Feeder_Function(t *testing.T) {

@@ -17,9 +17,15 @@ func (vm *VM) executeFor(iterable object.Object, block *object.Closure, keyName,
 	oldCtx := vm.ctx
 	loopCtx := vm.ctx
 	if writeLoopContext && vm.ctx != nil {
-		loopCtx = vm.ctx.New()
+		loopCtx = vm.contextWithFrameLocals()
+		if loopCtx == nil || loopCtx == oldCtx {
+			loopCtx = vm.ctx.New()
+		}
 		vm.ctx = loopCtx
-		defer func() { vm.ctx = oldCtx }()
+		defer func() {
+			vm.syncFrameBindingsFromContext(loopCtx)
+			vm.ctx = oldCtx
+		}()
 	}
 
 	ret := []object.Object{}
@@ -500,10 +506,47 @@ func (vm *VM) syncContextBindingsFromContext(target hctx.Context, source hctx.Co
 
 	frame := vm.currentFrame()
 	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		vm.syncDynamicContextBindingsFromContext(target, source, frame)
 		return
 	}
 	for _, name := range frame.cl.Fn.LocalNames {
 		syncContextBinding(target, source, name)
+	}
+	vm.syncDynamicContextBindingsFromContext(target, source, frame)
+}
+
+func (vm *VM) syncDynamicContextBindingsFromContext(target hctx.Context, source hctx.Context, frame *Frame) {
+	if vm == nil || target == nil || source == nil || frame == nil {
+		return
+	}
+	seen := map[string]struct{}{}
+	ins := frame.Instructions()
+	for i := 0; i < len(ins); {
+		op := code.Opcode(ins[i])
+		def, err := code.Lookup(byte(op))
+		if err != nil {
+			i++
+			continue
+		}
+		operands, read := code.ReadOperands(def, ins[i+1:])
+		if len(operands) > 0 && dynamicContextNameOpcode(op) {
+			name := vm.stringConstant(operands[0])
+			if _, ok := seen[name]; !ok {
+				syncContextBinding(target, source, name)
+				seen[name] = struct{}{}
+			}
+		}
+		i += 1 + read
+	}
+}
+
+func dynamicContextNameOpcode(op code.Opcode) bool {
+	switch op {
+	case code.OpGetName, code.OpGetNameOrNull, code.OpSetName, code.OpAssignName,
+		code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteNameProperty, code.OpWriteNameCall:
+		return true
+	default:
+		return false
 	}
 }
 

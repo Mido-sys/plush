@@ -28,7 +28,7 @@ func Test_Fast_Render_Plan_Literal_Lets_And_Path_Loops(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Loop_Let_With_Helper_And_Arithmetic_Arg(t *testing.T) {
-	input := `<%= for (_, product) in products { %><% let categorySeo = replace(category.CategorySeoUrl, "-outofstock", "", 0 - 1) %><%= categorySeo %>:<%= product.Name %>;<% } %>`
+	input := `<%= for (_, item) in items { %><% let normalizedPath = replace(document.Path, "-draft", "", 0 - 1) %><%= normalizedPath %>:<%= item.Name %>;<% } %>`
 	program, err := parser.Parse(input)
 	require.NoError(t, err)
 
@@ -44,7 +44,7 @@ func Test_Fast_Render_Plan_Loop_Let_With_Helper_And_Arithmetic_Arg(t *testing.T)
 	require.NotNil(t, loop)
 	require.GreaterOrEqual(t, len(loop.Parts), 4)
 	require.Equal(t, FastLoopPartLet, loop.Parts[0].Kind)
-	require.Equal(t, "categorySeo", loop.Parts[0].Value)
+	require.Equal(t, "normalizedPath", loop.Parts[0].Value)
 	require.Equal(t, FastValueCall, loop.Parts[0].ValuePlan.Kind)
 	require.NotNil(t, loop.Parts[0].ValuePlan.Call)
 	require.Equal(t, "replace", loop.Parts[0].ValuePlan.Call.Name)
@@ -54,7 +54,7 @@ func Test_Fast_Render_Plan_Loop_Let_With_Helper_And_Arithmetic_Arg(t *testing.T)
 
 	require.Equal(t, FastLoopPartValuePath, loop.Parts[1].Kind)
 	require.Equal(t, FastValueName, loop.Parts[1].ValuePlan.Kind)
-	require.Equal(t, "categorySeo", loop.Parts[1].ValuePlan.Value)
+	require.Equal(t, "normalizedPath", loop.Parts[1].ValuePlan.Value)
 }
 
 func Test_Fast_Render_Plan_Loop_Assignment_Updates_Outer_Binding(t *testing.T) {
@@ -97,6 +97,22 @@ func Test_Fast_Render_Plan_Ignores_Comment_Blocks(t *testing.T) {
 	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
 	require.Equal(t, FastRenderSegmentName, bytecode.FastRenderPlan.Segments[0].Kind)
 	require.Equal(t, "title", bytecode.FastRenderPlan.Segments[0].Value)
+}
+
+func Test_Fast_Render_Plan_Comment_With_Static_Output_Has_Zero_Binding_Plan(t *testing.T) {
+	program, err := parser.Parse(`<%# metadata %>Ready`)
+	require.NoError(t, err)
+
+	compiler := New()
+	require.NoError(t, compiler.Compile(program))
+
+	bytecode := compiler.Bytecode()
+	require.NotNil(t, bytecode.FastRenderPlan, bytecode.FastReject)
+	require.Empty(t, bytecode.FastReject)
+	require.Empty(t, bytecode.FastRenderPlan.Bindings)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
+	require.Equal(t, FastRenderSegmentStatic, bytecode.FastRenderPlan.Segments[0].Kind)
+	require.Equal(t, "Ready", bytecode.FastRenderPlan.Segments[0].Value)
 }
 
 func Test_Fast_Render_Plan_Assignment_Scalar_Expressions_And_Index_Targets(t *testing.T) {
@@ -523,7 +539,7 @@ func Test_Fast_Render_Plan_Extended_Syntax_Does_Not_Fallback(t *testing.T) {
 	}
 }
 
-func Test_Fast_Render_Plan_Unsupported_Syntax_Uses_Generic_VM_Except_Holes(t *testing.T) {
+func Test_Fast_Render_Plan_Unsupported_Syntax_Uses_Generic_VM(t *testing.T) {
 	program, err := parser.Parse(`<% let add = fn(x) { return x + 1 } %><%= add(2) %>`)
 	require.NoError(t, err)
 
@@ -544,6 +560,8 @@ func Test_Fast_Render_Plan_Unsupported_Syntax_Uses_Generic_VM_Except_Holes(t *te
 
 	bytecode = compiler.Bytecode()
 	require.True(t, bytecode.HasHoles)
-	require.Nil(t, bytecode.FastRenderPlan)
-	require.NotEmpty(t, bytecode.FastReject)
+	require.NotNil(t, bytecode.FastRenderPlan)
+	require.Empty(t, bytecode.FastReject)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
+	require.Equal(t, FastRenderSegmentGeneric, bytecode.FastRenderPlan.Segments[0].Kind)
 }

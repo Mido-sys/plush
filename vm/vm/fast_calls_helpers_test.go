@@ -226,6 +226,11 @@ func Test_VM_Eval_Fast_Call_Args_Into_Branches(t *testing.T) {
 	_, err = evalFastCallArgsInto([]compiler.FastValuePlan{{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing", Line: 5}}, ctx, bindings, nil)
 	require.ErrorContains(t, err, `line 5: "missing": unknown identifier`)
 
+	args, err = evalFastCallArgsInto([]compiler.FastValuePlan{{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing", NullOnMissing: true, Line: 5}}, ctx, bindings, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, args.Len())
+	require.Nil(t, args.Raw(0))
+
 	_, err = evalFastCallArgsInto([]compiler.FastValuePlan{{
 		Kind: compiler.FastValueCall,
 		Call: &compiler.FastCallPlan{Name: "name", NameIndex: 0, Line: 6},

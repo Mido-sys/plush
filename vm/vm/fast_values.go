@@ -1732,6 +1732,10 @@ func evalFastPathStepWithBindings(base interface{}, step *compiler.FastPathStep,
 					return nil, err
 				}
 				if !ok {
+					if step.Args[i].NullOnMissing {
+						argStore.Append(nil)
+						continue
+					}
 					return nil, fastLineError(step.Args[i].Line, fmt.Errorf("%q: unknown identifier", fastValueMissingName(&step.Args[i])))
 				}
 				argStore.Append(arg)

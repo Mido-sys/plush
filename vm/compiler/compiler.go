@@ -334,7 +334,7 @@ func (c *Compiler) compileWriteNameCallExpression(node *ast.CallExpression) (boo
 	}
 
 	for _, arg := range node.Arguments {
-		if err := c.compileHard(arg); err != nil {
+		if err := c.compileCallArgument(arg); err != nil {
 			return true, err
 		}
 	}
@@ -745,7 +745,7 @@ func (c *Compiler) compileReceiverCallee(exp ast.Expression, base string) error 
 		}
 
 		for _, a := range exp.Arguments {
-			if err := c.compileHard(a); err != nil {
+			if err := c.compileCallArgument(a); err != nil {
 				return err
 			}
 		}
@@ -953,7 +953,7 @@ func (c *Compiler) compileCallExpression(node *ast.CallExpression) error {
 	c.markLastPropertyAsMethod()
 
 	for _, a := range node.Arguments {
-		if err := c.compileHard(a); err != nil {
+		if err := c.compileCallArgument(a); err != nil {
 			return err
 		}
 	}
@@ -975,13 +975,15 @@ func (c *Compiler) compileCallExpression(node *ast.CallExpression) error {
 	return nil
 }
 
-func (c *Compiler) compileCondition(node ast.Expression) error {
-	switch node.(type) {
-	case *ast.Identifier:
-		return c.compileSoft(node)
-	default:
-		return c.Compile(node)
+func (c *Compiler) compileCallArgument(arg ast.Expression) error {
+	if c.softNames > 0 {
+		return c.compileSoft(arg)
 	}
+	return c.compileHard(arg)
+}
+
+func (c *Compiler) compileCondition(node ast.Expression) error {
+	return c.compileSoft(node)
 }
 
 func (c *Compiler) compileSoft(node interface{}) error {
@@ -1090,7 +1092,7 @@ func (c *Compiler) Bytecode() *Bytecode {
 		}
 	}
 	features := bytecodeFeaturesFromInstructions(instructions, c.constants, callNames)
-	if fastRenderPlan == nil && fastReject.Reason != "" && !features.HasHoles {
+	if fastRenderPlan == nil && fastReject.Reason != "" {
 		fastRenderPlan = genericVMFastRenderPlan(fastReject)
 		fastReject = FastRenderReject{}
 	}

@@ -523,7 +523,8 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, FastValueIndex, value.Kind)
 
-	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `product[dynamic]`), 1)
+	itemLoop := &FastLoopPlan{KeyName: "i", ValueName: "item"}
+	value, ok = fastValuePlanFromLoopIndex(itemLoop, parseCompilerExpression(t, `item[dynamic]`), 1)
 	require.True(t, ok)
 	require.Equal(t, FastValueIndex, value.Kind)
 
@@ -555,18 +556,18 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, FastPathStepCall, value.Path[len(value.Path)-1].Kind)
 
-	_, ok = fastLoopCallPlanFromExpression(plan, loop, nil, 1)
+	_, ok = fastLoopCallPlanFromExpression(plan, loop, nil, 1, false)
 	require.False(t, ok)
 
 	_, ok = fastLoopCallPlanFromExpression(plan, loop, &ast.CallExpression{
 		Function:    &ast.Identifier{Value: "label"},
 		ChainCallee: &ast.Identifier{Value: "Echo"},
-	}, 1)
+	}, 1, false)
 	require.False(t, ok)
 
 	_, ok = fastLoopCallPlanFromExpression(plan, loop, &ast.CallExpression{
 		Function: &ast.Identifier{Callee: &ast.Identifier{Value: "helpers"}, Value: "label"},
-	}, 1)
+	}, 1, false)
 	require.False(t, ok)
 }
 
@@ -610,7 +611,8 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 
 	parts := []FastLoopPart{}
 	require.False(t, appendFastLoopStatements(plan, loop, &parts, []ast.Statement{&ast.BlockStatement{}}))
-	require.True(t, appendFastLoopStatement(plan, loop, &parts, &ast.ReturnStatement{Type: token.RETURN, ReturnValue: &ast.Identifier{Value: "product"}}))
+	itemLoop := &FastLoopPlan{KeyName: "i", ValueName: "item"}
+	require.True(t, appendFastLoopStatement(plan, itemLoop, &parts, &ast.ReturnStatement{Type: token.RETURN, ReturnValue: &ast.Identifier{Value: "item"}}))
 	require.False(t, appendFastLoopStatement(plan, loop, &parts, &ast.ExpressionStatement{Expression: &ast.Identifier{Value: "notHTML"}}))
 
 	parts = nil
@@ -742,6 +744,28 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, loopConditional.Branches, 2)
 	require.Len(t, loopConditional.ElseParts, 1)
+}
+
+func Test_Compiler_Fast_Call_Arguments_Inherit_Nullable_Context(t *testing.T) {
+	condition, ok := fastValuePlanFromExpression(&FastRenderPlan{}, parseCompilerExpression(t, `present(missing) == true`), false, 1)
+	require.True(t, ok)
+	require.Equal(t, FastValueInfix, condition.Kind)
+	require.NotNil(t, condition.Left)
+	require.NotNil(t, condition.Left.Call)
+	require.Len(t, condition.Left.Call.Args, 1)
+	require.True(t, condition.Left.Call.Args[0].NullOnMissing)
+
+	output, ok := fastCallPlanFromExpression(&FastRenderPlan{}, parseCompilerExpression(t, `present(missing)`).(*ast.CallExpression), 1, false)
+	require.True(t, ok)
+	require.Len(t, output.Args, 1)
+	require.False(t, output.Args[0].NullOnMissing)
+
+	loopCondition, ok := fastValuePlanFromLoopCondition(&FastRenderPlan{}, &FastLoopPlan{KeyName: "i", ValueName: "entry"}, parseCompilerExpression(t, `present(missing) == true`), 1)
+	require.True(t, ok)
+	require.NotNil(t, loopCondition.Left)
+	require.NotNil(t, loopCondition.Left.Call)
+	require.Len(t, loopCondition.Left.Call.Args, 1)
+	require.True(t, loopCondition.Left.Call.Args[0].NullOnMissing)
 }
 
 func Test_Compiler_Core_Helper_Branch_Edges(t *testing.T) {
@@ -2420,8 +2444,8 @@ func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Output_Tags(t *testing.
 func Test_Fast_Render_Plan_Block_Helper_Source_Preserves_Form_Controls(t *testing.T) {
 	input := `<%= form({action: submitPath(), method: "POST", id: "sampleForm"}) { %>
 	<%= builder.RenderControl({name:"Record.ID", value: record.ID}) %>
-	<%= builder.RenderControl({name: "Record.OptionID[]", value: record.Options[0].ID}) %>
-	<%= builder.RenderControl({name:"Record.Quantity", value: "1"}) %>
+	<%= builder.RenderControl({name: "Record.EntryID[]", value: record.Entries[0].ID}) %>
+	<%= builder.RenderControl({name:"Record.Count", value: "1"}) %>
 	<%= builder.RenderControl({type:"text", label:"Display Name", name:"Profile.DisplayName", value:"test"} ) %>
 <button class="btn btn-success" role="submit">Save</button>
 <% } %>`

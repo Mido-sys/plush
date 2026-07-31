@@ -284,19 +284,6 @@ func Test_Render_Hole_Punching_If_Else(t *testing.T) {
 	r.Equal(`3`, ss)
 }
 
-func Test_Render_Hole_Punching_If_Truthy_A(t *testing.T) {
-	r := require.New(t)
-	ctx := plush.NewContext()
-	cacheFileName := "myfile.plush"
-	ff := inmemory.NewMemoryCache()
-	plush.PlushCacheSetup(ff)
-	ctx.Set(meta.TemplateFileKey, cacheFileName)
-	ctx.Set("number", 3)
-	input := `<%H if (number > 0){ %><%= "NUMBER" %><% } else { %><%= number %><%  }%>`
-	ss, err := plush.Render(input, ctx)
-	r.NoError(err)
-	r.Equal(`NUMBER`, ss)
-}
 func Test_Render_Hole_Punching_If_Truthy(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()

@@ -391,6 +391,10 @@ func evalFastCallArgsInto(plans []compiler.FastValuePlan, ctx hctx.Context, bind
 			return nil, err
 		}
 		if !ok {
+			if plans[i].NullOnMissing {
+				args.Append(nil)
+				continue
+			}
 			return nil, fastLineError(plans[i].Line, fmt.Errorf("%q: unknown identifier", plans[i].Value))
 		}
 		args.Append(value)

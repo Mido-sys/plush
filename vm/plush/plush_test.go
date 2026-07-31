@@ -178,7 +178,7 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testin
 			},
 		}
 		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 		})
 		require.NoError(t, err)
 		require.Contains(t, out, "color: "+color+";")
@@ -225,7 +225,7 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let_Alias_Fro
 			},
 		}
 		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 		})
 		require.NoError(t, err)
 		require.Contains(t, out, "color: "+color+";")
@@ -258,7 +258,7 @@ func Test_Buffalo_Renderer_VM_Cached_Branch_Partial_Assigns_Parent_Binding(t *te
 			"entryID": id,
 		}
 		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 		})
 		require.NoError(t, err)
 		require.Equal(t, id, out)
@@ -290,7 +290,7 @@ func Test_Buffalo_Renderer_VM_Generic_Partial_Sees_Branch_Let(t *testing.T) {
 		"entryID": "current-id",
 	}
 	out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-		ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+		ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 	})
 	require.NoError(t, err)
 	require.Equal(t, "current-id", out)

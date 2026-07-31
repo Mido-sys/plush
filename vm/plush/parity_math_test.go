@@ -242,7 +242,7 @@ func requireBothRender(t *testing.T, input, expected string, factory contextFact
 	require.NoError(t, interpreterErr)
 	require.Equal(t, expected, interpreterOut)
 
-	vmOut, vmErr := renderVM(input, factory)
+	vmOut, vmErr := renderVM(t, input, factory)
 	require.NoError(t, vmErr)
 	require.Equal(t, expected, vmOut)
 }

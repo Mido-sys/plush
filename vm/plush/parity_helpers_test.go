@@ -185,6 +185,51 @@ func Test_Parity_Phase_6_Helper_Context_Block_With_And_Render(t *testing.T) {
 	})
 }
 
+func Test_Parity_Helper_Context_Set_Bindings_After_Native_Helper_Calls(t *testing.T) {
+	type widget struct {
+		Label string
+	}
+
+	t.Run("silent call", func(t *testing.T) {
+		compareRender(t, `<% seed() %><%= label %>|<%= widget.Label %>`, contextWith(map[string]interface{}{
+			"seed": func(help rootplush.HelperContext) {
+				help.Set("label", "ready")
+				help.Set("widget", widget{Label: "visible"})
+			},
+		}))
+	})
+
+	t.Run("block call", func(t *testing.T) {
+		compareRender(t, `<%= seed() { %><%= label %>|<%= widget.Label %><% } %>-><%= label %>|<%= widget.Label %>`, contextWith(map[string]interface{}{
+			"seed": func(help rootplush.HelperContext) (template.HTML, error) {
+				help.Set("label", "before")
+				help.Set("widget", widget{Label: "before"})
+				body, err := help.Block()
+				if err != nil {
+					return "", err
+				}
+				help.Set("label", "after")
+				help.Set("widget", widget{Label: "after"})
+				return template.HTML(body), nil
+			},
+		}))
+	})
+
+	t.Run("block with child assignment", func(t *testing.T) {
+		compareRender(t, `<%= scope() { %><%= label %><% label = "updated" %>|<%= label %><% } %>`, contextWith(map[string]interface{}{
+			"scope": func(help rootplush.HelperContext) (template.HTML, error) {
+				child := help.New()
+				child.Set("label", "initial")
+				body, err := help.BlockWith(child)
+				if err != nil {
+					return "", err
+				}
+				return template.HTML(body + "|child:" + child.Value("label").(string)), nil
+			},
+		}))
+	})
+}
+
 func Test_Parity_Helper_Context_Includes_Loop_Binding_For_Render_Like_Helper(t *testing.T) {
 	type renderBlock struct {
 		Type    string
@@ -192,7 +237,7 @@ func Test_Parity_Helper_Context_Includes_Loop_Binding_For_Render_Like_Helper(t *
 	}
 
 	compareRender(t, `<%= for (_, block) in blocks { %><%= render(block.Type + ".plush.html", {settings: block}) %><% } %>`, contextWith(map[string]interface{}{
-		"blocks": []renderBlock{{Type: "product-option", BlockID: "test-1234"}},
+		"blocks": []renderBlock{{Type: "settings-panel", BlockID: "test-1234"}},
 		"render": func(fileName string, data map[string]interface{}, help rootplush.HelperContext) (template.HTML, error) {
 			block, ok := help.Value("block").(renderBlock)
 			if !ok {
@@ -256,7 +301,7 @@ func Test_Parity_Phase_6_Unknown_Helper_Errors(t *testing.T) {
 }
 
 func Test_Parity_Phase_6_Helper_Error_Contains_Returned_Error(t *testing.T) {
-	_, err := renderVM(`<%= fail() %>`, contextWith(map[string]interface{}{
+	_, err := renderVM(t, `<%= fail() %>`, contextWith(map[string]interface{}{
 		"fail": func() (string, error) {
 			return "", errors.New("phase6 returned error")
 		},

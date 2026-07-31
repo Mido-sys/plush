@@ -1190,6 +1190,9 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 
 	res := rv.Call(args)
 	if helperCtx != nil {
+		if name != "partial" {
+			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
+		}
 		vm.syncFrameBindingsFromContext(helperCtx)
 		vm.lastHelperContext = nil
 	}
@@ -1241,6 +1244,9 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 
 	res := rv.Call(args)
 	if helperCtx != nil {
+		if name != "partial" {
+			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
+		}
 		vm.syncFrameBindingsFromContext(helperCtx)
 		vm.lastHelperContext = nil
 	}

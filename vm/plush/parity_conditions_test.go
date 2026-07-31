@@ -7,6 +7,14 @@ type parityTruthUser struct {
 	Image *string
 }
 
+type parityNodeSet struct {
+	Nodes []parityNode
+}
+
+type parityNode struct {
+	Label string
+}
+
 func Test_Parity_Conditions_Unknown_As_Nil(t *testing.T) {
 	compareRender(t, `<%= paths == nil %>`, emptyContext)
 	compareRender(t, `<%= nil == paths %>`, emptyContext)
@@ -71,6 +79,12 @@ func Test_Parity_Conditions_Nil_Pointer_Truthiness(t *testing.T) {
 	}))
 }
 
+func Test_Parity_Conditions_Len_Nil_Collection_Short_Circuits_Index(t *testing.T) {
+	compareRender(t, `<%= if (len(record.Nodes) > 0 && record.Nodes[0].Label) { %>present<% } else { %>empty<% } %>`, contextWith(map[string]interface{}{
+		"record": parityNodeSet{},
+	}))
+}
+
 func Test_Parity_Conditions_Logical_Unknown_Short_Circuit(t *testing.T) {
 	compareRender(t, `<%= if (names && len(names) >= 1) { %>yes<% } else { %>no<% } %>`, emptyContext)
 	compareRender(t, `<%= paths || pages %>`, contextWith(map[string]interface{}{
@@ -93,7 +107,7 @@ func Test_Parity_Conditions_Complex_Or_With_Unknown_Middle(t *testing.T) {
 
 func Test_Parity_Conditions_Direct_Unknown_Still_Errors(t *testing.T) {
 	_, interpreterErr := renderInterpreter(`<%= pages %>`, emptyContext)
-	_, vmErr := renderVM(`<%= pages %>`, emptyContext)
+	_, vmErr := renderVM(t, `<%= pages %>`, emptyContext)
 
 	if interpreterErr == nil {
 		t.Fatal("expected interpreter error")
@@ -105,7 +119,7 @@ func Test_Parity_Conditions_Direct_Unknown_Still_Errors(t *testing.T) {
 
 func Test_Parity_Conditions_Invalid_Int_Bool_Comparison_Errors(t *testing.T) {
 	_, interpreterErr := renderInterpreter(`<% let test = 1 %><%= if (test != true) { return "good"} %>`, emptyContext)
-	_, vmErr := renderVM(`<% let test = 1 %><%= if (test != true) { return "good"} %>`, emptyContext)
+	_, vmErr := renderVM(t, `<% let test = 1 %><%= if (test != true) { return "good"} %>`, emptyContext)
 
 	if interpreterErr == nil {
 		t.Fatal("expected interpreter error")

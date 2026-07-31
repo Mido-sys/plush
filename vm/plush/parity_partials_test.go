@@ -1,6 +1,7 @@
 package plush_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"strings"
@@ -10,9 +11,14 @@ import (
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/helpers/meta"
 	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
-	vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 	"github.com/stretchr/testify/require"
 )
+
+type parityPartialNode struct {
+	Label    string
+	Enabled  bool
+	Children []parityPartialNode
+}
 
 func Test_Parity_Partials_Simple(t *testing.T) {
 	compareRender(t, `<%= partial("hello.plush") %>`, contextWith(map[string]interface{}{
@@ -58,6 +64,66 @@ func Test_Parity_Phase_12_Partials_Data_Recursion_Layout_And_Yield(t *testing.T)
 			return `<%= if (number > 0) { %><% let number = number - 1 %><%= partial("count") %><%= number %>, <% } %>`, nil
 		},
 	}))
+}
+
+func Test_Parity_Partials_Four_Level_Recursive_Loops_Update_Main_Array(t *testing.T) {
+	partialSource := `<%= for (_, node) in nodes { %>` +
+		`<%= if (node.Enabled) { %>` +
+		`<% let entry = "enter:" + node.Label %>` +
+		`<% collected = collected + entry %>` +
+		`<%= if (len(node.Children) > 0) { %>` +
+		`<%= partial("tree.plush.html", {nodes: node.Children}) %>` +
+		`<% } %>` +
+		`<% let exit = "exit:" + node.Label %>` +
+		`<% collected = collected + exit %>` +
+		`<% } %>` +
+		`<% } %>`
+
+	input := `<% let collected = [] %><%= partial("tree.plush.html", {nodes: nodes}) %><%= json_encode(collected) %>`
+	expected := `["enter:root","enter:branch","enter:leaf","enter:tip","exit:tip","exit:leaf","exit:branch","enter:sibling","exit:sibling","exit:root"]`
+
+	comparePlannedRender(t, input, contextWith(map[string]interface{}{
+		"nodes": []parityPartialNode{
+			{
+				Label:   "root",
+				Enabled: true,
+				Children: []parityPartialNode{
+					{
+						Label:   "branch",
+						Enabled: true,
+						Children: []parityPartialNode{
+							{
+								Label:   "leaf",
+								Enabled: true,
+								Children: []parityPartialNode{
+									{Label: "tip", Enabled: true},
+								},
+							},
+							{
+								Label:   "disabled",
+								Enabled: false,
+								Children: []parityPartialNode{
+									{Label: "never-rendered", Enabled: true},
+								},
+							},
+						},
+					},
+					{Label: "sibling", Enabled: true},
+				},
+			},
+			{Label: "disabled-root", Enabled: false},
+		},
+		"json_encode": func(value interface{}) template.HTML {
+			encoded, _ := json.Marshal(value)
+			return template.HTML(encoded)
+		},
+		"partialFeeder": func(name string) (string, error) {
+			if name != "tree.plush.html" {
+				return "", fmt.Errorf("unexpected partial %q", name)
+			}
+			return partialSource, nil
+		},
+	}), expected)
 }
 
 func Test_Parity_Partials_Data_Map_Values(t *testing.T) {
@@ -169,14 +235,14 @@ func Test_Phase_12_VM_Plush_Cache_Hole_Skeleton_For_Plush_Filenames(t *testing.T
 			ctx.Set(meta.TemplateFileKey, filename)
 
 			input := `<%= items[0] %><%H suffix %><%= items[1] %>`
-			out, err := vmplush.Render(input, ctx)
+			out, err := renderVMContext(t, input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a1b", out)
 			requireCacheKey(t, cache, rootplush.GenerateASTKey(filename))
 			requireCacheKey(t, cache, "full:"+filename)
 
 			ctx.Set("suffix", "2")
-			out, err = vmplush.Render(input, ctx)
+			out, err = renderVMContext(t, input, ctx)
 			require.NoError(t, err)
 			require.Equal(t, "a2b", out)
 		})
@@ -191,11 +257,11 @@ func Test_Phase_12_VM_Plush_Non_Plush_Filename_Does_Not_Use_Hole_Cache(t *testin
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, "phase12.txt")
 
-	out, err := vmplush.Render(`<%= "a" %><%H "hole" %>`, ctx)
+	out, err := renderVMContext(t, `<%= "a" %><%H "hole" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "a<PLUSH_HOLE_0>", out)
 
-	out, err = vmplush.Render(`<%= "b" %><%H "hole" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "b" %><%H "hole" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "b<PLUSH_HOLE_0>", out)
 }
@@ -212,12 +278,12 @@ func Test_VM_Bytecode_Caches_HTML_Template_Filenames(t *testing.T) {
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
-	out, err := vmplush.Render(`<%= "old" %>`, ctx)
+	out, err := renderVMContext(t, `<%= "old" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "old", out)
 	requireCacheKey(t, cache, rootplush.GenerateASTKey(filename))
 
-	out, err = vmplush.Render(`<%= "new" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "new" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "new", out)
 }
@@ -231,7 +297,7 @@ func Test_Phase_12_VM_Plush_Cache_Uses_Current_URL_In_Full_Key(t *testing.T) {
 	ctx.Set(meta.TemplateFileKey, "phase12-url.plush")
 	ctx.Set(meta.TemplateCurrentUrlKey, "/products/123?ignored=true")
 
-	out, err := vmplush.Render(`<%= "x" %><%H "hole" %>`, ctx)
+	out, err := renderVMContext(t, `<%= "x" %><%H "hole" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "xhole", out)
 	requireCacheKey(t, cache, "full:phase12-url.plush|url:products_123")
@@ -246,17 +312,17 @@ func Test_Phase_12_VM_Plush_Caches_Bytecode_By_AST_Key(t *testing.T) {
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
-	out, err := vmplush.Render(`<%= "old" %>`, ctx)
+	out, err := renderVMContext(t, `<%= "old" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "old", out)
 	requireCacheKey(t, cache, rootplush.GenerateASTKey(filename))
 
-	out, err = vmplush.Render(`<%= "new" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "new" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "new", out)
 
 	cache.Delete(rootplush.GenerateASTKey(filename))
-	out, err = vmplush.Render(`<%= "new" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "new" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "new", out)
 }
@@ -270,7 +336,7 @@ func Test_Phase_12_VM_Plush_Caches_Bytecode_Without_AST_Or_Source(t *testing.T) 
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
-	out, err := vmplush.Render(`<%= "old" %>`, ctx)
+	out, err := renderVMContext(t, `<%= "old" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "old", out)
 
@@ -281,7 +347,7 @@ func Test_Phase_12_VM_Plush_Caches_Bytecode_Without_AST_Or_Source(t *testing.T) 
 	require.Nil(t, entry.Program)
 	require.Empty(t, entry.Input)
 
-	out, err = vmplush.Render(`<%= "new" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "new" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "new", out)
 	entry, ok = cache.Get(key)
@@ -318,7 +384,7 @@ func Test_Phase_12_VM_Plush_Uses_Existing_Interpreter_AST_Cache(t *testing.T) {
 	require.Nil(t, entry.VMBytecode)
 	require.Empty(t, entry.Input)
 
-	out, err = vmplush.Render(`<%= "new" %>`, ctx)
+	out, err = renderVMContext(t, `<%= "new" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "new", out)
 

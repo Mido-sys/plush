@@ -16,7 +16,7 @@ import (
 // tryRenderFastBytecode is the VM fast-render entry point. A false handled
 // result means the caller should run the normal bytecode VM path.
 func tryRenderFastBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, bool, error) {
-	if bytecode == nil || bytecode.FastRenderPlan == nil {
+	if bytecode == nil || bytecode.FastRenderPlan == nil || bytecode.HasHoles {
 		return "", false, nil
 	}
 	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
@@ -1226,6 +1226,10 @@ func evalFastCallValuePlan(call *compiler.FastCallPlan, simpleArgs []*fastSimple
 				return nil, true, err
 			}
 			if !argOK {
+				if call.Args[i].NullOnMissing {
+					argStore.Append(nil)
+					continue
+				}
 				return nil, false, nil
 			}
 			argStore.Append(value)

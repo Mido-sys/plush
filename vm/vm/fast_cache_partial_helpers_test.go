@@ -290,6 +290,63 @@ func Test_VM_Partial_Overlay_Render_Assigns_Missing_Map_Value_To_Existing_Local(
 	require.Empty(t, out)
 }
 
+func Test_VM_Partial_Overlay_Render_Nested_Output_Branches_Update_Outer_Binding(t *testing.T) {
+	type entry struct {
+		ID string
+	}
+
+	entries := []entry{{ID: "first"}, {ID: "second"}}
+	parent := plush.NewContextWith(map[string]interface{}{
+		"input":   map[string]string{"target_id": "second"},
+		"entries": entries,
+		"count": func(values []entry) int {
+			return len(values)
+		},
+	})
+	ctx := borrowPartialOverlayContext(parent)
+	defer releasePartialOverlayContext(ctx)
+
+	out, err := Render(`<% let selected = entries[0] %>
+<%= if (input["target_id"] != "" && count(entries) > 0) { %>
+	<%= for (i, entry) in entries { %>
+		<%= if (entry.ID == input["target_id"]) { %>
+			<% selected = entry %>
+		<% } %>
+	<% } %>
+<% } %>
+<%= selected.ID %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, "second")
+}
+
+func Test_VM_Partial_Overlay_Render_Guarded_Collection_Loop_Reads_Value_Property(t *testing.T) {
+	type asset struct {
+		URL string
+		Alt string
+	}
+	type record struct {
+		Assets []asset
+	}
+
+	parent := plush.NewContextWith(map[string]interface{}{
+		"record": record{Assets: []asset{
+			{URL: "/first.png", Alt: "First"},
+			{URL: "/second.png", Alt: "Second"},
+		}},
+	})
+	ctx := borrowPartialOverlayContext(parent)
+	defer releasePartialOverlayContext(ctx)
+
+	out, err := Render(`<%= if (len(record.Assets) > 0 && record.Assets[0].URL) { %>
+	<%= for (index, asset) in record.Assets { %>
+		<link href="<%= asset.URL %>" data-alt="<%= asset.Alt %>" data-index="<%= index %>" />
+	<% } %>
+<% } %>`, ctx)
+	require.NoError(t, err)
+	require.Contains(t, out, `/first.png`)
+	require.Contains(t, out, `/second.png`)
+}
+
 func Test_VM_Partial_Overlay_Lookup_And_Context_Branches(t *testing.T) {
 	var nilOverlay *partialOverlayContext
 	nilOverlay.reset(nil)
