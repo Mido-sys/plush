@@ -6,6 +6,10 @@ type phase9Robot struct {
 	Name string
 }
 
+type phase9Record struct {
+	Limit int
+}
+
 func Test_Parity_Phase_9_Optional_If_Parentheses(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -111,6 +115,14 @@ func Test_Parity_Phase_9_Optional_If_Parentheses(t *testing.T) {
 			input:    `<%= if (false) { %>no<% } else if (true) { %>yes<% } %>`,
 			expected: "yes",
 			factory:  emptyContext,
+		},
+		{
+			name:     "missing helper call uses else",
+			input:    `<%= if(optional(record.Limit)) { %>set<% } else { %>fallback<% } %>`,
+			expected: "fallback",
+			factory: contextWith(map[string]interface{}{
+				"record": phase9Record{Limit: 5},
+			}),
 		},
 	}
 

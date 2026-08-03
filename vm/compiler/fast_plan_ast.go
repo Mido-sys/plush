@@ -739,7 +739,7 @@ func scanInstructionFeatures(instructions code.Instructions, constants []object.
 			features.HasContextWrites = true
 		}
 		switch op {
-		case code.OpGetName, code.OpGetNameOrNull, code.OpSetName, code.OpAssignName,
+		case code.OpGetName, code.OpGetNameOrNull, code.OpGetNameOrJumpMissing, code.OpSetName, code.OpAssignName,
 			code.OpWriteName, code.OpWriteNameOrNull:
 			if len(operands) > 0 && stringConstantEquals(constants, operands[0], "partial") {
 				features.HasPartials = true

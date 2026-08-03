@@ -3651,6 +3651,30 @@ func Test_VM_Form_Helper_Context_Set_Is_Visible_After_Block_In_Caller_With_Local
 	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
 }
 
+func Test_VM_Missing_Helper_In_Block_Condition_Uses_Else(t *testing.T) {
+	tmpl, err := Compile(`<%= wrapper({label: "example"}) { %><%= if(optional(record.Limit)) { %>set<% } else { %>fallback<% } %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			Limit int
+		}{Limit: 5},
+		"wrapper": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(`<section data-label="example">` + body + `</section>`), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, `<section data-label="example">fallback</section>`, out)
+}
+
 func Test_VM_Form_Helper_Context_Set_Is_Visible_After_Multiple_Caller_Loops(t *testing.T) {
 	tmpl, err := Compile(`<%= layout({}) { %>
 <% let selected = record.Entries[0] %>

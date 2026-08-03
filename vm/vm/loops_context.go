@@ -220,7 +220,7 @@ func loopNeedsContextWrites(block *object.Closure) bool {
 	for i := 0; i < len(ins); {
 		op := code.Opcode(ins[i])
 		switch op {
-		case code.OpGetName, code.OpGetNameOrNull, code.OpSetName, code.OpAssignName,
+		case code.OpGetName, code.OpGetNameOrNull, code.OpGetNameOrJumpMissing, code.OpSetName, code.OpAssignName,
 			code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteNameProperty,
 			code.OpWriteGlobalProperty,
 			code.OpCall, code.OpWriteCall, code.OpWriteNameCall, code.OpCallBlock, code.OpRenderTemplate, code.OpHole:
@@ -542,7 +542,7 @@ func (vm *VM) syncDynamicContextBindingsFromContext(target hctx.Context, source 
 
 func dynamicContextNameOpcode(op code.Opcode) bool {
 	switch op {
-	case code.OpGetName, code.OpGetNameOrNull, code.OpSetName, code.OpAssignName,
+	case code.OpGetName, code.OpGetNameOrNull, code.OpGetNameOrJumpMissing, code.OpSetName, code.OpAssignName,
 		code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteNameProperty, code.OpWriteNameCall:
 		return true
 	default:

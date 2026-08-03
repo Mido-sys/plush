@@ -1442,6 +1442,18 @@ func Test_Soft_Undefined_Equality_Names(t *testing.T) {
 	runCompilerTests(t, tests)
 }
 
+func Test_Soft_Missing_Call_Guards_The_Callee(t *testing.T) {
+	program, err := ParseScript(`if (missing(1)) { 10 } else { 20 };`)
+	require.NoError(t, err)
+
+	compiler := New()
+	require.NoError(t, compiler.Compile(program))
+
+	instructions := compiler.Bytecode().Instructions
+	require.True(t, instructionContainsOpcode(instructions, code.OpGetNameOrJumpMissing))
+	require.True(t, instructionContainsOpcode(instructions, code.OpCall))
+}
+
 func Test_Conditionals(t *testing.T) {
 	tests := []compilerTestCase{
 		{

@@ -947,11 +947,49 @@ func (c *Compiler) compileFunctionLiteral(node *ast.FunctionLiteral, name string
 }
 
 func (c *Compiler) compileCallExpression(node *ast.CallExpression) error {
+	if c.shouldGuardMissingCall(node) {
+		return c.compileGuardedCallExpression(node)
+	}
+	return c.compileResolvedCallExpression(node)
+}
+
+func (c *Compiler) shouldGuardMissingCall(node *ast.CallExpression) bool {
+	if c.softNames == 0 || node == nil {
+		return false
+	}
+	ident, ok := node.Function.(*ast.Identifier)
+	if !ok || ident.Callee != nil || ident.Value == "nil" {
+		return false
+	}
+	_, resolved := c.symbolTable.Resolve(ident.Value)
+	return !resolved
+}
+
+func (c *Compiler) compileGuardedCallExpression(node *ast.CallExpression) error {
+	ident := node.Function.(*ast.Identifier)
+	nameIndex := c.addStringConstant(ident.Value)
+	missingPos := c.emit(code.OpGetNameOrJumpMissing, nameIndex, 9999)
+	if err := c.compileCallWithFunction(node); err != nil {
+		return err
+	}
+
+	endPos := c.emit(code.OpJump, 9999)
+	nullPos := len(c.currentInstructions())
+	c.replaceInstruction(missingPos, code.Make(code.OpGetNameOrJumpMissing, nameIndex, nullPos))
+	c.emit(code.OpNull)
+	c.changeOperand(endPos, len(c.currentInstructions()))
+	return nil
+}
+
+func (c *Compiler) compileResolvedCallExpression(node *ast.CallExpression) error {
 	if err := c.compileHard(node.Function); err != nil {
 		return err
 	}
 	c.markLastPropertyAsMethod()
+	return c.compileCallWithFunction(node)
+}
 
+func (c *Compiler) compileCallWithFunction(node *ast.CallExpression) error {
 	for _, a := range node.Arguments {
 		if err := c.compileCallArgument(a); err != nil {
 			return err

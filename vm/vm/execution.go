@@ -300,6 +300,18 @@ func (vm *VM) Run() error {
 				return err
 			}
 
+		case code.OpGetNameOrJumpMissing:
+			nameIndex := int(code.ReadUint16(ins[ip+1:]))
+			missingPos := int(code.ReadUint16(ins[ip+3:]))
+			vm.currentFrame().ip += 4
+			if value, ok := vm.contextValue(vm.stringConstant(nameIndex)); ok {
+				if err := vm.push(object.Wrap(value)); err != nil {
+					return err
+				}
+			} else {
+				vm.currentFrame().ip = missingPos - 1
+			}
+
 		case code.OpSetName:
 			nameIndex := int(code.ReadUint16(ins[ip+1:]))
 			vm.currentFrame().ip += 2

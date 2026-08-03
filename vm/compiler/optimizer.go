@@ -46,6 +46,10 @@ func optimizeScope(
 			if len(ins.operands) > 0 {
 				jumpTargets[ins.operands[0]] = true
 			}
+		case code.OpGetNameOrJumpMissing:
+			if len(ins.operands) > 1 {
+				jumpTargets[ins.operands[1]] = true
+			}
 		}
 	}
 
@@ -126,6 +130,11 @@ func optimizeScope(
 		case code.OpJump, code.OpJumpNotTruthy:
 			copied := append([]int(nil), operands...)
 			copied[0] = mapTarget(copied[0])
+			replacement := code.Make(op, copied...)
+			copy(out[i:i+len(replacement)], replacement)
+		case code.OpGetNameOrJumpMissing:
+			copied := append([]int(nil), operands...)
+			copied[1] = mapTarget(copied[1])
 			replacement := code.Make(op, copied...)
 			copy(out[i:i+len(replacement)], replacement)
 		}
