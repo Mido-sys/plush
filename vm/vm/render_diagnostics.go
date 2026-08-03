@@ -10,6 +10,7 @@ func updateBytecodeDiagnostics(ctx hctx.Context, bytecode *compiler.Bytecode) {
 	if ctx == nil || bytecode == nil {
 		return
 	}
+	fileOutputScope(bytecode, ctx, outputSizeOptions{topLevel: true})
 	stats := cachedFastRenderPlanDiagnostics(bytecode)
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
@@ -118,6 +119,12 @@ func (b *fastPlanDiagnosticBuilder) segment(segment *compiler.FastRenderSegment,
 		b.value(segment.ValuePlan, depth+1)
 	case compiler.FastRenderSegmentAssign:
 		b.value(segment.ValuePlan, depth+1)
+		b.assignTarget(segment.AssignTarget, depth+1)
+	case compiler.FastRenderSegmentReturn:
+		b.stats.ValueWrites++
+		b.value(segment.ValuePlan, depth+1)
+	case compiler.FastRenderSegmentGeneric:
+		b.stats.ValueWrites++
 	}
 }
 
@@ -178,11 +185,25 @@ func (b *fastPlanDiagnosticBuilder) loopPart(part *compiler.FastLoopPart, depth 
 		b.partialPlan(part.Partial, depth+1)
 	case compiler.FastLoopPartLet:
 		b.value(part.ValuePlan, depth+1)
+	case compiler.FastLoopPartAssign:
+		b.value(part.ValuePlan, depth+1)
+		b.assignTarget(part.AssignTarget, depth+1)
+	case compiler.FastLoopPartReturn:
+		b.stats.ValueWrites++
+		b.value(part.ValuePlan, depth+1)
 	case compiler.FastLoopPartConditional:
 		b.loopConditional(part.Conditional, depth+1)
 	case compiler.FastLoopPartLoop:
 		b.loop(part.Loop, depth+1)
 	}
+}
+
+func (b *fastPlanDiagnosticBuilder) assignTarget(target *compiler.FastAssignTarget, depth int) {
+	if target == nil || target.Kind != compiler.FastAssignTargetIndex {
+		return
+	}
+	b.value(target.Container, depth+1)
+	b.value(target.Index, depth+1)
 }
 
 func (b *fastPlanDiagnosticBuilder) loopConditional(plan *compiler.FastLoopConditionalPlan, depth int) {
@@ -239,6 +260,16 @@ func (b *fastPlanDiagnosticBuilder) value(plan compiler.FastValuePlan, depth int
 		b.stats.NameSegments++
 	case compiler.FastValuePath:
 		b.stats.PropertyReads += len(plan.Path)
+		for i := range plan.Path {
+			step := &plan.Path[i]
+			if step.Kind == compiler.FastPathStepCall && len(step.Args) > 0 {
+				b.stats.HelperCalls++
+				b.helper(step.Value)
+			}
+			for argIndex := range step.Args {
+				b.value(step.Args[argIndex], depth+1)
+			}
+		}
 	case compiler.FastValueInfix, compiler.FastValueConcat:
 		if plan.Left != nil {
 			b.value(*plan.Left, depth+1)
@@ -259,6 +290,18 @@ func (b *fastPlanDiagnosticBuilder) value(plan compiler.FastValuePlan, depth int
 	case compiler.FastValueHash:
 		for i := range plan.Pairs {
 			b.value(plan.Pairs[i].Value, depth+1)
+		}
+	case compiler.FastValueIndex:
+		if plan.Left != nil {
+			b.value(*plan.Left, depth+1)
+		}
+		if plan.Right != nil {
+			b.value(*plan.Right, depth+1)
+		}
+		for i := range plan.Path {
+			for argIndex := range plan.Path[i].Args {
+				b.value(plan.Path[i].Args[argIndex], depth+1)
+			}
 		}
 	}
 }

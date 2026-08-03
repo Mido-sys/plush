@@ -6,7 +6,6 @@ import (
 
 	rootplush "github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
-	vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,7 +148,7 @@ func compareBudgetRender(t *testing.T, input string, limit int64, costs rootplus
 	t.Helper()
 
 	interpreterOut, interpreterErr, interpreterStats := renderInterpreterWithBudget(input, limit, costs, data)
-	vmOut, vmErr, vmStats := renderVMWithBudget(input, limit, costs, data)
+	vmOut, vmErr, vmStats := renderVMWithBudget(t, input, limit, costs, data)
 
 	if errors.Is(interpreterErr, rootplush.ErrBudgetExceeded) || errors.Is(vmErr, rootplush.ErrBudgetExceeded) {
 		require.ErrorIs(t, interpreterErr, rootplush.ErrBudgetExceeded)
@@ -178,10 +177,12 @@ func renderInterpreterWithBudget(input string, limit int64, costs rootplush.Budg
 	return out, err, budget.Stats()
 }
 
-func renderVMWithBudget(input string, limit int64, costs rootplush.BudgetCosts, data func() map[string]interface{}) (string, error, rootplush.BudgetStats) {
+func renderVMWithBudget(t *testing.T, input string, limit int64, costs rootplush.BudgetCosts, data func() map[string]interface{}) (string, error, rootplush.BudgetStats) {
+	t.Helper()
+
 	budget := rootplush.NewBudgetWithCosts(limit, costs)
 	ctx := rootplush.NewContextWith(data())
 	ctx.WithBudget(budget)
-	out, err := vmplush.Render(input, ctx)
+	out, err := renderVMContext(t, input, ctx)
 	return out, err, budget.Stats()
 }

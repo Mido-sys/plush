@@ -125,7 +125,7 @@ func Test_VM_Fast_Render_Mixed_And_Conditional_Remaining_Branches(t *testing.T) 
 			Line:     35,
 		},
 		line: 35,
-	}}})
+	}}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "true", out.String())
@@ -141,7 +141,7 @@ func Test_VM_Fast_Render_Mixed_And_Conditional_Remaining_Branches(t *testing.T) 
 			Line:     36,
 		},
 		line: 36,
-	}}})
+	}}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "true", out.String())
@@ -150,14 +150,14 @@ func Test_VM_Fast_Render_Mixed_And_Conditional_Remaining_Branches(t *testing.T) 
 		kind:      fastMixedOpAccessChain,
 		valuePlan: compiler.FastValuePlan{Kind: compiler.FastValuePath, NameIndex: 99, Value: "missing"},
 		line:      37,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 37")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
 		kind:      fastMixedOpAccessChain,
 		valuePlan: compiler.FastValuePlan{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing"},
 		line:      38,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 38")
 
 	_, err = renderFastMixedPlan(&out, plush.NewContext().WithBudget(plush.NewBudget(0)), bindings, &fastMixedPlan{ops: []fastMixedOp{{
@@ -168,7 +168,7 @@ func Test_VM_Fast_Render_Mixed_And_Conditional_Remaining_Branches(t *testing.T) 
 				line:      39,
 			}},
 		},
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 39")
 }
 
@@ -202,7 +202,7 @@ func Test_VM_Fast_Render_Inline_And_Simple_Value_Edges(t *testing.T) {
 	bindings := newFastRenderBindings(plan, ctx)
 	var out strings.Builder
 
-	rendered, handled, err := renderFastPlanWithBindingPlan(nil, ctx, nil)
+	rendered, handled, err := renderFastPlanWithBindingPlan(nil, nil, ctx, nil)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Empty(t, rendered)

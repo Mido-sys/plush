@@ -294,7 +294,7 @@ func (c *partialOverlayContext) SetID(id int, value interface{}) {
 }
 
 func (c *partialOverlayContext) UpdateID(id int, value interface{}) bool {
-	if c == nil || value == nil {
+	if c == nil {
 		return false
 	}
 	if c.setLocalIDExisting(id, value) {
@@ -310,7 +310,7 @@ func (c *partialOverlayContext) UpdateID(id int, value interface{}) bool {
 }
 
 func (c *partialOverlayContext) Update(key string, value interface{}) bool {
-	if c == nil || value == nil {
+	if c == nil {
 		return false
 	}
 	if c.setLocalExisting(key, value) {
@@ -495,6 +495,7 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 			return true, fastLineError(partial.Line, err)
 		}
 	}
+	childFile := plush.TemplateFilenameForError(partialCtx)
 
 	if useMetaIDs {
 		setupFastPartialNesting(partialCtx, partial.Name, metaIDs)
@@ -507,25 +508,25 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 	}
 	if renderedCached, err := renderCachedPartialBytecodeInto(out, partialCtx, partial.Name, needsJSEscape); renderedCached || err != nil {
 		if err != nil {
-			return true, fastLineError(partial.Line, err)
+			return true, wrapVMPartialRenderError(ctx, partial.Line, partialCtx, childFile, err)
 		}
 		return true, nil
 	}
 
 	pf, ok := links.partialFeeder(partialCtx)
 	if !ok {
-		return true, fastLineError(partial.Line, fmt.Errorf("could not find partial feeder from helpers"))
+		return true, wrapVMPartialRenderError(ctx, partial.Line, partialCtx, childFile, fmt.Errorf("could not find partial feeder from helpers"))
 	}
 
 	part, err := pf(partial.Name)
 	if err != nil {
-		return true, fastLineError(partial.Line, err)
+		return true, wrapVMPartialRenderError(ctx, partial.Line, partialCtx, childFile, err)
 	}
 
 	if !needsJSEscape {
 		if renderedInline, err := renderLinkedPartialInline(out, part, partialCtx); renderedInline || err != nil {
 			if err != nil {
-				return true, fastLineError(partial.Line, err)
+				return true, wrapVMPartialRenderError(ctx, partial.Line, partialCtx, childFile, err)
 			}
 			return true, nil
 		}
@@ -533,7 +534,7 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 
 	part, err = renderLinkedPartial(part, partialCtx)
 	if err != nil {
-		return true, fastLineError(partial.Line, err)
+		return true, wrapVMPartialRenderError(ctx, partial.Line, partialCtx, childFile, err)
 	}
 	if needsJSEscape {
 		part = template.JSEscapeString(part)
@@ -567,14 +568,28 @@ func renderFastDataPartialDirectInto(out *strings.Builder, partial *compiler.Fas
 		if err := evalFastPartialDataLocalValues(dataPlan, ctx, parentBindings); err != nil {
 			return true, err
 		}
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 		return true, nil
 	}
 	bindings := newFastRenderBindingsWithPlan(bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
 	if err := attachFastPartialDataLocalsFromPlan(&bindings, dataPlan, ctx, parentBindings, &localStorage); err != nil {
 		return true, err
 	}
-	return renderFastPlanInlineWithBindings(out, bytecode.FastRenderPlan, ctx, bindings)
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
+	start := out.Len()
+	ok, err = renderFastPlanInlineWithBindings(out, bytecode.FastRenderPlan, ctx, bindings)
+	if err != nil {
+		return ok, wrapVMPartialRenderError(ctx, partial.Line, nil, filename, err)
+	}
+	if ok {
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
+	}
+	return ok, nil
 }
 
 func fastPartialDataCanDirect(plan *fastPartialDataBindingPlan) bool {
@@ -805,6 +820,7 @@ func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Con
 			return true, fastLineError(line, err)
 		}
 	}
+	childFile := plush.TemplateFilenameForError(partialCtx)
 
 	if useMetaIDs {
 		setupFastPartialNesting(partialCtx, name, metaIDs)
@@ -817,25 +833,25 @@ func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Con
 	}
 	if renderedCached, err := renderCachedPartialBytecodeInto(out, partialCtx, name, needsJSEscape); renderedCached || err != nil {
 		if err != nil {
-			return true, fastLineError(line, err)
+			return true, wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
 		}
 		return true, nil
 	}
 
 	pf, ok := links.partialFeeder(partialCtx)
 	if !ok {
-		return true, fastLineError(line, fmt.Errorf("could not find partial feeder from helpers"))
+		return true, wrapVMPartialRenderError(ctx, line, partialCtx, childFile, fmt.Errorf("could not find partial feeder from helpers"))
 	}
 
 	part, err := pf(name)
 	if err != nil {
-		return true, fastLineError(line, err)
+		return true, wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
 	}
 
 	if !needsJSEscape {
 		if renderedInline, err := renderLinkedPartialInline(out, part, partialCtx); renderedInline || err != nil {
 			if err != nil {
-				return true, fastLineError(line, err)
+				return true, wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
 			}
 			return true, nil
 		}
@@ -843,7 +859,7 @@ func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Con
 
 	part, err = renderLinkedPartial(part, partialCtx)
 	if err != nil {
-		return true, fastLineError(line, err)
+		return true, wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
 	}
 	if needsJSEscape {
 		part = template.JSEscapeString(part)
@@ -967,6 +983,8 @@ func fastRenderSegmentsCanRunWithoutPartialContext(segments []compiler.FastRende
 			if fastValuePlanNeedsPartialContext(&segment.ValuePlan) {
 				return false
 			}
+		case compiler.FastRenderSegmentCall:
+			return false
 		case compiler.FastRenderSegmentConditional:
 			if !fastConditionalCanRunWithoutPartialContext(segment.Conditional) {
 				return false
@@ -980,6 +998,10 @@ func fastRenderSegmentsCanRunWithoutPartialContext(segments []compiler.FastRende
 				return false
 			}
 		case compiler.FastRenderSegmentAssign:
+			if fastValuePlanNeedsPartialContext(&segment.ValuePlan) {
+				return false
+			}
+		case compiler.FastRenderSegmentReturn:
 			if fastValuePlanNeedsPartialContext(&segment.ValuePlan) {
 				return false
 			}
@@ -1028,10 +1050,21 @@ func fastLoopPartsCanRunWithoutPartialContext(parts []compiler.FastLoopPart) boo
 			compiler.FastLoopPartBreak,
 			compiler.FastLoopPartContinue:
 			continue
-		case compiler.FastLoopPartLet:
+		case compiler.FastLoopPartLet, compiler.FastLoopPartAssign:
 			if fastValuePlanNeedsPartialContext(&part.ValuePlan) {
 				return false
 			}
+			if part.AssignTarget != nil && part.AssignTarget.Kind == compiler.FastAssignTargetIndex {
+				if fastValuePlanNeedsPartialContext(&part.AssignTarget.Container) || fastValuePlanNeedsPartialContext(&part.AssignTarget.Index) {
+					return false
+				}
+			}
+		case compiler.FastLoopPartReturn:
+			if fastValuePlanNeedsPartialContext(&part.ValuePlan) {
+				return false
+			}
+		case compiler.FastLoopPartCall:
+			return false
 		case compiler.FastLoopPartPartial:
 			return false
 		case compiler.FastLoopPartConditional:
@@ -1072,6 +1105,14 @@ func fastValuePlanNeedsPartialContext(value *compiler.FastValuePlan) bool {
 	switch value.Kind {
 	case compiler.FastValueCall:
 		return true
+	case compiler.FastValuePath:
+		for i := range value.Path {
+			for argIndex := range value.Path[i].Args {
+				if fastValuePlanNeedsPartialContext(&value.Path[i].Args[argIndex]) {
+					return true
+				}
+			}
+		}
 	case compiler.FastValueInfix, compiler.FastValueConcat:
 		return fastValuePlanNeedsPartialContext(value.Left) || fastValuePlanNeedsPartialContext(value.Right)
 	case compiler.FastValuePrefix:
@@ -1086,6 +1127,17 @@ func fastValuePlanNeedsPartialContext(value *compiler.FastValuePlan) bool {
 		for i := range value.Pairs {
 			if fastValuePlanNeedsPartialContext(&value.Pairs[i].Value) {
 				return true
+			}
+		}
+	case compiler.FastValueIndex:
+		if fastValuePlanNeedsPartialContext(value.Left) || fastValuePlanNeedsPartialContext(value.Right) {
+			return true
+		}
+		for i := range value.Path {
+			for argIndex := range value.Path[i].Args {
+				if fastValuePlanNeedsPartialContext(&value.Path[i].Args[argIndex]) {
+					return true
+				}
 			}
 		}
 	}
@@ -1112,10 +1164,24 @@ func renderFastNoDataPartialDirectInto(out *strings.Builder, name string, ctx hc
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 		return true, nil
 	}
-	return renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
+	start := out.Len()
+	ok, err = renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+	if err != nil {
+		return ok, wrapVMPartialRenderError(ctx, line, nil, filename, err)
+	}
+	if ok {
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
+	}
+	return ok, nil
 }
 
 func partialNeedsJSEscape(ctx hctx.Context, name string) bool {
@@ -1128,6 +1194,16 @@ func partialNeedsJSEscape(ctx hctx.Context, name string) bool {
 	}
 	ext := filepath.Ext(name)
 	return strings.Contains(ct, "javascript") && ext != ".js" && ext != ""
+}
+
+func wrapVMPartialRenderError(parentCtx hctx.Context, parentLine int, childCtx hctx.Context, childFile string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if childFile == "" {
+		childFile = plush.TemplateFilenameForError(childCtx)
+	}
+	return plush.WrapPartialRenderError(plush.TemplateFilenameForError(parentCtx), parentLine, childFile, err)
 }
 
 func partialNeedsJSEscapeFast(ctx *partialOverlayContext, name string, ids partialMetaIDs) bool {
@@ -1238,6 +1314,8 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 		}
 	}
 
+	parentFile := plush.TemplateFilenameForError(help.Context)
+	parentLine := help.CallLine()
 	links := partialBytecodeLinks(help.Context)
 	child, releaseChild := partialHelperChildContext(help.Context)
 	help.Context = child
@@ -1270,15 +1348,16 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 	} else {
 		help.Set(meta.TemplateFileKey, name)
 	}
+	childFile := plush.TemplateFilenameForError(help.Context)
 
 	pf, ok := links.partialFeeder(help.Context)
 	if !ok {
-		return "", fmt.Errorf("could not find partial feeder from helpers")
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
 	}
 
 	part, err := pf(name)
 	if err != nil {
-		return "", err
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
 
 	if help.Value(vmAlreadyInPartial) == nil {
@@ -1298,7 +1377,7 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 
 	part, err = renderLinkedPartial(part, help.Context)
 	if err != nil {
-		return "", err
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
 	if ct, ok := help.Value("contentType").(string); ok {
 		ext := filepath.Ext(name)
@@ -1323,6 +1402,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	filename, forceCacheClear, cached, ok := punchHoleCacheStateForFilename(filename, ctx, input)
 	if ok {
+		observeCachedPartialOutput(filename, cached, ctx)
 		return cached, nil
 	}
 
@@ -1331,7 +1411,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	links := partialBytecodeLinks(ctx)
 	if link, ok := links.GetLink(linkKey, sourceHash); ok {
 		if shouldFallbackPartialBytecode(link.bytecode) {
-			return renderInterpreterFallback(input, ctx, filename)
+			return renderInterpreterPartial(input, ctx, filename, link.bytecode)
 		}
 		return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 	}
@@ -1340,7 +1420,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 		if bytecode, ok := cached.(*compiler.Bytecode); ok {
 			link := links.SetWithSource(linkKey, sourceHash, input, bytecode)
 			if shouldFallbackPartialBytecode(bytecode) {
-				return renderInterpreterFallback(input, ctx, filename)
+				return renderInterpreterPartial(input, ctx, filename, bytecode)
 			}
 			return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 		}
@@ -1360,7 +1440,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, cachedProgram, bytecode, input)
 	link := links.SetWithSource(linkKey, sourceHash, input, bytecode)
 	if shouldFallbackPartialBytecode(bytecode) {
-		return renderInterpreterFallback(input, ctx, filename)
+		return renderInterpreterPartial(input, ctx, filename, bytecode)
 	}
 	return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 }
@@ -1454,6 +1534,13 @@ func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Cont
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	filename, _, cached, ok := punchHoleCacheStateForFilename(filename, ctx, input)
 	if ok {
+		if link, linked := cachedPartialBytecodeLinkForFilename(filename, ctx); linked && link != nil && link.bytecode != nil {
+			observation := beginPartialOutputObservation(link.bytecode, filename, ctx)
+			growInlineOutputBuilder(out, observation.growHint, &observation)
+			out.WriteString(cached)
+			observePartialOutput(link.bytecode, filename, ctx, len(cached), observation)
+			return true, nil
+		}
 		out.WriteString(cached)
 		return true, nil
 	}
@@ -1497,6 +1584,15 @@ func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Cont
 	return renderLinkedPartialBytecodeInline(out, link, ctx)
 }
 
+func observeCachedPartialOutput(filename, rendered string, ctx hctx.Context) {
+	link, ok := cachedPartialBytecodeLinkForFilename(filename, ctx)
+	if !ok || link == nil || link.bytecode == nil {
+		return
+	}
+	observation := beginPartialOutputObservation(link.bytecode, filename, ctx)
+	observePartialOutput(link.bytecode, filename, ctx, len(rendered), observation)
+}
+
 func cachedPartialBytecodeCanDirectInline(filename string) (bool, bool) {
 	if filename == "" {
 		return false, false
@@ -1524,7 +1620,10 @@ func renderGenericPartialInline(out *strings.Builder, input string, ctx hctx.Con
 	if err != nil {
 		return true, err
 	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
 	out.WriteString(rendered)
+	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
 	return true, nil
 }
 
@@ -1534,17 +1633,30 @@ func renderLinkedPartialBytecode(link *partialBytecodeLink, ctx hctx.Context, fi
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		observePartialOutput(bytecode, filename, ctx, len(bytecode.StaticOutput), observation)
 		return bytecode.StaticOutput, nil
 	}
 	if link.source != "" && shouldFallbackPartialBytecode(bytecode) {
-		return renderInterpreterFallback(link.source, ctx, filename)
+		return renderInterpreterPartial(link.source, ctx, filename, bytecode)
 	}
-	if bytecode.FastRenderPlan != nil {
-		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx)); ok || err != nil {
+	if !bytecode.HasHoles && bytecode.FastRenderPlan != nil {
+		options := outputSizeOptions{partialName: filename}
+		if rendered, ok, err := renderFastPlanWithBindingPlanOptions(bytecode, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx), options); ok || err != nil {
 			return rendered, err
 		}
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, link.source)
+	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, link.source, outputSizeOptions{partialName: filename})
+}
+
+func renderInterpreterPartial(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
+	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	if err != nil {
+		return "", err
+	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
+	return rendered, nil
 }
 
 func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialBytecodeLink, ctx hctx.Context) (bool, error) {
@@ -1553,14 +1665,27 @@ func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialByteco
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		name := plush.PunchHoleTemplateFilename(ctx)
+		observation := beginPartialOutputObservation(bytecode, name, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, name, ctx, out.Len()-start, observation)
 		return true, nil
 	}
 	if bytecode.HasHoles {
 		return false, nil
 	}
 	if bytecode.FastRenderPlan != nil {
-		return renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+		name := plush.PunchHoleTemplateFilename(ctx)
+		observation := beginPartialOutputObservation(bytecode, name, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
+		ok, err := renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+		if ok && err == nil {
+			observePartialOutput(bytecode, name, ctx, out.Len()-start, observation)
+		}
+		return ok, err
 	}
 	return false, nil
 }

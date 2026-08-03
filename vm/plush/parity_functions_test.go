@@ -140,7 +140,7 @@ func Test_Parity_Functions_Dash_In_Helper(t *testing.T) {
 
 func Test_Parity_Functions_Closure(t *testing.T) {
 	input := `<% let newAdder = fn(x) { return fn(y) { return x + y } } %><% let addTwo = newAdder(2) %><%= addTwo(3) %>`
-	out, err := renderVM(input, emptyContext)
+	out, err := renderVM(t, input, emptyContext)
 	if err != nil {
 		t.Fatal(err)
 	}

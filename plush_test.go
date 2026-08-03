@@ -298,6 +298,68 @@ func Test_Render_Diagnostics_VM_Hotspots_Header(t *testing.T) {
 	r.Equal("row_card:1:4.000", diagnostics.VMPartialHotspotsHeader())
 }
 
+func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
+	r := require.New(t)
+	diagnostics := plush.RenderDiagnostics{
+		OutputSize: plush.RenderOutputSizeDiagnostics{
+			Available:      true,
+			StaticSize:     10,
+			FallbackHint:   20,
+			GrowHint:       30,
+			EstimateBefore: 25,
+			Actual:         28,
+			EstimateAfter:  27,
+			SamplesBefore:  2,
+			SamplesAfter:   3,
+			Observed:       true,
+		},
+	}
+
+	r.Equal("scope=template;static=10;fallback=20;hint=30;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	r.Empty(plush.RenderDiagnostics{}.OutputSizeHeader())
+}
+
+func Test_Render_Diagnostics_Contextual_Output_Size_Header(t *testing.T) {
+	diagnostics := plush.RenderDiagnostics{
+		OutputSize: plush.RenderOutputSizeDiagnostics{
+			Available:      true,
+			Scope:          "file",
+			Contextual:     true,
+			ProfileBand:    "0-4k",
+			YieldSize:      100,
+			OverheadBefore: 20,
+			OverheadActual: 21,
+			OverheadAfter:  21,
+			StaticSize:     10,
+			FallbackHint:   115,
+			GrowHint:       120,
+			EstimateBefore: 120,
+			Actual:         121,
+			EstimateAfter:  121,
+			SamplesAfter:   2,
+			Observed:       true,
+		},
+	}
+
+	require.Equal(t, "scope=file;profile=0-4k;yield=100;overhead=20;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+}
+
+func Test_Render_Diagnostics_Partial_Output_Size_Headers(t *testing.T) {
+	r := require.New(t)
+	ctx := plush.NewContext()
+
+	plush.AddRenderDiagnosticPartialOutput(ctx, "components/item.plush", 90, 100, 100, 95, 3)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "components/item.plush", 110, 110, 100, 105, 4)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "nav;main.plush", 40, 45, 50, 45, 2)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	r.True(ok)
+	r.Equal("calls=3;learned=240;hint=255;actual=250;absolute-error=30;error=12.00;within-10=0;unstable=0;limited=0;grow-calls=0;grow-allocated=0", diagnostics.PartialOutputSizeHeader())
+	r.Equal("name=components/item.plush,calls=2,learned=200,hint=210,actual=200,error=10.00,estimate=105,samples=4,min=0,max=0,unstable=0,limited=0,grow-calls=0,grow-allocated=0|name=nav main.plush,calls=1,learned=40,hint=45,actual=50,error=20.00,estimate=45,samples=2,min=0,max=0,unstable=0,limited=0,grow-calls=0,grow-allocated=0", diagnostics.PartialOutputSizeDetailsHeader())
+	r.Empty(plush.RenderDiagnostics{}.PartialOutputSizeHeader())
+	r.Empty(plush.RenderDiagnostics{}.PartialOutputSizeDetailsHeader())
+}
+
 func Test_Render_Diagnostics_VM_Hotspots_Default_Off(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
@@ -309,6 +371,17 @@ func Test_Render_Diagnostics_VM_Hotspots_Default_Off(t *testing.T) {
 	r.False(ok)
 	r.Zero(diagnostics.VMHotspots.HelperCalls)
 	r.Zero(diagnostics.VMHotspots.PartialCalls)
+}
+
+func Test_Output_Size_Estimator_Can_Be_Disabled_And_Restored(t *testing.T) {
+	r := require.New(t)
+	previous := plush.SetOutputSizeEstimatorEnabled(false)
+	defer plush.SetOutputSizeEstimatorEnabled(previous)
+
+	r.True(previous)
+	r.False(plush.OutputSizeEstimatorEnabled())
+	r.False(plush.SetOutputSizeEstimatorEnabled(true))
+	r.True(plush.OutputSizeEstimatorEnabled())
 }
 
 func Test_Render_Diagnostics_VM_Hotspots_Concurrent_Update(t *testing.T) {

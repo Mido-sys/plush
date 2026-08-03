@@ -390,7 +390,7 @@ func Test_Parity_Root_For_Cases(t *testing.T) {
 		"myMap": map[string]string{"a": "A", "b": "B"},
 	})
 	interpreterOut, interpreterErr := renderInterpreter(mapLoop, factory)
-	vmOut, vmErr := renderVM(mapLoop, factory)
+	vmOut, vmErr := renderVM(t, mapLoop, factory)
 	require.NoError(t, interpreterErr)
 	require.NoError(t, vmErr)
 	for _, fragment := range []string{"a:A", "b:B"} {
@@ -519,7 +519,7 @@ func Test_Parity_Root_Quote_And_Error_Type_Cases(t *testing.T) {
 		},
 	})
 	_, interpreterErr := renderInterpreter(`<%= sqlError() %>`, ctxFactory)
-	_, vmErr := renderVM(`<%= sqlError() %>`, ctxFactory)
+	_, vmErr := renderVM(t, `<%= sqlError() %>`, ctxFactory)
 	require.True(t, errors.Is(interpreterErr, sql.ErrNoRows))
 	require.True(t, errors.Is(vmErr, sql.ErrNoRows))
 }

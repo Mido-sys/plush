@@ -360,7 +360,7 @@ func Test_Parity_Struct_Access_Errors(t *testing.T) {
 func compareVMRender(t *testing.T, input, expected string, factory contextFactory) {
 	t.Helper()
 
-	out, err := renderVM(input, factory)
+	out, err := renderVM(t, input, factory)
 	require.NoError(t, err)
 	require.Equal(t, expected, out)
 }

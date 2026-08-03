@@ -90,6 +90,9 @@ func (c *compiler) compile() (string, error) {
 		}
 
 		if err != nil {
+			if IsTemplateTraceError(err) {
+				return "", err
+			}
 			s := stmt
 			if c.curStmt != nil {
 				s = c.curStmt
@@ -259,6 +262,20 @@ func (c *compiler) evalPrefixExpression(node *ast.PrefixExpression) (interface{}
 	switch node.Operator {
 	case "!":
 		return !c.isTruthy(res), nil
+	case "-":
+		var rV interface{}
+		switch res := res.(type) {
+
+		case int64:
+			rV = (-1 * res)
+		case int:
+			rV = (-1 * res)
+		case float64:
+			rV = (-1 * res)
+		}
+		if rV != nil {
+			return rV, nil
+		}
 	}
 
 	return nil, fmt.Errorf("unknown operator %s", node.Operator)
@@ -827,6 +844,7 @@ func (c *compiler) evalCallExpression(node *ast.CallExpression) (interface{}, er
 					Context:  c.ctx,
 					compiler: c,
 					block:    node.Block,
+					callLine: node.T().LineNumber,
 				}
 				args = append(args, reflect.ValueOf(hargs))
 				return
@@ -912,6 +930,9 @@ func (c *compiler) evalCallExpression(node *ast.CallExpression) (interface{}, er
 	res := rv.Call(args)
 	if len(res) > 0 {
 		if e, ok := res[len(res)-1].Interface().(error); ok {
+			if IsTemplateTraceError(e) {
+				return nil, e
+			}
 			return nil, fmt.Errorf("could not call %s function: %w", node.Function, e)
 		}
 		if node.ChainCallee != nil {

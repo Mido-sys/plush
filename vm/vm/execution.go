@@ -300,6 +300,18 @@ func (vm *VM) Run() error {
 				return err
 			}
 
+		case code.OpGetNameOrJumpMissing:
+			nameIndex := int(code.ReadUint16(ins[ip+1:]))
+			missingPos := int(code.ReadUint16(ins[ip+3:]))
+			vm.currentFrame().ip += 4
+			if value, ok := vm.contextValue(vm.stringConstant(nameIndex)); ok {
+				if err := vm.push(object.Wrap(value)); err != nil {
+					return err
+				}
+			} else {
+				vm.currentFrame().ip = missingPos - 1
+			}
+
 		case code.OpSetName:
 			nameIndex := int(code.ReadUint16(ins[ip+1:]))
 			vm.currentFrame().ip += 2
@@ -491,6 +503,9 @@ func (vm *VM) currentCallName(ip int) string {
 func (vm *VM) wrapRuntimeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if plush.IsTemplateTraceError(err) {
+		return err
 	}
 	if strings.HasPrefix(err.Error(), "line ") {
 		return err
@@ -1187,6 +1202,9 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 
 	res := rv.Call(args)
 	if helperCtx != nil {
+		if name != "partial" {
+			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
+		}
 		vm.syncFrameBindingsFromContext(helperCtx)
 		vm.lastHelperContext = nil
 	}
@@ -1238,6 +1256,9 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 
 	res := rv.Call(args)
 	if helperCtx != nil {
+		if name != "partial" {
+			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
+		}
 		vm.syncFrameBindingsFromContext(helperCtx)
 		vm.lastHelperContext = nil
 	}

@@ -208,17 +208,17 @@ func Test_VM_Write_Fast_Loop_Call_Part_Error_And_Fast_Helper_Branches(t *testing
 		Line:      1,
 	}
 	var out strings.Builder
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, 0, "item"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, nil, 0, "item"))
 	require.Empty(t, out.String())
 
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, call, 0, "<item>"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, call, 0, "<item>"))
 	require.Equal(t, "fast:&lt;item&gt;", out.String())
 
 	missingCall := &compiler.FastCallPlan{Name: "missing", NameIndex: 99, Line: 7}
-	err := writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, missingCall, 0, "item")
+	err := writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, nil, missingCall, 0, "item")
 	require.ErrorContains(t, err, `line 7`)
 
-	err = writeFastLoopCallPart(&strings.Builder{}, plush.NewContext().WithBudget(plush.NewBudget(0)), bindings, call, 0, "item")
+	err = writeFastLoopCallPart(&strings.Builder{}, plush.NewContext().WithBudget(plush.NewBudget(0)), bindings, nil, call, 0, "item")
 	require.ErrorContains(t, err, `line 1`)
 
 	badArg := &compiler.FastCallPlan{
@@ -227,19 +227,19 @@ func Test_VM_Write_Fast_Loop_Call_Part_Error_And_Fast_Helper_Branches(t *testing
 		Args:      []compiler.FastValuePlan{{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing", Line: 8}},
 		Line:      8,
 	}
-	err = writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, badArg, 0, "item")
+	err = writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, nil, badArg, 0, "item")
 	require.ErrorContains(t, err, `line 8`)
 
 	slowCtx := plush.NewContextWith(map[string]interface{}{
 		"label": func(value string) string { return value },
 	})
 	slowBindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"label"}}, slowCtx)
-	err = writeFastLoopCallPart(&strings.Builder{}, slowCtx, slowBindings, badArg, 0, "item")
+	err = writeFastLoopCallPart(&strings.Builder{}, slowCtx, slowBindings, nil, badArg, 0, "item")
 	require.ErrorContains(t, err, `line 8`)
 
 	SetFastHelper(ctx, "label", func(FastWriter, FastArgs) error {
 		return errors.New("boom")
 	})
-	err = writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, call, 0, "item")
+	err = writeFastLoopCallPart(&strings.Builder{}, ctx, bindings, nil, call, 0, "item")
 	require.ErrorContains(t, err, `line 1`)
 }

@@ -156,7 +156,7 @@ func Test_VM_Render_Fast_Mixed_Plan_All_Optimized_Op_Kinds(t *testing.T) {
 				Line: 16,
 			},
 		},
-	}})
+	}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, ` access=&lt;Bender&gt;GO yes<span>Mido</span>ab`, out.String())
@@ -181,7 +181,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 		value:     "user",
 		property:  "Profile",
 		line:      21,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 21")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
@@ -194,7 +194,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 			Line:     22,
 		},
 		line: 22,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 22")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
@@ -206,7 +206,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 			Path:      []compiler.FastPathStep{{Kind: compiler.FastPathStepProperty, Value: "Name", Line: 23}},
 		},
 		line: 23,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 23")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
@@ -218,7 +218,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 			Path:      vmAccessProfileNamePlan(99).Path,
 		},
 		line: 24,
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 24")
 
 	out.Reset()
@@ -226,7 +226,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 		kind:      fastMixedOpAccessChain,
 		valuePlan: compiler.FastValuePlan{Kind: compiler.FastValueString, Value: "fallback"},
 		line:      25,
-	}}})
+	}}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "fallback", out.String())
@@ -234,7 +234,7 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
 		kind: fastMixedOpCall,
 		call: &compiler.FastCallPlan{Name: "missing", NameIndex: 99, Line: 26},
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 26")
 
 	ok, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
@@ -246,20 +246,20 @@ func Test_VM_Render_Fast_Mixed_Plan_Error_And_Fallback_Edges(t *testing.T) {
 				line:      27,
 			}},
 		},
-	}}})
+	}}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
 		kind:    fastMixedOpPartial,
 		partial: &compiler.FastPartialPlan{Name: "edge_mixed_missing_partial.plush", Line: 28},
-	}}})
+	}}}, nil)
 	require.ErrorContains(t, err, "line 28")
 
 	ok, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{
 		kind: fastMixedOpLoop,
 		loop: &compiler.FastLoopPlan{IterableName: "scalar", IterableNameIndex: 3, Line: 29},
-	}}})
+	}}}, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -384,7 +384,7 @@ func Test_VM_Render_Fast_Segments_And_Mixed_Edge_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	ok, err = renderFastMixedPlan(&out, ctx, bindings, nil)
+	ok, err = renderFastMixedPlan(&out, ctx, bindings, nil, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 
@@ -393,38 +393,38 @@ func Test_VM_Render_Fast_Segments_And_Mixed_Edge_Branches(t *testing.T) {
 		{kind: fastMixedOpStatic, prefix: "prefix"},
 		{kind: fastMixedOpName, nameIndex: 99, value: "missing", nullOnMissing: true, line: 6},
 		{kind: fastMixedOpName, nameIndex: 0, value: "name", line: 6},
-	}})
+	}}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "prefixMido", out.String())
 
 	ok, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{
 		{kind: fastMixedOpName, nameIndex: 1, value: "unsupported", line: 7},
-	}})
+	}}, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{
 		{kind: fastMixedOpName, nameIndex: 99, value: "missing", line: 8},
-	}})
+	}}, nil)
 	require.ErrorContains(t, err, "line 8")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{
 		{kind: fastMixedOpProperty, nameIndex: 99, value: "missing", property: "Name", line: 9},
-	}})
+	}}, nil)
 	require.ErrorContains(t, err, "line 9")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{
 		{kind: fastMixedOpProperty, nameIndex: 2, value: "user", property: "Missing", receiver: "user", full: "user.Missing", line: 10},
-	}})
+	}}, nil)
 	require.ErrorContains(t, err, "line 10")
 
 	_, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{
 		{kind: fastMixedOpValue, valuePlan: compiler.FastValuePlan{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing"}, line: 11},
-	}})
+	}}, nil)
 	require.ErrorContains(t, err, "line 11")
 
-	ok, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{kind: fastMixedOpKind(255)}}})
+	ok, err = renderFastMixedPlan(&out, ctx, bindings, &fastMixedPlan{ops: []fastMixedOp{{kind: fastMixedOpKind(255)}}}, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -467,7 +467,7 @@ func Test_VM_Render_Fast_Data_Partial_Slow_Branches(t *testing.T) {
 	out.Reset()
 	handled, err = renderFastDataPartialInto(&out, partial, ctx, fastRenderBindings{}, nil)
 	require.True(t, handled)
-	require.ErrorContains(t, err, "line 7: missing")
+	require.ErrorContains(t, err, "line 7:row.html: missing")
 }
 
 func Test_VM_Fast_Iterable_Len_And_Grow_Size_Branches(t *testing.T) {

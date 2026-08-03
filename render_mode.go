@@ -16,6 +16,7 @@ const (
 
 var renderMode atomic.Int32
 var vmGenericFallback atomic.Bool
+var outputSizeEstimatorDisabled atomic.Bool
 var vmRenderer atomic.Value
 
 var ErrVMRendererNotRegistered = errors.New("plush VM renderer is not registered")
@@ -40,6 +41,19 @@ func SetVMGenericFallback(enabled bool) bool {
 
 func VMGenericFallbackEnabled() bool {
 	return vmGenericFallback.Load()
+}
+
+// SetOutputSizeEstimatorEnabled enables or disables adaptive output-size
+// learning and growth hints. It returns the previous setting.
+func SetOutputSizeEstimatorEnabled(enabled bool) bool {
+	wasDisabled := outputSizeEstimatorDisabled.Swap(!enabled)
+	return !wasDisabled
+}
+
+// OutputSizeEstimatorEnabled reports whether adaptive output-size estimation
+// is enabled. The estimator is enabled by default.
+func OutputSizeEstimatorEnabled() bool {
+	return !outputSizeEstimatorDisabled.Load()
 }
 
 func RegisterVMRenderer(renderer RenderFunc) {

@@ -135,6 +135,7 @@ const (
 	OpWriteNameProperty
 	OpWriteCall
 	OpWriteNameCall
+	OpGetNameOrJumpMissing
 )
 
 type Definition struct {
@@ -191,35 +192,36 @@ var definitions = map[Opcode]*Definition{
 
 	OpCurrentClosure: {"OpCurrentClosure", []int{}},
 
-	OpGreaterEqual:        {"OpGreaterEqual", []int{}},
-	OpMatches:             {"OpMatches", []int{}},
-	OpAnd:                 {"OpAnd", []int{}},
-	OpOr:                  {"OpOr", []int{}},
-	OpGetName:             {"OpGetName", []int{2}},
-	OpSetName:             {"OpSetName", []int{2}},
-	OpAssignName:          {"OpAssignName", []int{2}},
-	OpGetProperty:         {"OpGetProperty", []int{2}},
-	OpSetIndex:            {"OpSetIndex", []int{}},
-	OpWrite:               {"OpWrite", []int{}},
-	OpFor:                 {"OpFor", []int{2, 2, 2, 1}},
-	OpBreak:               {"OpBreak", []int{}},
-	OpContinue:            {"OpContinue", []int{}},
-	OpCallBlock:           {"OpCallBlock", []int{1, 2, 1}},
-	OpRenderTemplate:      {"OpRenderTemplate", []int{}},
-	OpGetNameOrNull:       {"OpGetNameOrNull", []int{2}},
-	OpHole:                {"OpHole", []int{2}},
-	OpWriteConstant:       {"OpWriteConstant", []int{2}},
-	OpWriteName:           {"OpWriteName", []int{2}},
-	OpWriteNameOrNull:     {"OpWriteNameOrNull", []int{2}},
-	OpWriteLocal:          {"OpWriteLocal", []int{1}},
-	OpWriteGlobal:         {"OpWriteGlobal", []int{2}},
-	OpWriteString:         {"OpWriteString", []int{2}},
-	OpWriteHTML:           {"OpWriteHTML", []int{2}},
-	OpWriteLocalProperty:  {"OpWriteLocalProperty", []int{1, 2}},
-	OpWriteGlobalProperty: {"OpWriteGlobalProperty", []int{2, 2}},
-	OpWriteNameProperty:   {"OpWriteNameProperty", []int{2, 2}},
-	OpWriteCall:           {"OpWriteCall", []int{1}},
-	OpWriteNameCall:       {"OpWriteNameCall", []int{2, 1}},
+	OpGreaterEqual:         {"OpGreaterEqual", []int{}},
+	OpMatches:              {"OpMatches", []int{}},
+	OpAnd:                  {"OpAnd", []int{}},
+	OpOr:                   {"OpOr", []int{}},
+	OpGetName:              {"OpGetName", []int{2}},
+	OpSetName:              {"OpSetName", []int{2}},
+	OpAssignName:           {"OpAssignName", []int{2}},
+	OpGetProperty:          {"OpGetProperty", []int{2}},
+	OpSetIndex:             {"OpSetIndex", []int{}},
+	OpWrite:                {"OpWrite", []int{}},
+	OpFor:                  {"OpFor", []int{2, 2, 2, 1}},
+	OpBreak:                {"OpBreak", []int{}},
+	OpContinue:             {"OpContinue", []int{}},
+	OpCallBlock:            {"OpCallBlock", []int{1, 2, 1}},
+	OpRenderTemplate:       {"OpRenderTemplate", []int{}},
+	OpGetNameOrNull:        {"OpGetNameOrNull", []int{2}},
+	OpHole:                 {"OpHole", []int{2}},
+	OpWriteConstant:        {"OpWriteConstant", []int{2}},
+	OpWriteName:            {"OpWriteName", []int{2}},
+	OpWriteNameOrNull:      {"OpWriteNameOrNull", []int{2}},
+	OpWriteLocal:           {"OpWriteLocal", []int{1}},
+	OpWriteGlobal:          {"OpWriteGlobal", []int{2}},
+	OpWriteString:          {"OpWriteString", []int{2}},
+	OpWriteHTML:            {"OpWriteHTML", []int{2}},
+	OpWriteLocalProperty:   {"OpWriteLocalProperty", []int{1, 2}},
+	OpWriteGlobalProperty:  {"OpWriteGlobalProperty", []int{2, 2}},
+	OpWriteNameProperty:    {"OpWriteNameProperty", []int{2, 2}},
+	OpWriteCall:            {"OpWriteCall", []int{1}},
+	OpWriteNameCall:        {"OpWriteNameCall", []int{2, 1}},
+	OpGetNameOrJumpMissing: {"OpGetNameOrJumpMissing", []int{2, 2}},
 }
 
 func Lookup(op byte) (*Definition, error) {

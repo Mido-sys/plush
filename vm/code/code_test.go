@@ -19,6 +19,7 @@ func Test_Make(t *testing.T) {
 		{OpFor, []int{65534, 65533, 65532, 255}, []byte{byte(OpFor), 255, 254, 255, 253, 255, 252, 255}},
 		{OpCallBlock, []int{7, 65534, 1}, []byte{byte(OpCallBlock), 7, 255, 254, 1}},
 		{OpWriteNameCall, []int{65534, 2}, []byte{byte(OpWriteNameCall), 255, 254, 2}},
+		{OpGetNameOrJumpMissing, []int{65534, 65533}, []byte{byte(OpGetNameOrJumpMissing), 255, 254, 255, 253}},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +67,7 @@ func Test_Read_Operands(t *testing.T) {
 		{OpFor, []int{1, 2, 3, 4}, 7, 7},
 		{OpCallBlock, []int{1, 65535, 2}, 4, 4},
 		{OpWriteNameCall, []int{65535, 3}, 3, 3},
+		{OpGetNameOrJumpMissing, []int{65535, 65534}, 4, 4},
 	}
 
 	for _, tt := range tests {

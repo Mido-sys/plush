@@ -747,9 +747,9 @@ func Test_VM_Fast_Loop_Conditional_And_Call_Helpers(t *testing.T) {
 	require.Equal(t, "pre:", evaluated.Raw(1))
 
 	var out strings.Builder
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, call, 1, "item"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, call, 1, "item"))
 	require.Equal(t, "pre:item", out.String())
-	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, 1, "item"))
+	require.NoError(t, writeFastLoopCallPart(&out, ctx, bindings, nil, nil, 1, "item"))
 
 	out.Reset()
 	conditional := &compiler.FastLoopConditionalPlan{
@@ -1115,6 +1115,238 @@ func Test_VM_Runtime_Render_No_Filename_Uses_Source_Bytecode_Cache(t *testing.T)
 	require.True(t, ok)
 	require.Equal(t, plush.VMBytecodeCacheHitSource, secondDiagnostics.VMBytecodeCache)
 	require.Equal(t, plush.RenderFastPathFast, secondDiagnostics.FastPath)
+}
+
+func Test_VM_Output_Size_Stats_Fast_Render_Top_Level_Only(t *testing.T) {
+	tmpl, err := Compile(`<h1><%= name %></h1>`)
+	require.NoError(t, err)
+	bytecode := tmpl.bytecode
+	require.NotNil(t, bytecode.OutputSizeStats)
+	require.Equal(t, len("<h1></h1>"), bytecode.StaticSize)
+
+	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{"name": "Mido"}))
+	require.NoError(t, err)
+	require.Equal(t, "<h1>Mido</h1>", rendered)
+	require.Equal(t, uint64(1), bytecode.OutputSizeStats.Samples())
+	require.Equal(t, len(rendered), bytecode.OutputSizeStats.Estimate())
+
+	rendered, handled, err := tryRenderFastBytecode(bytecode, plush.NewContextWith(map[string]interface{}{"name": "Leela"}))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "<h1>Leela</h1>", rendered)
+	require.Equal(t, uint64(1), bytecode.OutputSizeStats.Samples())
+}
+
+func Test_VM_Output_Size_Stats_Normal_VM_Learns_Only_On_Success(t *testing.T) {
+	tmpl, err := Compile(`Hello <%= name %>`)
+	require.NoError(t, err)
+	bytecode := tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	rendered, err := renderBytecode(bytecode, plush.NewContextWith(map[string]interface{}{"name": "Amy"}))
+	require.NoError(t, err)
+	require.Equal(t, "Hello Amy", rendered)
+	require.Equal(t, uint64(1), bytecode.OutputSizeStats.Samples())
+	require.Equal(t, len(rendered), bytecode.OutputSizeStats.Estimate())
+
+	_, err = renderBytecode(bytecode, plush.NewContext())
+	require.Error(t, err)
+	require.Equal(t, uint64(1), bytecode.OutputSizeStats.Samples())
+	require.Equal(t, len(rendered), bytecode.OutputSizeStats.Estimate())
+}
+
+func Test_VM_Output_Size_Stats_Source_Cache_Is_Per_Bytecode(t *testing.T) {
+	clearSourceBytecodeCacheForTest()
+	defer clearSourceBytecodeCacheForTest()
+
+	firstSource := `<%= name %>`
+	firstRendered, err := Render(firstSource, plush.NewContextWith(map[string]interface{}{"name": "first"}))
+	require.NoError(t, err)
+	require.Equal(t, "first", firstRendered)
+	firstBytecode, ok := cachedSourceBytecode(preprocessTrimTags(firstSource))
+	require.True(t, ok)
+	require.Equal(t, uint64(1), firstBytecode.OutputSizeStats.Samples())
+
+	secondRendered, err := Render(firstSource, plush.NewContextWith(map[string]interface{}{"name": "second"}))
+	require.NoError(t, err)
+	require.Equal(t, "second", secondRendered)
+	require.Equal(t, uint64(2), firstBytecode.OutputSizeStats.Samples())
+
+	otherSource := `Hi <%= name %>`
+	otherRendered, err := Render(otherSource, plush.NewContextWith(map[string]interface{}{"name": "third"}))
+	require.NoError(t, err)
+	require.Equal(t, "Hi third", otherRendered)
+	otherBytecode, ok := cachedSourceBytecode(preprocessTrimTags(otherSource))
+	require.True(t, ok)
+	require.NotSame(t, firstBytecode, otherBytecode)
+	require.Equal(t, uint64(2), firstBytecode.OutputSizeStats.Samples())
+	require.Equal(t, uint64(1), otherBytecode.OutputSizeStats.Samples())
+}
+
+func Test_VM_Output_Size_Stats_Nested_Partial_Learns_Without_Changing_Template_Stats(t *testing.T) {
+	partial, err := Compile(`<span><%= name %></span>`)
+	require.NoError(t, err)
+	ctx := plush.NewContextWith(map[string]interface{}{"name": "Fry"})
+
+	rendered, err := renderLinkedPartialBytecode(&partialBytecodeLink{bytecode: partial.bytecode}, ctx, "partial.plush", false)
+	require.NoError(t, err)
+	require.Equal(t, "<span>Fry</span>", rendered)
+	require.Zero(t, partial.bytecode.OutputSizeStats.Samples())
+	require.Equal(t, uint64(1), partial.bytecode.PartialSizeStats.Samples())
+	require.Equal(t, len(rendered), partial.bytecode.PartialSizeStats.Estimate())
+
+	rendered, err = renderLinkedPartialBytecode(&partialBytecodeLink{bytecode: partial.bytecode}, ctx, "partial.plush", false)
+	require.NoError(t, err)
+	require.Equal(t, "<span>Fry</span>", rendered)
+	require.Equal(t, uint64(2), partial.bytecode.PartialSizeStats.Samples())
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.PartialOutput.Calls)
+	require.Equal(t, len(rendered), diagnostics.PartialOutput.Learned)
+	require.Equal(t, len(rendered)*2, diagnostics.PartialOutput.Actual)
+	require.Equal(t, 1, diagnostics.PartialOutput.WithinTen)
+}
+
+func Test_VM_Output_Size_GrowHint_Uses_Fallback_Only_Until_Learned(t *testing.T) {
+	bytecode := &compiler.Bytecode{
+		StaticSize:      4,
+		OutputSizeStats: &compiler.OutputSizeStats{},
+	}
+	ctx := plush.NewContext()
+	options := outputSizeOptions{topLevel: true}
+
+	require.Equal(t, 64, outputGrowHint(bytecode, 64, ctx, options))
+
+	bytecode.ObserveOutputSize(10)
+	require.Equal(t, 10, outputGrowHint(bytecode, 64, ctx, options))
+}
+
+func Test_VM_Output_Size_Estimator_Disabled_Skips_All_Adaptive_Learning(t *testing.T) {
+	previous := plush.SetOutputSizeEstimatorEnabled(false)
+	defer plush.SetOutputSizeEstimatorEnabled(previous)
+
+	tmpl, err := Compile(`<%= for (_, item) in items { %><span><%= item %></span><% } %>`)
+	require.NoError(t, err)
+	loop := tmpl.bytecode.FastRenderPlan.Segments[0].Loop
+	require.NotNil(t, loop)
+
+	ctx := plush.NewContextWith(map[string]interface{}{"items": []string{"one", "two"}})
+	rendered, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<span>one</span><span>two</span>", rendered)
+	require.Zero(t, tmpl.bytecode.OutputSizeStats.Samples())
+	require.Zero(t, loop.SizeStats.Samples())
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.False(t, diagnostics.OutputSize.Available)
+	require.Zero(t, diagnostics.PartialOutput.Calls)
+
+	plush.SetOutputSizeEstimatorEnabled(true)
+	_, err = tmpl.Render(plush.NewContextWith(map[string]interface{}{"items": []string{"three"}}))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), tmpl.bytecode.OutputSizeStats.Samples())
+	require.Equal(t, uint64(1), loop.SizeStats.Samples())
+}
+
+func Test_VM_Contextual_Output_Grow_Uses_Exact_Yield_And_Caps_Only_Overhead(t *testing.T) {
+	const yieldSize = 22 << 20
+
+	require.Equal(t, yieldSize+(64<<10), contextualOutputGrowHint(yieldSize, 64<<10))
+	require.Equal(t, yieldSize+contextualOutputOverheadGrowLimit, contextualOutputGrowHint(yieldSize, 8<<20))
+}
+
+func Test_VM_Partial_Output_Size_Caps_Unstable_Speculative_Grow(t *testing.T) {
+	bytecode := &compiler.Bytecode{
+		StaticSize:       32,
+		PartialSizeStats: &compiler.OutputSizeStats{},
+	}
+	bytecode.PartialSizeStats.Observe(4 << 20)
+	bytecode.PartialSizeStats.Observe(32 << 10)
+
+	ctx := plush.NewContext()
+	observation := beginPartialOutputObservation(bytecode, "fragments/variable.plush", ctx)
+	require.True(t, observation.unstable)
+	require.True(t, observation.limited)
+	require.Greater(t, observation.estimateBefore, unstablePartialGrowLimit)
+	require.Equal(t, unstablePartialGrowLimit, observation.growHint)
+
+	var out strings.Builder
+	growInlineOutputBuilder(&out, observation.growHint, &observation)
+	out.WriteString("rendered")
+	observePartialOutput(bytecode, "fragments/variable.plush", ctx, out.Len(), observation)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.PartialOutput.Calls)
+	require.Equal(t, 1, diagnostics.PartialOutput.Unstable)
+	require.Equal(t, 1, diagnostics.PartialOutput.Limited)
+	require.Equal(t, 1, diagnostics.PartialOutput.GrowCalls)
+	require.GreaterOrEqual(t, diagnostics.PartialOutput.GrowAllocated, unstablePartialGrowLimit)
+	require.Len(t, diagnostics.PartialOutput.Details, 1)
+	require.True(t, diagnostics.PartialOutput.Details[0].Unstable)
+	require.Equal(t, 8, diagnostics.PartialOutput.Details[0].Minimum)
+	require.Equal(t, 4<<20, diagnostics.PartialOutput.Details[0].Maximum)
+}
+
+func Test_VM_Template_Output_Size_Uses_Observed_Minimum_When_Unstable(t *testing.T) {
+	bytecode := &compiler.Bytecode{
+		StaticSize:      32,
+		OutputSizeStats: &compiler.OutputSizeStats{},
+	}
+	bytecode.OutputSizeStats.Observe(4 << 10)
+	bytecode.OutputSizeStats.Observe(1 << 20)
+
+	observation := beginOutputSizeObservation(bytecode, 0, plush.NewContext(), outputSizeOptions{topLevel: true})
+	require.True(t, observation.unstable)
+	require.True(t, observation.limited)
+	require.Greater(t, observation.estimateBefore, 4<<10)
+	require.Equal(t, 4<<10, observation.growHint)
+}
+
+func Test_VM_Partial_Output_Size_Does_Not_Double_Large_Parent_Builder(t *testing.T) {
+	var out strings.Builder
+	out.Grow(inlinePartialParentGrowLimit)
+	out.WriteString(strings.Repeat("x", out.Cap()-1024))
+	capacityBefore := out.Cap()
+
+	observation := outputSizeObservation{growHint: 32 << 10}
+	growInlineOutputBuilder(&out, observation.growHint, &observation)
+
+	require.Equal(t, capacityBefore, out.Cap())
+	require.False(t, observation.growCalled)
+	require.True(t, observation.limited)
+	require.Zero(t, outputSpeculativeAllocated(observation))
+}
+
+func Test_VM_Output_Size_Diagnostics_Do_Not_Mix_Nested_Render_Snapshots(t *testing.T) {
+	outer := &compiler.Bytecode{
+		StaticSize:      4,
+		OutputSizeStats: &compiler.OutputSizeStats{},
+	}
+	inner := &compiler.Bytecode{
+		StaticSize:      2,
+		OutputSizeStats: &compiler.OutputSizeStats{},
+	}
+	ctx := plush.NewContext()
+	options := outputSizeOptions{topLevel: true}
+
+	outerObservation := beginOutputSizeObservation(outer, 64, ctx, options)
+	innerObservation := beginOutputSizeObservation(inner, 8, ctx, options)
+	observeOutputSize(inner, ctx, options, 12, innerObservation)
+	observeOutputSize(outer, ctx, options, 100, outerObservation)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 4, diagnostics.OutputSize.StaticSize)
+	require.Equal(t, 64, diagnostics.OutputSize.FallbackHint)
+	require.Equal(t, 64, diagnostics.OutputSize.GrowHint)
+	require.Zero(t, diagnostics.OutputSize.EstimateBefore)
+	require.Equal(t, 100, diagnostics.OutputSize.Actual)
+	require.Equal(t, 100, diagnostics.OutputSize.EstimateAfter)
+	require.Zero(t, diagnostics.OutputSize.SamplesBefore)
+	require.Equal(t, uint64(1), diagnostics.OutputSize.SamplesAfter)
+	require.True(t, diagnostics.OutputSize.Observed)
 }
 
 func Test_VM_Runtime_Source_Render_Ignores_Source_Blind_Stale_Bytecode(t *testing.T) {

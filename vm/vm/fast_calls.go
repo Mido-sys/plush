@@ -73,6 +73,11 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 	if call == nil {
 		return nil
 	}
+	writeOut := out
+	if call.Silent {
+		var discard strings.Builder
+		writeOut = &discard
+	}
 	raw, ok := bindings.value(call.NameIndex)
 	if !ok {
 		return fastLineError(call.Line, fmt.Errorf("%q: unknown identifier", call.Name))
@@ -86,14 +91,14 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 		if err != nil {
 			return err
 		}
-		if handled, err := writeRegisteredFastHelperNamed(out, ctx, call.Name, helper, args); handled || err != nil {
+		if handled, err := writeRegisteredFastHelperNamed(writeOut, ctx, call.Name, helper, args); handled || err != nil {
 			if err != nil {
 				return fastLineError(call.Line, err)
 			}
 			return nil
 		}
 	}
-	if handled, err := writeFastDirectStringCallSegment(out, ctx, bindings, call, raw); handled || err != nil {
+	if handled, err := writeFastDirectStringCallSegment(writeOut, ctx, bindings, call, raw); handled || err != nil {
 		return err
 	}
 	var argStore fastCallArgs
@@ -101,7 +106,7 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 	if err != nil {
 		return err
 	}
-	if err := writeFastCallValue(out, ctx, call.Name, raw, args, &call.Cache); err != nil {
+	if err := writeFastCallValue(writeOut, ctx, call.Name, raw, args, &call.Cache); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -110,6 +115,11 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, call *compiler.FastBlockCallPlan) error {
 	if call == nil {
 		return nil
+	}
+	writeOut := out
+	if call.Silent {
+		var discard strings.Builder
+		writeOut = &discard
 	}
 	raw, ok := bindings.value(call.NameIndex)
 	if !ok {
@@ -131,7 +141,7 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 		scopedBindings.syncLocalValuesFromContext()
 		return rendered, err
 	})
-	if err := writeFastBlockCallValue(out, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
+	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -140,6 +150,11 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, loop *compiler.FastLoopPlan, call *compiler.FastBlockCallPlan, loopKey, loopValue interface{}) error {
 	if call == nil {
 		return nil
+	}
+	writeOut := out
+	if call.Silent {
+		var discard strings.Builder
+		writeOut = &discard
 	}
 	raw, ok := bindings.value(call.NameIndex)
 	if !ok {
@@ -161,7 +176,7 @@ func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings
 		scopedBindings.syncLocalValuesFromContext()
 		return rendered, err
 	})
-	if err := writeFastBlockCallValue(out, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
+	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -176,7 +191,7 @@ func renderFastBlockCallBytecode(call *compiler.FastBlockCallPlan, ctx hctx.Cont
 		return bytecode.StaticOutput, nil
 	}
 	if bytecode.FastRenderPlan != nil {
-		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx)); ok || err != nil {
+		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx)); ok || err != nil {
 			return rendered, err
 		}
 	}
@@ -376,6 +391,10 @@ func evalFastCallArgsInto(plans []compiler.FastValuePlan, ctx hctx.Context, bind
 			return nil, err
 		}
 		if !ok {
+			if plans[i].NullOnMissing {
+				args.Append(nil)
+				continue
+			}
 			return nil, fastLineError(plans[i].Line, fmt.Errorf("%q: unknown identifier", plans[i].Value))
 		}
 		args.Append(value)

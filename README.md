@@ -669,6 +669,45 @@ Useful fields:
 | `FastPlan` | Static complexity counters for the compiled fast plan: bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names. |
 | `VMHotspots` | Optional helper and partial call counts/timings when VM hotspot diagnostics are enabled. |
 
+#### VM Execution Paths
+
+`Mode` and `FastPath` describe different layers of rendering. `Mode` says
+which top-level renderer was selected. `FastPath` says which path that renderer
+used after parsing or loading cached bytecode.
+
+When `Mode` is `interpreter`, Plush uses the classic AST interpreter and VM
+bytecode is disabled for that render.
+
+When `Mode` is `vm`, Plush enters the compiled VM renderer. From there,
+`FastPath` can report:
+
+- `static`: the template compiled to static output and no runtime execution was
+  needed.
+- `fast`: the VM compiled bytecode and used an optimized fast render plan.
+- `generic`: the VM compiled bytecode, but the specialized fast planner either
+  was not needed or used a generic VM segment for syntax it does not model as a
+  custom fast operation yet.
+- `interpreter-fallback`: the VM renderer intentionally delegated this render to
+  the classic AST interpreter.
+
+The old interpreter remains a compatibility safety net. Plush templates can
+exercise many subtle behaviors: helper block scoping, partial context overlays,
+form helpers that inject values into a block, assignments, punch holes, budgets,
+and older template quirks. The fast render planner is intentionally
+conservative; it only handles syntax it can render with the same behavior as the
+normal renderer.
+
+If the interpreter fallback is disabled, templates that cannot use specialized
+fast operations should run through the `generic` VM bytecode path instead. That
+is still VM execution, but it means any remaining VM parity gap becomes visible
+as a render error or output difference instead of falling back to the known-good
+interpreter behavior. Template-defined functions and function literals use this
+generic VM path. Punch holes remain on the punch-hole-specific path so skeleton
+caching and hole filling keep their existing behavior. If the classic
+interpreter is removed entirely, `RenderModeInterpreter` and
+`interpreter-fallback` are no longer available, and applications must rely on VM
+compile/runtime support for every template shape they render.
+
 `FastPlan` describes the compiled template shape, not elapsed time. It includes bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names.
 
 Hotspot diagnostics are optional. They time VM helper and partial calls, so enable them only when profiling or sampling because they add measurement overhead:
@@ -735,6 +774,15 @@ if ok {
   w.Header().Set("X-Plush-Render-Engine-Time-Ms",
     fmt.Sprintf("%.3f", diagnostics.EngineDurationMilliseconds()))
   w.Header().Set("X-Plush-Punch-Hole-Cache", diagnostics.PunchHoleCache)
+  if outputSize := diagnostics.OutputSizeHeader(); outputSize != "" {
+    w.Header().Set("X-Plush-Output-Size", outputSize)
+  }
+  if partialOutput := diagnostics.PartialOutputSizeHeader(); partialOutput != "" {
+    w.Header().Set("X-Plush-Partial-Output-Size", partialOutput)
+  }
+  if partialDetails := diagnostics.PartialOutputSizeDetailsHeader(); partialDetails != "" {
+    w.Header().Set("X-Plush-Partial-Output-Details", partialDetails)
+  }
   w.Header().Set("X-Plush-Fast-Plan-Bindings",
     fmt.Sprintf("%d", diagnostics.FastPlan.Bindings))
   w.Header().Set("X-Plush-Fast-Plan-Segments",
@@ -795,14 +843,93 @@ Common header meanings:
 | `X-Plush-VM-Bytecode-Cache` | VM cache status. Warm file-backed templates should usually move from `miss-store` on first render to `hit`, `hit-static`, or `hit-source` on later renders. |
 | `X-Plush-Template-Filename` | Filename used as the cache key when `meta.TemplateFileKey` was set on the context. |
 | `X-Plush-Render-Engine-Time-Ms` | Time spent inside Plush rendering only, in milliseconds. Use this instead of total request time when comparing interpreter vs VM. |
-| `X-Plush-Fast-Path` | VM execution path: `static`, `fast`, `generic`, or `interpreter-fallback`. The best steady-state VM path is usually `fast`; `interpreter-fallback` means the VM intentionally delegated unsupported syntax to the old interpreter. |
+| `X-Plush-Fast-Path` | VM execution path: `static`, `fast`, `generic`, or `interpreter-fallback`. The best steady-state VM path is usually `fast`; `generic` still runs VM bytecode; `interpreter-fallback` means VM mode intentionally delegated unsupported syntax to the classic interpreter. |
 | `X-Plush-Punch-Hole-Cache` | Punch-hole cache status for templates that mix static HTML with embedded Plush code. |
+| `X-Plush-Output-Size` | Adaptive output-size estimator stats for top-level VM renders. `scope=template` describes a direct file render. For a Buffalo layout, `scope=file` predicts the fully assembled response as the exact current `yield` byte length plus learned layout overhead selected from the root template's bounded `profile` band. `actual` is this render's byte length, `learned` is the prediction before this render, `error` is their percentage difference, and `within-10` is `1` only below 10% error. `min`, `max`, `unstable`, and `limited` describe lifetime variability and whether the allocation policy constrained the hint. `grow-allocated` is capacity added by the explicit speculative grow, while `cap-final` and `unused-cap` report the builder's final capacity and unused portion. |
+| `X-Plush-Partial-Output-Size` | Request aggregate for compiled partial calls. `learned` and `actual` are summed across calls, while `absolute-error` prevents over- and under-estimates from cancelling each other. `within-10` counts calls whose learned estimate was below 10% error. `unstable` counts calls whose partial has at least a 4x observed output range; `limited` counts calls where Plush capped the speculative hint; `grow-allocated` reports the capacity actually added by explicit grows. |
+| `X-Plush-Partial-Output-Details` | Bounded details for up to eight partial filenames, with per-file call totals, learned/actual error, updated estimate, lifetime range and sample count, instability/limit state, and explicit grow allocation. |
 | `X-Plush-Fast-Plan-*` | Static counters captured from the compiled fast plan. These describe template complexity, not elapsed time. |
 | `X-Plush-Fast-Plan-Helper-Names` | Helper names the fast plan found while compiling. Useful for spotting expensive helper-heavy templates. |
 | `X-Plush-Fast-Plan-Partial-Names` | Partial names the fast plan found while compiling. Useful for spotting partial-heavy templates. |
 | `X-Plush-VM-Helper-*` | Optional helper-call count and timing fields. They are zero unless `EnableRenderVMHotspotDiagnostics` was enabled for that context. |
 | `X-Plush-VM-Partial-*` | Optional partial-call count and timing fields. They are zero unless `EnableRenderVMHotspotDiagnostics` was enabled for that context. |
 | `Server-Timing` | Browser/devtools-friendly timing summary. The example maps Plush engine time plus optional VM helper and partial hotspot time into server timing metrics. |
+
+### Adaptive Output-Size Estimator
+
+The estimator is implemented across the VM's whole-template, loop, composed-layout, and partial render paths, with bounded state, diagnostics, a runtime off switch, race coverage, benchmarks, and CPU/allocation profiles.
+
+#### How it works
+
+The estimator is a capacity planner for `strings.Builder`; it is not an output cache. A hint only reserves likely capacity before Plush writes the response. An inaccurate hint can cause an extra allocation or leave unused capacity, but it cannot change the rendered output. The stages below are cumulative layers of the same estimator, not seven rendering passes applied to every request.
+
+**Stage 1: Compile-time metadata**
+
+When Plush compiles a template, it counts bytes that are already known from literal HTML, constant writes, or static fast-plan segments. This becomes `StaticSize`, the safe first-render baseline. The resulting bytecode also owns atomic statistics for the complete template, layout overhead, partial output, and each eligible fast loop. Statistics therefore follow the compiled file instead of a route, request, tenant value, or rendered string.
+
+No sample exists on the first render. Plush starts with the best static or fast-plan hint available, renders normally, and measures the actual bytes afterward. Recompiling a changed source creates new bytecode and fresh statistics, so one template version does not train another version.
+
+**Stage 2: Whole-template learning**
+
+Before a top-level render starts, Plush grows an empty output builder using the larger of the known static size and the learned estimate. After a successful render it records the builder's actual length. Failed renders, nested renders that are not partials, and punch-hole sub-renders do not update these statistics.
+
+The first valid sample becomes the estimate. Later samples use an asymmetric moving update:
+
+- If actual output is larger, the estimate moves halfway toward it so underestimates recover quickly. A single upward sample can contribute at most four times the current estimate.
+- If actual output is smaller, the estimate moves one eighth of the way down so one unusually small response does not immediately discard useful capacity.
+- Estimate values have a 4 MiB ceiling. This limits speculative growth; it does not limit response size.
+
+The estimate used for the current response is captured before rendering. The newly observed value becomes the estimate for later responses, which is why the first render of newly compiled bytecode learns and the next render benefits.
+
+**Stage 3: Per-loop learning**
+
+Every eligible fast loop owns a separate `bytes per item` statistic, including nested loops. After a successful loop, Plush divides the bytes produced by the number of rendered items and feeds that value through the same fast-up/slow-down update. Silent loops, empty loops, failed loops, and loops whose iterable length is unknown do not produce a growth hint.
+
+On a later render, Plush multiplies learned bytes per item by the current iterable length. This uses today's item count rather than a historical page total, so a list that changes from 10 to 100 items can scale its hint immediately. Explicit loop growth is capped at 256 KiB; normal builder growth handles any remaining output. Request diagnostics aggregate loop predictions and retain bounded details for up to eight iterable-name/source-line pairs.
+
+**Stage 4: Composed layouts and `yield`**
+
+A composed page contains output that Plush already knows exactly: the current rendered `yield`. Learning the whole composed size as one average would over-allocate when small and large pages share a layout. Instead, Plush estimates only layout overhead:
+
+```text
+grow hint = exact current yield bytes + learned layout overhead
+observed overhead = final layout bytes - current yield bytes
+```
+
+The root file's bytecode keeps eight fixed overhead profiles for yield ranges from `0-4k` through `4m+`. Buffalo render-pass identity and template filenames associate one layout render with its root render, preventing unrelated nested work from training that profile. Layout overhead growth is capped at 4 MiB, while the exact current yield is still included in full.
+
+**Stage 5: Partials and variable-output safety**
+
+Each compiled partial owns its own estimate. Plush measures the parent's builder length immediately before and after a successful inline partial, so the sample contains only that partial's bytes. Before the next call, Plush grows the parent only when its spare capacity is insufficient. It avoids explicit partial growth once the parent already has at least 64 KiB of capacity, allowing the parent and loop estimators to remain the primary planners.
+
+For whole templates, layouts, and partials, Plush tracks the lifetime minimum and maximum observed output. When `maximum / minimum` reaches 4, the output is marked unstable. Conservative rules then replace a potentially expensive average:
+
+- Whole-template and layout growth use at most the larger of static bytes and the observed minimum.
+- Unstable partial growth is capped at the larger of 64 KiB and its static bytes.
+- Loops continue using current item count, so changing cardinality does not require a route-sized historical estimate.
+
+These limits affect only explicit preallocation. Rendering can always grow beyond them as needed.
+
+**Stage 6: Control and diagnostics**
+
+`SetOutputSizeEstimatorEnabled(false)` atomically disables learned template, layout, partial, and loop hints process-wide. Disabled mode records no new samples, but preserves the pre-existing static fast-plan hint. Re-enabling resumes from the statistics already attached to the cached bytecode.
+
+For enabled top-level renders, diagnostics report the estimate used before rendering (`learned`), actual bytes, the updated estimate, sample count, minimum/maximum, instability and limiting decisions, requested hint, real capacity allocated by `Grow`, and final unused capacity. `error` is the absolute difference between the pre-render estimate and actual output as a percentage of actual output; `within-10=1` means that value is strictly below 10%. Loop diagnostics provide request totals plus bounded per-loop bytes-per-item details, and partial diagnostics provide both totals and bounded per-file details.
+
+**Stage 7: Verification**
+
+Generic tests exercise first-sample learning, asymmetric updates, cache ownership, changed source, loops, nested loops, layouts, partials, instability limits, disabled mode, and concurrent access. The stable benchmark measures the intended reusable-template case; the alternating benchmark deliberately stresses variable output. CPU and allocation profiles then verify that lower `B/op` comes from replacing repeated builder copying with one planned grow, rather than from skipping rendering work.
+
+Each compiled template owns its own statistics. The cache stores estimates beside bytecode, never rendered values or context data. Replacing a cache entry after a source change creates fresh statistics automatically. Layout profiles are fixed at eight entries per root bytecode, so state cannot grow with request paths or input identities.
+
+The estimator is enabled by default. Disable it process-wide at startup, in a benchmark, or around a controlled test:
+
+```go
+previous := plush.SetOutputSizeEstimatorEnabled(false)
+defer plush.SetOutputSizeEstimatorEnabled(previous)
+```
+
+Disabled mode performs no adaptive learning, layout/partial estimation, or learned loop growth. It preserves the VM's static fast-plan hint, providing a direct pre-estimator baseline without changing rendering semantics.
 
 For fair VM measurements, warm file-backed templates until `VMBytecodeCache` reports `hit` and `FastPath` reports `fast`. A first render may report `miss-store` because the VM is parsing, compiling, storing bytecode, and then rendering. Fast-plan counters describe template shape, not elapsed time; use `EngineDurationMilliseconds`, `VMHelperDurationMilliseconds`, and `VMPartialDurationMilliseconds` for timings.
 
@@ -846,15 +973,21 @@ Most VM optimizations need no template changes. The VM automatically specializes
 - safe mixed numeric comparisons such as `uint32 == 0` and `float32 == 3`
 - struct fields, nested property chains, indexed property chains, and no-arg method tails
 - typed Go map access with static string keys, such as `labels["status"]` and `robots["bender"].Name`
-- loops over strings, slices, structs, and pointers to structs
+- loops over `nil`, strings, slices, structs, and pointers to structs
 - simple top-level conditionals whose branches contain static/name/property/access/infix output
 - conditionals and infix conditions inside loops
 - direct helper calls for common helper signatures
+- silent script helper calls for side effects, such as `<% touch(name) %>`
 - direct scalar helper calls for common string, int, uint32, bool, and float64 argument shapes
+- dynamic callable values and chained receiver calls, such as `helpers[name]("x")` and `makeUser(name).Render("short")`
+- top-level `let`, assignment, return, loop return, loop iterator assignment, and index assignment statements
 - regex match expressions
+- unary negation with `-`
+- arrays, hashes, non-string literal hash keys, and dynamic index reads as supported fast values
 - partials with no data, including direct linked rendering when the partial body is simple and does not need partial metadata
 - partials with simple static-key data maps, such as `partial("row", {name: product.Name})`; the VM prepares the keys and value lookup plan, then reads fresh values each render
 - partial data maps with helper-call values, such as `partial("row", {label: label(product.Name, prefix)})`; the VM compiles the call arguments and uses direct value invokers for common helper signatures
+- dynamic partial names and `layout` data values through the regular VM partial helper-call path
 - linked partial bodies that contain simple property/access/infix output, such as `<%= robot.Name %>` or `<%= labels["status"] %>`
 - clean filename cache keys and punch-hole filename checks for file-backed cached renders
 

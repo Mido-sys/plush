@@ -567,7 +567,7 @@ func (vm *VM) helperContext(block *object.Closure) plush.HelperContext {
 			return vm.runBlock(block, ctx)
 		}
 	}
-	return plush.NewHelperContext(vm.contextWithFrameLocals(), runner)
+	return plush.NewHelperContextWithLine(vm.contextWithFrameLocals(), runner, vm.currentLineNumber())
 }
 
 func (vm *VM) contextWithFrameLocals() hctx.Context {

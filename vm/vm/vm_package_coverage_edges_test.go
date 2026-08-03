@@ -456,7 +456,7 @@ func Test_VM_Fast_Mixed_Render_Remaining_Error_Branches(t *testing.T) {
 			}},
 			Line: 81,
 		},
-	}}})
+	}}}, nil)
 	require.True(t, handled)
 	require.ErrorContains(t, err, "line 81")
 
@@ -470,7 +470,7 @@ func Test_VM_Fast_Mixed_Render_Remaining_Error_Branches(t *testing.T) {
 			Right:    &compiler.FastValuePlan{Kind: compiler.FastValueInteger, IntValue: 2},
 			Line:     82,
 		},
-	}}})
+	}}}, nil)
 	require.True(t, handled)
 	require.ErrorContains(t, err, "line 82")
 
@@ -481,7 +481,7 @@ func Test_VM_Fast_Mixed_Render_Remaining_Error_Branches(t *testing.T) {
 			Segments:  []compiler.FastRenderSegment{{Kind: compiler.FastRenderSegmentStatic, Value: "never"}},
 			Line:      83,
 		}}},
-	}}})
+	}}}, nil)
 	require.True(t, handled)
 	require.ErrorContains(t, err, "line 83")
 }
@@ -515,7 +515,7 @@ func Test_VM_Fast_Call_And_Loop_Call_Remaining_Error_Branches(t *testing.T) {
 
 	badCtx := plush.NewContextWith(map[string]interface{}{"label": 12})
 	badBindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"label"}}, badCtx)
-	err = writeFastLoopCallPart(&strings.Builder{}, badCtx, badBindings, &compiler.FastCallPlan{
+	err = writeFastLoopCallPart(&strings.Builder{}, badCtx, badBindings, nil, &compiler.FastCallPlan{
 		Name:      "label",
 		NameIndex: 0,
 		Line:      85,

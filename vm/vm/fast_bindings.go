@@ -135,12 +135,37 @@ func (b *fastRenderBindings) setLocalAndContext(index int, value interface{}) {
 		return
 	}
 	if id, ok := b.bindingID(index); ok {
+		if overlay, ok := b.ctx.(*partialOverlayContext); ok {
+			overlay.setLocalWithID(b.names[index], id, value)
+			return
+		}
 		if setter, ok := b.ctx.(interface{ SetID(int, interface{}) }); ok {
 			setter.SetID(id, value)
 			return
 		}
 	}
 	b.ctx.Set(b.names[index], value)
+}
+
+func (b *fastRenderBindings) assignExistingLocalAndContext(index int, value interface{}) bool {
+	if b == nil || index < 0 || index >= len(b.names) {
+		return false
+	}
+	if b.ctx == nil {
+		b.setLocal(index, value)
+		return true
+	}
+	if id, ok := b.bindingID(index); ok {
+		if updater, ok := b.ctx.(interface{ UpdateID(int, interface{}) bool }); ok && updater.UpdateID(id, value) {
+			b.setLocal(index, value)
+			return true
+		}
+	}
+	if b.ctx.Update(b.names[index], value) {
+		b.setLocal(index, value)
+		return true
+	}
+	return false
 }
 
 func (b fastRenderBindings) syncLocalValuesFromContext() {
@@ -234,6 +259,9 @@ func fastContextValue(ctx hctx.Context, name string) (interface{}, bool) {
 func fastLineError(line int, err error) error {
 	if err == nil {
 		return nil
+	}
+	if plush.IsTemplateTraceError(err) {
+		return err
 	}
 	if line <= 0 {
 		line = 1

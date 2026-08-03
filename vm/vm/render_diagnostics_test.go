@@ -27,10 +27,10 @@ func Test_Render_Diagnostics_Fast_Render_Plan_Stats(t *testing.T) {
 					Condition: compiler.FastValuePlan{
 						Kind:     compiler.FastValueInfix,
 						Operator: "==",
-						Left:     &compiler.FastValuePlan{Kind: compiler.FastValuePath, Value: "product", Path: []compiler.FastPathStep{{Kind: compiler.FastPathStepProperty, Value: "Name"}}},
-						Right:    &compiler.FastValuePlan{Kind: compiler.FastValueString, Value: "Pizza"},
+						Left:     &compiler.FastValuePlan{Kind: compiler.FastValuePath, Value: "record", Path: []compiler.FastPathStep{{Kind: compiler.FastPathStepProperty, Value: "Name"}}},
+						Right:    &compiler.FastValuePlan{Kind: compiler.FastValueString, Value: "Active"},
 					},
-					Segments: []compiler.FastRenderSegment{{Kind: compiler.FastRenderSegmentStatic, Value: "pizza"}},
+					Segments: []compiler.FastRenderSegment{{Kind: compiler.FastRenderSegmentStatic, Value: "active"}},
 				}},
 			}},
 			{Kind: compiler.FastRenderSegmentLoop, Loop: &compiler.FastLoopPlan{
@@ -45,7 +45,7 @@ func Test_Render_Diagnostics_Fast_Render_Plan_Stats(t *testing.T) {
 			{Kind: compiler.FastRenderSegmentPartial, Partial: &compiler.FastPartialPlan{
 				Name: "row.plush",
 				Data: []compiler.FastPartialDataPair{
-					{Key: "title", Value: compiler.FastValuePlan{Kind: compiler.FastValuePath, Value: "product", Path: []compiler.FastPathStep{{Kind: compiler.FastPathStepProperty, Value: "Title"}}}},
+					{Key: "title", Value: compiler.FastValuePlan{Kind: compiler.FastValuePath, Value: "record", Path: []compiler.FastPathStep{{Kind: compiler.FastPathStepProperty, Value: "Title"}}}},
 				},
 			}},
 		},
@@ -92,6 +92,47 @@ func Test_Render_Diagnostics_Context_Expose_Fast_Render_Plan_Stats(t *testing.T)
 	require.Greater(t, diagnostics.FastPlan.Segments, 0)
 	require.Greater(t, diagnostics.FastPlan.NameSegments, 0)
 	require.NotZero(t, diagnostics.EngineDuration)
+}
+
+func Test_Render_Diagnostics_Context_Expose_Output_Size_Stats(t *testing.T) {
+	tmpl, err := Compile(`<h1><%= name %></h1>`)
+	require.NoError(t, err)
+
+	firstCtx := plush.NewContextWith(map[string]interface{}{"name": "Mido"})
+	firstOut, err := tmpl.Render(firstCtx)
+	require.NoError(t, err)
+	require.Equal(t, "<h1>Mido</h1>", firstOut)
+
+	firstDiagnostics, ok := plush.RenderDiagnosticsFromContext(firstCtx)
+	require.True(t, ok)
+	require.True(t, firstDiagnostics.OutputSize.Available)
+	require.Equal(t, len("<h1></h1>"), firstDiagnostics.OutputSize.StaticSize)
+	require.Equal(t, len("<h1></h1>")+16, firstDiagnostics.OutputSize.FallbackHint)
+	require.Equal(t, len("<h1></h1>")+16, firstDiagnostics.OutputSize.GrowHint)
+	require.Zero(t, firstDiagnostics.OutputSize.EstimateBefore)
+	require.Equal(t, len(firstOut), firstDiagnostics.OutputSize.Actual)
+	require.Equal(t, len(firstOut), firstDiagnostics.OutputSize.EstimateAfter)
+	require.Equal(t, uint64(0), firstDiagnostics.OutputSize.SamplesBefore)
+	require.Equal(t, uint64(1), firstDiagnostics.OutputSize.SamplesAfter)
+	require.True(t, firstDiagnostics.OutputSize.Observed)
+	require.True(t, firstDiagnostics.OutputSize.GrowCalled)
+	require.Positive(t, firstDiagnostics.OutputSize.GrowAllocated)
+	require.GreaterOrEqual(t, firstDiagnostics.OutputSize.CapacityFinal, firstDiagnostics.OutputSize.Actual)
+	require.Equal(t, firstDiagnostics.OutputSize.CapacityFinal-firstDiagnostics.OutputSize.Actual, firstDiagnostics.OutputSize.UnusedCapacity)
+
+	secondCtx := plush.NewContextWith(map[string]interface{}{"name": "Leela"})
+	secondOut, err := tmpl.Render(secondCtx)
+	require.NoError(t, err)
+	require.Equal(t, "<h1>Leela</h1>", secondOut)
+
+	secondDiagnostics, ok := plush.RenderDiagnosticsFromContext(secondCtx)
+	require.True(t, ok)
+	require.Equal(t, len(firstOut), secondDiagnostics.OutputSize.EstimateBefore)
+	require.Equal(t, len(firstOut), secondDiagnostics.OutputSize.GrowHint)
+	require.Equal(t, len(secondOut), secondDiagnostics.OutputSize.Actual)
+	require.Equal(t, uint64(1), secondDiagnostics.OutputSize.SamplesBefore)
+	require.Equal(t, uint64(2), secondDiagnostics.OutputSize.SamplesAfter)
+	require.NotEmpty(t, secondDiagnostics.OutputSizeHeader())
 }
 
 func Test_Render_Diagnostics_Caches_Fast_Render_Plan_Stats_On_Bytecode(t *testing.T) {

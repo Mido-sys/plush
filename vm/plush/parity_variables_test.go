@@ -10,8 +10,46 @@ type parityProduct struct {
 	Name []string
 }
 
+type parityRecordWithFields struct {
+	Fields map[string]string
+}
+
 func Test_Parity_Variables_Let_And_Assign(t *testing.T) {
 	compareRender(t, `<% let message = "hello" %><% message = "bye" %><%= message %>`, emptyContext)
+}
+
+func Test_Parity_Variables_Let_And_Assign_In_Same_Script_Block(t *testing.T) {
+	compareRender(t, `<% let value = "fallback"; value = record.Fields["shade"]; %><%= value %>`, contextWith(map[string]interface{}{
+		"record": parityRecordWithFields{
+			Fields: map[string]string{
+				"shade": "blue",
+			},
+		},
+	}))
+}
+
+func Test_Parity_Variables_Let_And_Assign_In_Partial_Script_Block(t *testing.T) {
+	compareRender(t, `<%= partial("details.plush.html") %>`, contextWith(map[string]interface{}{
+		"record": parityRecordWithFields{
+			Fields: map[string]string{
+				"shade": "blue",
+			},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			return `<% let value = "fallback"; value = record.Fields["shade"]; %><%= value %>`, nil
+		},
+	}))
+}
+
+func Test_Parity_Variables_Partial_Assignment_To_Missing_Map_Value(t *testing.T) {
+	compareRender(t, `<%= partial("details.plush.html", {record: record}) %>`, contextWith(map[string]interface{}{
+		"record": parityRecordWithFields{
+			Fields: map[string]string{},
+		},
+		"partialFeeder": func(name string) (string, error) {
+			return `<% let value = "fallback"; value = record.Fields["missing"]; %><%= value %>`, nil
+		},
+	}))
 }
 
 func Test_Parity_Variables_Fast_Local_Let_Helper_Call(t *testing.T) {

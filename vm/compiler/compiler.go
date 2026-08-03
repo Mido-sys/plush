@@ -334,7 +334,7 @@ func (c *Compiler) compileWriteNameCallExpression(node *ast.CallExpression) (boo
 	}
 
 	for _, arg := range node.Arguments {
-		if err := c.compileHard(arg); err != nil {
+		if err := c.compileCallArgument(arg); err != nil {
 			return true, err
 		}
 	}
@@ -745,7 +745,7 @@ func (c *Compiler) compileReceiverCallee(exp ast.Expression, base string) error 
 		}
 
 		for _, a := range exp.Arguments {
-			if err := c.compileHard(a); err != nil {
+			if err := c.compileCallArgument(a); err != nil {
 				return err
 			}
 		}
@@ -947,13 +947,51 @@ func (c *Compiler) compileFunctionLiteral(node *ast.FunctionLiteral, name string
 }
 
 func (c *Compiler) compileCallExpression(node *ast.CallExpression) error {
+	if c.shouldGuardMissingCall(node) {
+		return c.compileGuardedCallExpression(node)
+	}
+	return c.compileResolvedCallExpression(node)
+}
+
+func (c *Compiler) shouldGuardMissingCall(node *ast.CallExpression) bool {
+	if c.softNames == 0 || node == nil {
+		return false
+	}
+	ident, ok := node.Function.(*ast.Identifier)
+	if !ok || ident.Callee != nil || ident.Value == "nil" {
+		return false
+	}
+	_, resolved := c.symbolTable.Resolve(ident.Value)
+	return !resolved
+}
+
+func (c *Compiler) compileGuardedCallExpression(node *ast.CallExpression) error {
+	ident := node.Function.(*ast.Identifier)
+	nameIndex := c.addStringConstant(ident.Value)
+	missingPos := c.emit(code.OpGetNameOrJumpMissing, nameIndex, 9999)
+	if err := c.compileCallWithFunction(node); err != nil {
+		return err
+	}
+
+	endPos := c.emit(code.OpJump, 9999)
+	nullPos := len(c.currentInstructions())
+	c.replaceInstruction(missingPos, code.Make(code.OpGetNameOrJumpMissing, nameIndex, nullPos))
+	c.emit(code.OpNull)
+	c.changeOperand(endPos, len(c.currentInstructions()))
+	return nil
+}
+
+func (c *Compiler) compileResolvedCallExpression(node *ast.CallExpression) error {
 	if err := c.compileHard(node.Function); err != nil {
 		return err
 	}
 	c.markLastPropertyAsMethod()
+	return c.compileCallWithFunction(node)
+}
 
+func (c *Compiler) compileCallWithFunction(node *ast.CallExpression) error {
 	for _, a := range node.Arguments {
-		if err := c.compileHard(a); err != nil {
+		if err := c.compileCallArgument(a); err != nil {
 			return err
 		}
 	}
@@ -975,13 +1013,15 @@ func (c *Compiler) compileCallExpression(node *ast.CallExpression) error {
 	return nil
 }
 
-func (c *Compiler) compileCondition(node ast.Expression) error {
-	switch node.(type) {
-	case *ast.Identifier:
-		return c.compileSoft(node)
-	default:
-		return c.Compile(node)
+func (c *Compiler) compileCallArgument(arg ast.Expression) error {
+	if c.softNames > 0 {
+		return c.compileSoft(arg)
 	}
+	return c.compileHard(arg)
+}
+
+func (c *Compiler) compileCondition(node ast.Expression) error {
+	return c.compileSoft(node)
 }
 
 func (c *Compiler) compileSoft(node interface{}) error {
@@ -1090,6 +1130,11 @@ func (c *Compiler) Bytecode() *Bytecode {
 		}
 	}
 	features := bytecodeFeaturesFromInstructions(instructions, c.constants, callNames)
+	if fastRenderPlan == nil && fastReject.Reason != "" {
+		fastRenderPlan = genericVMFastRenderPlan(fastReject)
+		fastReject = FastRenderReject{}
+	}
+	staticSize := bytecodeStaticSize(staticOutput, static, fastRenderPlan, instructions, c.constants)
 
 	return &Bytecode{
 		Instructions:     instructions,
@@ -1105,13 +1150,99 @@ func (c *Compiler) Bytecode() *Bytecode {
 		GlobalNames:      names,
 		Static:           static,
 		StaticOutput:     staticOutput,
+		StaticSize:       staticSize,
 		FastRenderPlan:   fastRenderPlan,
 		FastRejectLine:   fastReject.Line,
 		FastReject:       fastReject.Reason,
 		HasHoles:         features.HasHoles,
 		HasPartials:      features.HasPartials,
 		HasContextWrites: features.HasContextWrites,
+		OutputSizeStats:  &OutputSizeStats{},
+		LayoutSizeStats:  &OutputSizeStats{},
+		PartialSizeStats: &OutputSizeStats{},
 	}
+}
+
+func genericVMFastRenderPlan(reject FastRenderReject) *FastRenderPlan {
+	line := reject.Line
+	if line <= 0 {
+		line = 1
+	}
+	return &FastRenderPlan{
+		Segments: []FastRenderSegment{{
+			Kind: FastRenderSegmentGeneric,
+			Generic: &FastGenericPlan{
+				WholeTemplate: true,
+				Reason:        reject.Reason,
+				Line:          line,
+			},
+			Line: line,
+		}},
+		NameCount: 1,
+	}
+}
+
+func bytecodeStaticSize(staticOutput string, static bool, plan *FastRenderPlan, instructions code.Instructions, constants []object.Object) int {
+	if static {
+		return len(staticOutput)
+	}
+	if size := topLevelFastRenderStaticSize(plan); size > 0 {
+		return size
+	}
+	return linearInstructionStaticSize(instructions, constants)
+}
+
+func topLevelFastRenderStaticSize(plan *FastRenderPlan) int {
+	if plan == nil {
+		return 0
+	}
+	size := 0
+	for i := range plan.Segments {
+		if plan.Segments[i].Kind == FastRenderSegmentStatic {
+			size += len(plan.Segments[i].Value)
+		}
+	}
+	return size
+}
+
+func linearInstructionStaticSize(instructions code.Instructions, constants []object.Object) int {
+	size := 0
+	for i := 0; i < len(instructions); {
+		op := code.Opcode(instructions[i])
+		def, err := code.Lookup(instructions[i])
+		if err != nil {
+			return 0
+		}
+		operands, read := code.ReadOperands(def, instructions[i+1:])
+		switch op {
+		case code.OpWriteHTML:
+			value, ok := htmlConstantValue(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(value)
+		case code.OpWriteString:
+			value, ok := stringConstantValue(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(template.HTMLEscapeString(value))
+		case code.OpWriteConstant:
+			value, ok := staticConstantOutput(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(value)
+		case code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteLocal, code.OpWriteGlobal,
+			code.OpWriteLocalProperty, code.OpWriteGlobalProperty, code.OpWriteNameProperty,
+			code.OpWriteCall, code.OpWriteNameCall, code.OpWrite, code.OpPop, code.OpSetName,
+			code.OpAssignName, code.OpSetGlobal, code.OpSetLocal, code.OpSetIndex:
+		default:
+			return 0
+		}
+		i += 1 + read
+	}
+	return size
 }
 
 func compileFastRenderPlanBlocks(plan *FastRenderPlan) FastRenderReject {

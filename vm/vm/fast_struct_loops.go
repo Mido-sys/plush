@@ -108,7 +108,7 @@ func renderFastStructLoopWriterOps(out *strings.Builder, ctx hctx.Context, bindi
 				return err
 			}
 		case fastStructLoopWriterCall:
-			if err := writeFastStructLoopCallPart(out, ctx, bindings, state, op.call, key, item); err != nil {
+			if err := writeFastStructLoopCallPartWithLoop(out, ctx, bindings, state, loop, op.call, key, item); err != nil {
 				return err
 			}
 		case fastStructLoopWriterConditional:
@@ -154,6 +154,10 @@ func isTruthyFastStructLoopCondition(branch *fastStructLoopConditionalWriterBran
 }
 
 func writeFastStructLoopCallPart(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, state *fastStructLoopRenderState, plan *fastStructLoopCallPlan, loopKey interface{}, item reflect.Value) error {
+	return writeFastStructLoopCallPartWithLoop(out, ctx, bindings, state, nil, plan, loopKey, item)
+}
+
+func writeFastStructLoopCallPartWithLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, state *fastStructLoopRenderState, loop *compiler.FastLoopPlan, plan *fastStructLoopCallPlan, loopKey interface{}, item reflect.Value) error {
 	if plan == nil || plan.call == nil {
 		return nil
 	}
@@ -169,6 +173,13 @@ func writeFastStructLoopCallPart(out *strings.Builder, ctx hctx.Context, binding
 
 	var args fastCallArgs
 	argsReady := false
+	var scopedCtx hctx.Context
+	callCtx := func() hctx.Context {
+		if scopedCtx == nil {
+			scopedCtx = fastLoopBlockContext(ctx, bindings, loop, loopKey, fastStructLoopItemValue(item))
+		}
+		return scopedCtx
+	}
 	if helper, ok := fastHelperForContext(ctx, call.Name); ok {
 		if len(plan.args) > 0 {
 			if err := evalFastStructLoopCallPlanArgs(plan, ctx, bindings, loopKey, item, &args); err != nil {
@@ -176,7 +187,7 @@ func writeFastStructLoopCallPart(out *strings.Builder, ctx hctx.Context, binding
 			}
 			argsReady = true
 		}
-		if handled, err := writeRegisteredFastHelperNamed(out, ctx, call.Name, helper, fastCallArgsOrNil(&args, len(plan.args))); handled || err != nil {
+		if handled, err := writeRegisteredFastHelperNamed(out, callCtx(), call.Name, helper, fastCallArgsOrNil(&args, len(plan.args))); handled || err != nil {
 			if err != nil {
 				return fastLineError(call.Line, err)
 			}
@@ -219,10 +230,42 @@ func writeFastStructLoopCallPart(out *strings.Builder, ctx hctx.Context, binding
 		}
 		argsReady = true
 	}
-	if err := writeFastCallValueWithEntry(out, ctx, call.Name, resolved.raw, fastCallArgsOrNil(&args, len(plan.args)), resolved.entry); err != nil {
+	if err := writeFastCallValueWithEntry(out, fastStructLoopHelperContext(ctx, callCtx, resolved.entry, len(plan.args)), call.Name, resolved.raw, fastCallArgsOrNil(&args, len(plan.args)), resolved.entry); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
+}
+
+func fastStructLoopHelperContext(ctx hctx.Context, scoped func() hctx.Context, entry *fastBuilderCallCacheEntry, argCount int) hctx.Context {
+	if fastStructLoopCallNeedsHelperContext(entry, argCount) {
+		return scoped()
+	}
+	return ctx
+}
+
+func fastStructLoopCallNeedsHelperContext(entry *fastBuilderCallCacheEntry, argCount int) bool {
+	if entry == nil || entry.plan == nil || entry.plan.isVariadic || argCount >= entry.plan.numIn {
+		return false
+	}
+	for pos := argCount; pos < entry.plan.numIn; pos++ {
+		if entry.plan.optionalArgs[pos] == optionalArgHelperContext {
+			return true
+		}
+	}
+	return false
+}
+
+func fastStructLoopItemValue(item reflect.Value) interface{} {
+	if !item.IsValid() || isNilReflectValue(item) {
+		return nil
+	}
+	if item.Kind() == reflect.Interface {
+		item = item.Elem()
+	}
+	if !item.IsValid() || !item.CanInterface() {
+		return nil
+	}
+	return item.Interface()
 }
 
 func fastCallArgsOrNil(args *fastCallArgs, count int) *fastCallArgs {
@@ -371,6 +414,9 @@ func fastStructLoopCallArgStatic(kind fastStructLoopCallArgKind) bool {
 func evalFastStructLoopStaticCallArgReflect(plan *fastStructLoopCallArgPlan, bindings fastRenderBindings, expected reflect.Type, name string, pos int) (reflect.Value, error) {
 	value, ok := evalFastStructLoopStaticCallArgValue(plan, bindings)
 	if !ok {
+		if plan.value.NullOnMissing {
+			return reflect.Zero(expected), nil
+		}
 		return reflect.Value{}, fastLineError(plan.line, fmt.Errorf("%q: unknown identifier", plan.value.Value))
 	}
 	return fastReflectArgForCall(name, pos, value, expected)
@@ -466,6 +512,10 @@ func evalFastStructLoopCallPlanArgs(plan *fastStructLoopCallPlan, ctx hctx.Conte
 			return err
 		}
 		if !ok {
+			if plan.args[i].value.NullOnMissing {
+				args.Append(nil)
+				continue
+			}
 			return fastLineError(plan.args[i].line, fmt.Errorf("%q: unknown identifier", plan.args[i].value.Value))
 		}
 		args.Append(value)
@@ -666,6 +716,9 @@ func evalFastStructLoopCallArgReflect(plan *fastStructLoopCallArgPlan, ctx hctx.
 			return reflect.Value{}, err
 		}
 		if !ok {
+			if plan.value.NullOnMissing {
+				return reflect.Zero(expected), nil
+			}
 			return reflect.Value{}, fastLineError(plan.line, fmt.Errorf("%q: unknown identifier", plan.value.Value))
 		}
 		return fastReflectArgForCall(name, pos, value, expected)
@@ -704,6 +757,8 @@ func evalFastStructLoopValue(value *compiler.FastValuePlan, ctx hctx.Context, bi
 		return evalFastStructLoopPrefixValue(value, ctx, bindings, loopKey, item)
 	case compiler.FastValueConcat:
 		return evalFastStructLoopConcatValue(value, ctx, bindings, loopKey, item)
+	case compiler.FastValueCall, compiler.FastValueArray, compiler.FastValueHash, compiler.FastValueIndex:
+		return evalFastLoopValue(value, ctx, bindings, loopKey, fastStructLoopItemValue(item))
 	case compiler.FastValuePath:
 		if value.NameIndex >= 0 {
 			return evalFastValue(value, ctx, bindings, nil)
@@ -771,7 +826,7 @@ func evalFastStructLoopPathValue(value *compiler.FastValuePlan, ctx hctx.Context
 		return nil, true, nil
 	}
 	if len(value.Path) == 0 {
-		return fastReflectInterface(rv), true, nil
+		return fastStructLoopItemValue(item), true, nil
 	}
 	if chain, ok := fastAccessChainPlanFor(value, rv.Type()); ok {
 		return evalFastAccessChainPlanValue(chain, rv, ctx)

@@ -1166,33 +1166,33 @@ func Test_VM_Fast_Render_Script_Loop_Control(t *testing.T) {
 }
 
 func Test_VM_Fast_Render_Loop_Block_Helper_Sees_Current_Value(t *testing.T) {
-	type product struct {
+	type item struct {
 		ID   int
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (_, product) in products { %><%= form({id: product.ID, path: cartPath()}) { %><span><%= product.Name %></span><% } %><% } %>`)
+	tmpl, err := Compile(`<%= for (_, item) in items { %><%= wrap({id: item.ID, path: itemPath()}) { %><span><%= item.Name %></span><% } %><% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	require.Empty(t, tmpl.bytecode.FastReject)
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"products": []product{{ID: 1, Name: "<A>"}, {ID: 2, Name: "B"}},
-		"cartPath": func() string {
-			return "/cart"
+		"items": []item{{ID: 1, Name: "<A>"}, {ID: 2, Name: "B"}},
+		"itemPath": func() string {
+			return "/items"
 		},
-		"form": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+		"wrap": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
 			body, err := help.Block()
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(fmt.Sprintf(`<form action="%s" id="%v">%s</form>`, data["path"], data["id"], body)), nil
+			return template.HTML(fmt.Sprintf(`<section data-path="%s" id="%v">%s</section>`, data["path"], data["id"], body)), nil
 		},
 	})
 
 	out, err := tmpl.Render(ctx)
 	require.NoError(t, err)
-	require.Equal(t, `<form action="/cart" id="1"><span>&lt;A&gt;</span></form><form action="/cart" id="2"><span>B</span></form>`, out)
+	require.Equal(t, `<section data-path="/items" id="1"><span>&lt;A&gt;</span></section><section data-path="/items" id="2"><span>B</span></section>`, out)
 
 	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
@@ -1625,6 +1625,22 @@ func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
 	out, err := Render(`<% let activeRecord = viewData.Current %><%= partial("partials/color-token.plush.html") %>`, ctx)
 	require.NoError(t, err)
 	require.Contains(t, out, "<span class=\"token\">#123456</span>")
+}
+
+func Test_VM_Partial_Error_Includes_Parent_And_Partial_Filenames(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/row.plush", name)
+			return "first\n<%= missing %>", nil
+		},
+	})
+	ctx.Set(meta.TemplateBaseFileNameKey, "layout")
+	ctx.Set(meta.TemplateFileKey, "layout.plush")
+	ctx.Set(meta.TemplateExtensionKey, "plush")
+
+	_, err := Render("<p>top</p>\n<%= partial(\"partials/row.plush\") %>", ctx)
+	require.Error(t, err)
+	require.EqualError(t, err, `layout.plush:2:partials/row.plush:2: "missing": unknown identifier`)
 }
 
 func Test_VM_Partial_Sees_Top_Level_Let_Alias_From_Pointer_Config(t *testing.T) {
@@ -2798,6 +2814,16 @@ func Test_VM_Fast_Top_Level_Infix_Output_Preserves_Missing_Ordered_Error(t *test
 	_, err := Render(`<%= undefined > 3 %>`, plush.NewContext())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unable to operate (>)`)
+	require.Contains(t, err.Error(), `while evaluating undefined > 3`)
+	require.Contains(t, err.Error(), `undefined is nil or missing`)
+}
+
+func Test_VM_Fast_Conditional_Missing_Ordered_Error_Names_Operand(t *testing.T) {
+	_, err := Render(`<%= if (missingCount > 0) { %>yes<% } %>`, plush.NewContext())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unable to operate (>)`)
+	require.Contains(t, err.Error(), `while evaluating missingCount > 0`)
+	require.Contains(t, err.Error(), `missingCount is nil or missing`)
 }
 
 func Test_VM_Fast_Struct_Loop_Specializes_Conditional_Part_Automatically(t *testing.T) {
@@ -3296,7 +3322,9 @@ func Test_VM_Cached_Bytecode_Entry_Renders_VM_Only_Bytecode(t *testing.T) {
 	bytecode, ok := entry.VMBytecode.(*compiler.Bytecode)
 	require.True(t, ok)
 	require.False(t, bytecode.Static)
-	require.Nil(t, bytecode.FastRenderPlan)
+	require.NotNil(t, bytecode.FastRenderPlan)
+	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
+	require.Equal(t, compiler.FastRenderSegmentGeneric, bytecode.FastRenderPlan.Segments[0].Kind)
 
 	ctx = plush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
@@ -3434,6 +3462,444 @@ func Test_VM_Direct_Property_Write_Fusion_And_Raw_Loop_Values(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.Equal(t, "&lt;Ada&gt;|Bender;&lt;Fry&gt;;", out)
+}
+
+func Test_VM_Block_Helper_Context_Set_Is_Visible_After_Inline_Loop_Assignment(t *testing.T) {
+	tmpl, err := Compile(`<%= if(record.Enabled) { %><%= wrap({}) { %><%= f.InputTag({name:"Fields[0].First", value: 1, class:"field_input"}) %><% } %><% let selected = record.Entries[0] %><%= for (i, entry) in record.Entries { %><%= if(entry.ID == input["target_id"]) { %><% selected = entry %><% } %><%= if(i == 2) { break } %><% } %><%= wrap({}) { %><%= f.InputTag({name:"Fields[0].Second", value: selected.ID, class:"field_input"}) %><%= if(record.Enabled) { %><%= f.InputTag({name:"Fields[0].Third", value: 3, class:"field_input"}) %><% } %><% } %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	type entry struct {
+		ID string
+	}
+	parent := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			Enabled bool
+			Entries []entry
+		}{
+			Enabled: true,
+			Entries: []entry{
+				{ID: "first"},
+				{ID: "second"},
+			},
+		},
+		"input": map[string]string{"target_id": "second"},
+		"wrap": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+	})
+	ctx := borrowPartialOverlayContext(parent)
+	defer releasePartialOverlayContext(ctx)
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Contains(t, out, "input:Fields[0].First:1:field_input")
+	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
+	require.Contains(t, out, "input:Fields[0].Third:3:field_input")
+}
+
+func Test_VM_Block_Helper_Context_Set_Is_Visible_After_Loop_Inside_Same_Block(t *testing.T) {
+	tmpl, err := Compile(`<%= wrap({}) { %><%= f.InputTag({name:"Fields[0].First", value: 1, class:"field_input"}) %><% let selected = record.Entries[0] %><%= for (i, entry) in record.Entries { %><%= if(entry.ID == input["target_id"]) { %><% selected = entry %><% } %><%= if(i == 2) { break } %><% } %><%= f.InputTag({name:"Fields[0].Second", value: selected.ID, class:"field_input"}) %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	type entry struct {
+		ID string
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			Entries []entry
+		}{
+			Entries: []entry{
+				{ID: "first"},
+				{ID: "second"},
+			},
+		},
+		"input": map[string]string{"target_id": "second"},
+		"wrap": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Contains(t, out, "input:Fields[0].First:1:field_input")
+	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
+}
+
+func Test_VM_Block_Helper_Context_Set_Is_Visible_After_Block_When_Frame_Has_Locals(t *testing.T) {
+	tmpl, err := Compile(`<%= outer({}) { %><% let selected = record.Entries[0] %><%= wrap({}) { %><%= f.InputTag({name:"Fields[0].First", value: 1, class:"field_input"}) %><% } %><%= for (i, entry) in record.Entries { %><%= if(entry.ID == input["target_id"]) { %><% selected = entry %><% } %><%= if(i == 2) { break } %><% } %><%= if(record.Enabled) { %><%= f.InputTag({name:"Fields[0].Second", value: selected.ID, class:"field_input"}) %><% } %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	type entry struct {
+		ID string
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			Enabled bool
+			Entries []entry
+		}{
+			Enabled: true,
+			Entries: []entry{
+				{ID: "first"},
+				{ID: "second"},
+			},
+		},
+		"input": map[string]string{"target_id": "second"},
+		"outer": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+		"wrap": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Contains(t, out, "input:Fields[0].First:1:field_input")
+	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
+}
+
+func Test_VM_Form_Helper_Context_Set_Is_Visible_After_Block_In_Caller_With_Locals(t *testing.T) {
+	tmpl, err := Compile(`<%= layout({}) { %>
+<% let selected = record.Entries[0] %>
+<%= form({action: submitPath(), method: "POST"}) { %>
+	<%= f.InputTag({name:"Fields[0].First", value: record.ID, class:"field_input"}) %>
+<% } %>
+<%= for (i, entry) in record.Entries { %>
+	<%= if(entry.ID == input["target_id"]) { %>
+		<% selected = entry %>
+	<% } %>
+	<%= if(i == 2) { break } %>
+<% } %>
+<%= if(record.Enabled) { %>
+	<%= f.InputTag({name:"Fields[0].Second", value: selected.ID, class:"field_input"}) %>
+<% } %>
+<% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	type entry struct {
+		ID string
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			ID      int
+			Enabled bool
+			Entries []entry
+		}{
+			ID:      7,
+			Enabled: true,
+			Entries: []entry{
+				{ID: "first"},
+				{ID: "second"},
+			},
+		},
+		"input": map[string]string{"target_id": "second"},
+		"submitPath": func() string {
+			return "/records"
+		},
+		"layout": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+		"form": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(fmt.Sprintf(`<form action="%s" method="%s">%s</form>`, data["action"], data["method"], body)), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Contains(t, out, `<form action="/records" method="POST">`)
+	require.Contains(t, out, "input:Fields[0].First:7:field_input")
+	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
+}
+
+func Test_VM_Missing_Helper_In_Block_Condition_Uses_Else(t *testing.T) {
+	tmpl, err := Compile(`<%= wrapper({label: "example"}) { %><%= if(optional(record.Limit)) { %>set<% } else { %>fallback<% } %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			Limit int
+		}{Limit: 5},
+		"wrapper": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(`<section data-label="example">` + body + `</section>`), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, `<section data-label="example">fallback</section>`, out)
+}
+
+func Test_VM_Form_Helper_Context_Set_Is_Visible_After_Multiple_Caller_Loops(t *testing.T) {
+	tmpl, err := Compile(`<%= layout({}) { %>
+<% let selected = record.Entries[0] %>
+<% let selectedValue = "" %>
+<% let selectedAsset = "" %>
+<%= form({action: submitPath(), method: "POST"}) { %>
+	<%= f.InputTag({name:"Fields[0].First", value: record.ID, class:"field_input"}) %>
+<% } %>
+<%= for (i, entry) in record.Entries { %>
+	<%= if(entry.ID == input["target_id"]) { %>
+		<% selected = entry %>
+	<% } %>
+	<%= if(i == 4) { break } %>
+<% } %>
+<%= for (fieldIndex, fieldName) in record.Fields { %>
+	<%= if(fieldName == "secondary") { %>
+		<%= for (_, entry) in record.Entries { %>
+			<% let active = "" %>
+			<%= if(entry.ID == selected.ID) { %>
+				<% active = "active" %>
+				<% selectedValue = entry.FieldValues[fieldIndex] %>
+			<% } %>
+			<span class="<%= active %>"><%= entry.FieldValues[fieldIndex] %></span>
+		<% } %>
+	<% } %>
+<% } %>
+<%= for (_, asset) in record.Assets { %>
+	<%= if(asset.Selected) { %>
+		<% selectedAsset = asset.Path %>
+	<% } %>
+<% } %>
+<%= if(record.Enabled) { %>
+	<%= f.InputTag({name:"Fields[0].Second", value: selected.ID, class:"field_input"}) %>
+	<%= f.InputTag({name:"Fields[0].Asset", value: selectedAsset, class:"field_input"}) %>
+	<%= f.InputTag({name:"Fields[0].Value", value: selectedValue, class:"field_input"}) %>
+<% } %>
+<% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	type entry struct {
+		ID          string
+		FieldValues []string
+	}
+	type asset struct {
+		Path     string
+		Selected bool
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"record": struct {
+			ID      int
+			Enabled bool
+			Entries []entry
+			Fields  []string
+			Assets  []asset
+		}{
+			ID:      7,
+			Enabled: true,
+			Entries: []entry{
+				{ID: "first", FieldValues: []string{"primary-a", "secondary-a"}},
+				{ID: "second", FieldValues: []string{"primary-b", "secondary-b"}},
+				{ID: "third", FieldValues: []string{"primary-c", "secondary-c"}},
+			},
+			Fields: []string{"primary", "secondary"},
+			Assets: []asset{
+				{Path: "fallback.txt"},
+				{Path: "selected.txt", Selected: true},
+			},
+		},
+		"input": map[string]string{"target_id": "second"},
+		"submitPath": func() string {
+			return "/records"
+		},
+		"layout": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+		"form": func(data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(fmt.Sprintf(`<form action="%s" method="%s">%s</form>`, data["action"], data["method"], body)), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Contains(t, out, `<form action="/records" method="POST">`)
+	require.Contains(t, out, "input:Fields[0].First:7:field_input")
+	require.Contains(t, out, `<span class="active">secondary-b</span>`)
+	require.Contains(t, out, "input:Fields[0].Second:second:field_input")
+	require.Contains(t, out, "input:Fields[0].Asset:selected.txt:field_input")
+	require.Contains(t, out, "input:Fields[0].Value:secondary-b:field_input")
+}
+
+func Test_VM_Helper_Context_Set_From_Silent_Call_Is_Visible_To_Later_Dynamic_Reads(t *testing.T) {
+	tmpl, err := Compile(`<% seed() %><%= label %>|<%= widget.Label %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"seed": func(help plush.HelperContext) {
+			help.Set("label", "ready")
+			help.Set("widget", struct {
+				Label string
+			}{Label: "visible"})
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, "ready|visible", out)
+}
+
+func Test_VM_Helper_Context_Set_From_Block_Call_Is_Visible_After_Helper_Return(t *testing.T) {
+	tmpl, err := Compile(`<%= seed() { %><%= label %>|<%= widget.Label %><% } %>-><%= label %>|<%= widget.Label %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"seed": func(help plush.HelperContext) (template.HTML, error) {
+			help.Set("label", "before")
+			help.Set("widget", struct {
+				Label string
+			}{Label: "before"})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			help.Set("label", "after")
+			help.Set("widget", struct {
+				Label string
+			}{Label: "after"})
+			return template.HTML(body), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, "before|before->after|after", out)
+}
+
+func Test_VM_BlockWith_Child_Context_Assignments_Sync_Back_To_Helper_Child(t *testing.T) {
+	tmpl, err := Compile(`<%= scope() { %><%= label %><% label = "updated" %>|<%= label %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"scope": func(help plush.HelperContext) (template.HTML, error) {
+			child := help.New()
+			child.Set("label", "initial")
+			body, err := help.BlockWith(child)
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body + "|child:" + child.Value("label").(string)), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, "initial|updated|child:updated", out)
+}
+
+func Test_VM_Helper_Context_Set_Is_Visible_To_Partial_Rendered_From_Block(t *testing.T) {
+	tmpl, err := Compile(`<%= wrap() { %><%= partial("piece") %><% } %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "piece", name)
+			return `<%= label %>|<%= widget.Label %>`, nil
+		},
+		"wrap": func(help plush.HelperContext) (template.HTML, error) {
+			help.Set("label", "partial-ready")
+			help.Set("widget", struct {
+				Label string
+			}{Label: "partial-visible"})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML(body), nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, "partial-ready|partial-visible", out)
+}
+
+func Test_VM_Partial_Helper_Does_Not_Sync_Recursive_Local_Bindings_To_Caller(t *testing.T) {
+	tmpl, err := Compile(`<%= partial("counter") %>|<%= number %>`)
+	require.NoError(t, err)
+
+	bytecode := *tmpl.bytecode
+	bytecode.FastRenderPlan = nil
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"number": 3,
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "counter", name)
+			return `<%= if (number > 0) { %><% let number = number - 1 %><%= partial("counter") %><%= number %>,<% } %>`, nil
+		},
+	})
+
+	out, err := renderBytecodeVMWithState(&bytecode, ctx, "", false, "")
+	require.NoError(t, err)
+	require.Equal(t, "0,1,2,|3", out)
 }
 
 func Test_VM_Loop_Raw_Value_Detection_Rejects_Computed_Locals(t *testing.T) {

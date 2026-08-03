@@ -178,7 +178,7 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let(t *testin
 			},
 		}
 		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 		})
 		require.NoError(t, err)
 		require.Contains(t, out, "color: "+color+";")
@@ -225,11 +225,79 @@ func Test_Buffalo_Renderer_VM_Cached_Layout_Partial_Sees_Top_Level_Let_Alias_Fro
 			},
 		}
 		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
-			ctx.Set(meta.TemplateFileKey, "templates/application.plush.html")
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
 		})
 		require.NoError(t, err)
 		require.Contains(t, out, "color: "+color+";")
 	}
+}
+
+func Test_Buffalo_Renderer_VM_Cached_Branch_Partial_Assigns_Parent_Binding(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+	previousFallback := rootplush.SetVMGenericFallback(true)
+	defer rootplush.SetVMGenericFallback(previousFallback)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	input := `<%= if (currentRoute.PathName == "target") { %><% let registry = {} %><%= partial("partials/registry-file.html") %><%= registry["primary"] %><% } %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/registry-file.html", name)
+			return `<% registry = {"primary": entryID} %>`, nil
+		},
+	}
+
+	for _, id := range []string{"first-id", "second-id"} {
+		data := map[string]interface{}{
+			"currentRoute": struct {
+				PathName string
+			}{PathName: "target"},
+			"entryID": id,
+		}
+		out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+			ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
+		})
+		require.NoError(t, err)
+		require.Equal(t, id, out)
+	}
+}
+
+func Test_Buffalo_Renderer_VM_Generic_Partial_Sees_Branch_Let(t *testing.T) {
+	previous := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previous)
+	previousFallback := rootplush.SetVMGenericFallback(true)
+	defer rootplush.SetVMGenericFallback(previousFallback)
+
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	input := `<% let done = false %><% done = {"value": true} %><%= if (currentRoute.PathName == "target") { %><% let registry = {} %><%= partial("partials/registry-file.html") %><%= registry["primary"] %><% } %>`
+	helpers := map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "partials/registry-file.html", name)
+			return `<% registry = {"primary": entryID} %>`, nil
+		},
+	}
+
+	data := map[string]interface{}{
+		"currentRoute": struct {
+			PathName string
+		}{PathName: "target"},
+		"entryID": "current-id",
+	}
+	out, err := rootplush.BuffaloRendererWithContext(input, data, helpers, func(ctx *rootplush.Context) {
+		ctx.Set(meta.TemplateFileKey, "templates/layout.plush.html")
+	})
+	require.NoError(t, err)
+	require.Equal(t, "current-id", out)
+	diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
+	require.True(t, ok)
+	require.Equal(t, rootplush.RenderFastPathGeneric, diagnostics.FastPath)
+	require.Empty(t, diagnostics.FastReject)
 }
 
 func Test_Clear_Fast_Helper_Removes_Custom_Fast_Render(t *testing.T) {

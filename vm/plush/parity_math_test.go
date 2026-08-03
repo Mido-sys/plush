@@ -113,6 +113,72 @@ func Test_Parity_Math_Renders_Many_Numeric_Types(t *testing.T) {
 	}))
 }
 
+func Test_Parity_Math_Unary_Minus_Identifier_With_Digits(t *testing.T) {
+	tests := []struct {
+		input    string
+		values   map[string]interface{}
+		expected string
+	}{
+		{
+			input: `<%= -my123greet %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "-5.5",
+		},
+		{
+			input: `<%= -my123greet + 10 %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "4.5",
+		},
+		{
+			input: `<%= -my123greet - 10 %>`,
+			values: map[string]interface{}{
+				"my123greet": float64(5.5),
+			},
+			expected: "-15.5",
+		},
+		{
+			input: `<%= -my123greet + my123greet2 %>`,
+			values: map[string]interface{}{
+				"my123greet":  float64(5.5),
+				"my123greet2": int64(-10),
+			},
+			expected: "-15.5",
+		},
+		{
+			input: `<%= -my123greet + my123greet2 %>`,
+			values: map[string]interface{}{
+				"my123greet":  int64(10),
+				"my123greet2": float64(5.5),
+			},
+			expected: "-4.5",
+		},
+		{
+			input: `<%= -my123int %>`,
+			values: map[string]interface{}{
+				"my123int": int(4),
+			},
+			expected: "-4",
+		},
+		{
+			input: `<%= -my123count + 1 %>`,
+			values: map[string]interface{}{
+				"my123count": int64(6),
+			},
+			expected: "-5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			requireBothRender(t, tt.input, tt.expected, contextWith(tt.values))
+		})
+	}
+}
+
 func Test_Parity_Math_Safe_Mixed_Numeric_Comparisons(t *testing.T) {
 	ctx := contextWith(map[string]interface{}{
 		"i32":     int32(0),
@@ -176,7 +242,7 @@ func requireBothRender(t *testing.T, input, expected string, factory contextFact
 	require.NoError(t, interpreterErr)
 	require.Equal(t, expected, interpreterOut)
 
-	vmOut, vmErr := renderVM(input, factory)
+	vmOut, vmErr := renderVM(t, input, factory)
 	require.NoError(t, vmErr)
 	require.Equal(t, expected, vmOut)
 }

@@ -108,7 +108,7 @@ func Test_Parity_Phase_13_Line_Numbers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, interpreterErr := renderInterpreter(tt.input, contextWith(tt.data))
-			_, vmErr := renderVM(tt.input, contextWith(tt.data))
+			_, vmErr := renderVM(t, tt.input, contextWith(tt.data))
 			require.Error(t, interpreterErr)
 			require.Error(t, vmErr)
 			require.Equal(t, interpreterErr.Error(), vmErr.Error())
@@ -139,7 +139,7 @@ func compareExactRenderError(t *testing.T, input string, factory func() hctx.Con
 	t.Helper()
 
 	interpreterOut, interpreterErr := renderInterpreter(input, factory)
-	vmOut, vmErr := renderVM(input, factory)
+	vmOut, vmErr := renderVM(t, input, factory)
 
 	require.Error(t, interpreterErr, "expected interpreter error, got output %q", interpreterOut)
 	require.Error(t, vmErr, "expected VM error, got output %q", vmOut)

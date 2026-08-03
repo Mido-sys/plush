@@ -30,6 +30,8 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 		}
 	}
 
+	parentFile := TemplateFilenameForError(help.Context)
+	parentLine := help.CallLine()
 	help.Context = help.New()
 	for k, v := range data {
 		help.Set(k, v)
@@ -60,16 +62,17 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 	} else {
 		help.Set(meta.TemplateFileKey, name)
 	}
+	childFile := TemplateFilenameForError(help.Context)
 
 	pf, ok := help.Value("partialFeeder").(func(string) (string, error))
 	if !ok {
-		return "", fmt.Errorf("could not find partial feeder from helpers")
+		return "", WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
 	}
 
 	var part string
 	var err error
 	if part, err = pf(name); err != nil {
-		return "", err
+		return "", WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
 	if help.Value(already_in_partial) == nil {
 		help.Set(already_in_partial, name)
@@ -92,7 +95,7 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 		part, err = Render(part, help.Context)
 	}
 	if err != nil {
-		return "", err
+		return "", WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
 	if ct, ok := help.Value("contentType").(string); ok {
 		ext := filepath.Ext(name)

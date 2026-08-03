@@ -169,7 +169,11 @@ func fastLoopPlanFromFunction(fn *object.CompiledFunction, constants []object.Ob
 		return nil, false
 	}
 
-	loop := &FastLoopPlan{KeyName: keyName, ValueName: valueName}
+	loop := &FastLoopPlan{
+		KeyName:   keyName,
+		ValueName: valueName,
+		SizeStats: &LoopSizeStats{},
+	}
 	for i := 0; i < len(fn.Instructions); {
 		op, operands, read, ok := instructionAt(fn.Instructions, i)
 		if !ok {
@@ -178,6 +182,7 @@ func fastLoopPlanFromFunction(fn *object.CompiledFunction, constants []object.Ob
 
 		switch op {
 		case code.OpReturn:
+			loop.PartFlagsSet = true
 			return loop, true
 		case code.OpWriteHTML:
 			value, ok := htmlConstantValue(constants, operands[0])
