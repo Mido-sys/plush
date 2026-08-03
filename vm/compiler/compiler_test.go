@@ -1537,6 +1537,7 @@ func Test_Static_Only_Bytecode_Fast_Path(t *testing.T) {
 	require.Equal(t, len(`<section><p>Hello</p></section>`), bytecode.StaticSize)
 	require.NotNil(t, bytecode.OutputSizeStats)
 	require.NotNil(t, bytecode.LayoutSizeStats)
+	require.NotNil(t, bytecode.LayoutSizeProfile)
 	require.NotNil(t, bytecode.PartialSizeStats)
 	require.Equal(t, 1, instructionOpcodeCount(bytecode.Instructions, code.OpWriteHTML))
 }

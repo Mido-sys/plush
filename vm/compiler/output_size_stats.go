@@ -6,9 +6,12 @@ import (
 )
 
 const outputSizeStatsMaxGrowHint = 4 << 20
+const outputSizeStatsMaxHeadroom = 64 << 10
+const outputSizeStatsHeadroomDivisor = 10
 
 type OutputSizeStats struct {
 	estimate atomic.Uint64
+	headroom atomic.Uint64
 	samples  atomic.Uint64
 	minimum  atomic.Uint64
 	maximum  atomic.Uint64
@@ -28,6 +31,14 @@ func (s *OutputSizeStats) GrowHint(staticSize int) int {
 }
 
 func (s *OutputSizeStats) Observe(actualSize int) {
+	s.observe(actualSize, 0, false)
+}
+
+func (s *OutputSizeStats) ObserveWithHeadroom(actualSize, estimatedSize int) {
+	s.observe(actualSize, estimatedSize, true)
+}
+
+func (s *OutputSizeStats) observe(actualSize, estimatedSize int, trackHeadroom bool) {
 	if s == nil || actualSize <= 0 {
 		return
 	}
@@ -37,7 +48,35 @@ func (s *OutputSizeStats) Observe(actualSize int) {
 		current := s.estimate.Load()
 		next := nextOutputSizeEstimate(current, actual, s.samples.Load())
 		if s.estimate.CompareAndSwap(current, next) {
+			if trackHeadroom && estimatedSize > 0 {
+				s.observeHeadroom(outputSizeHintUint64(uint64(estimatedSize)), actual)
+			}
 			s.samples.Add(1)
+			return
+		}
+	}
+}
+
+func (s *OutputSizeStats) Headroom(growHint int) int {
+	if s == nil || growHint <= 0 {
+		return 0
+	}
+	limit := growHint / outputSizeStatsHeadroomDivisor
+	if limit > outputSizeStatsMaxHeadroom {
+		limit = outputSizeStatsMaxHeadroom
+	}
+	headroom := outputSizeHintInt(s.headroom.Load())
+	if headroom > limit {
+		return limit
+	}
+	return headroom
+}
+
+func (s *OutputSizeStats) observeHeadroom(estimated, actual uint64) {
+	for {
+		current := s.headroom.Load()
+		next := nextOutputSizeHeadroom(current, estimated, actual)
+		if s.headroom.CompareAndSwap(current, next) {
 			return
 		}
 	}
@@ -163,6 +202,27 @@ func nextOutputSizeEstimate(current, actual, samples uint64) uint64 {
 		step = 1
 	}
 	return outputSizeHintUint64(current - step)
+}
+
+func nextOutputSizeHeadroom(current, estimated, actual uint64) uint64 {
+	if actual > estimated {
+		shortfall := actual - estimated
+		if shortfall > outputSizeStatsMaxHeadroom {
+			shortfall = outputSizeStatsMaxHeadroom
+		}
+		if shortfall > current {
+			return shortfall
+		}
+		return current
+	}
+	if current == 0 {
+		return 0
+	}
+	step := current / 8
+	if step == 0 {
+		step = 1
+	}
+	return current - step
 }
 
 func outputSizeHintInt(value uint64) int {

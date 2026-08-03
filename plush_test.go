@@ -306,6 +306,7 @@ func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 			StaticSize:     10,
 			FallbackHint:   20,
 			GrowHint:       30,
+			Headroom:       4,
 			EstimateBefore: 25,
 			Actual:         28,
 			EstimateAfter:  27,
@@ -315,33 +316,40 @@ func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 		},
 	}
 
-	r.Equal("scope=template;static=10;fallback=20;hint=30;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	r.Equal("scope=template;static=10;fallback=20;hint=30;headroom=4;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
 	r.Empty(plush.RenderDiagnostics{}.OutputSizeHeader())
 }
 
 func Test_Render_Diagnostics_Contextual_Output_Size_Header(t *testing.T) {
 	diagnostics := plush.RenderDiagnostics{
 		OutputSize: plush.RenderOutputSizeDiagnostics{
-			Available:      true,
-			Scope:          "file",
-			Contextual:     true,
-			ProfileBand:    "0-4k",
-			YieldSize:      100,
-			OverheadBefore: 20,
-			OverheadActual: 21,
-			OverheadAfter:  21,
-			StaticSize:     10,
-			FallbackHint:   115,
-			GrowHint:       120,
-			EstimateBefore: 120,
-			Actual:         121,
-			EstimateAfter:  121,
-			SamplesAfter:   2,
-			Observed:       true,
+			Available:                  true,
+			Scope:                      "file",
+			Contextual:                 true,
+			ProfileBand:                "0-4k",
+			YieldSize:                  100,
+			OverheadPredictor:          "ratio",
+			OverheadPredictorAfter:     "absolute",
+			OverheadBefore:             20,
+			OverheadAbsolute:           22,
+			OverheadRatio:              20,
+			OverheadAbsoluteErrorScore: 3.5,
+			OverheadRatioErrorScore:    1.25,
+			OverheadActual:             21,
+			OverheadAfter:              21,
+			StaticSize:                 10,
+			FallbackHint:               115,
+			GrowHint:                   120,
+			Headroom:                   5,
+			EstimateBefore:             120,
+			Actual:                     121,
+			EstimateAfter:              121,
+			SamplesAfter:               2,
+			Observed:                   true,
 		},
 	}
 
-	require.Equal(t, "scope=file;profile=0-4k;yield=100;overhead=20;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	require.Equal(t, "scope=file;profile=0-4k;yield=100;predictor=ratio;predictor-after=absolute;overhead=20;overhead-absolute=22;overhead-ratio=20;absolute-error-score=3.50;ratio-error-score=1.25;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;headroom=5;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
 }
 
 func Test_Render_Diagnostics_Partial_Output_Size_Headers(t *testing.T) {

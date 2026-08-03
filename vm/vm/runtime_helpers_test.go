@@ -1222,6 +1222,46 @@ func Test_VM_Output_Size_GrowHint_Uses_Fallback_Only_Until_Learned(t *testing.T)
 	require.Equal(t, 10, outputGrowHint(bytecode, 64, ctx, options))
 }
 
+func Test_VM_Output_Size_Headroom_Prevents_Repeated_Small_Underestimate_Growth(t *testing.T) {
+	const learned = 212_907
+	const actual = 214_285
+	const expectedHeadroom = actual - learned
+
+	bytecode := &compiler.Bytecode{OutputSizeStats: &compiler.OutputSizeStats{}}
+	bytecode.OutputSizeStats.Observe(learned)
+	options := outputSizeOptions{topLevel: true}
+
+	firstCtx := plush.NewContext()
+	firstObservation := beginOutputSizeObservation(bytecode, 0, firstCtx, options)
+	require.Zero(t, firstObservation.headroom)
+	require.Equal(t, learned, firstObservation.growHint)
+
+	var firstOutput strings.Builder
+	growEmptyOutputBuilder(&firstOutput, firstObservation.growHint, &firstObservation)
+	firstOutput.WriteString(strings.Repeat("x", actual))
+	observeOutputBuilderSize(bytecode, firstCtx, options, &firstOutput, firstObservation)
+
+	firstDiagnostics, ok := plush.RenderDiagnosticsFromContext(firstCtx)
+	require.True(t, ok)
+	require.Less(t, firstDiagnostics.OutputSize.GrowHint, firstDiagnostics.OutputSize.Actual)
+
+	secondCtx := plush.NewContext()
+	secondObservation := beginOutputSizeObservation(bytecode, 0, secondCtx, options)
+	require.Equal(t, 213_596, secondObservation.estimateBefore)
+	require.Equal(t, expectedHeadroom, secondObservation.headroom)
+	require.Equal(t, 214_974, secondObservation.growHint)
+
+	var secondOutput strings.Builder
+	growEmptyOutputBuilder(&secondOutput, secondObservation.growHint, &secondObservation)
+	secondOutput.WriteString(strings.Repeat("x", actual))
+	observeOutputBuilderSize(bytecode, secondCtx, options, &secondOutput, secondObservation)
+
+	secondDiagnostics, ok := plush.RenderDiagnosticsFromContext(secondCtx)
+	require.True(t, ok)
+	require.Equal(t, expectedHeadroom, secondDiagnostics.OutputSize.Headroom)
+	require.Equal(t, secondDiagnostics.OutputSize.CapacityGrow, secondDiagnostics.OutputSize.CapacityFinal)
+}
+
 func Test_VM_Output_Size_Estimator_Disabled_Skips_All_Adaptive_Learning(t *testing.T) {
 	previous := plush.SetOutputSizeEstimatorEnabled(false)
 	defer plush.SetOutputSizeEstimatorEnabled(previous)
@@ -1295,13 +1335,14 @@ func Test_VM_Template_Output_Size_Uses_Observed_Minimum_When_Unstable(t *testing
 		OutputSizeStats: &compiler.OutputSizeStats{},
 	}
 	bytecode.OutputSizeStats.Observe(4 << 10)
-	bytecode.OutputSizeStats.Observe(1 << 20)
+	bytecode.OutputSizeStats.ObserveWithHeadroom(1<<20, 4<<10)
 
 	observation := beginOutputSizeObservation(bytecode, 0, plush.NewContext(), outputSizeOptions{topLevel: true})
 	require.True(t, observation.unstable)
 	require.True(t, observation.limited)
 	require.Greater(t, observation.estimateBefore, 4<<10)
 	require.Equal(t, 4<<10, observation.growHint)
+	require.Zero(t, observation.headroom)
 }
 
 func Test_VM_Partial_Output_Size_Does_Not_Double_Large_Parent_Builder(t *testing.T) {

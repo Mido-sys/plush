@@ -29,7 +29,7 @@ type Bytecode struct {
 	FastDiagnostics   atomic.Value
 	OutputSizeStats   *OutputSizeStats
 	LayoutSizeStats   *OutputSizeStats
-	LayoutSizeProfile LayoutOutputSizeProfile
+	LayoutSizeProfile *LayoutOutputSizeProfile
 	PartialSizeStats  *OutputSizeStats
 	HasHoles          bool
 	HasPartials       bool

@@ -16,26 +16,30 @@ type outputSizeOptions struct {
 }
 
 type outputSizeObservation struct {
-	available      bool
-	scope          string
-	staticSize     int
-	stats          *compiler.OutputSizeStats
-	fallbackHint   int
-	growHint       int
-	estimateBefore int
-	samplesBefore  uint64
-	contextual     bool
-	yieldSize      int
-	overheadBefore int
-	profileBand    string
-	unstable       bool
-	limited        bool
-	minimum        int
-	maximum        int
-	growCalled     bool
-	capacityBefore int
-	capacityGrow   int
-	capacityFinal  int
+	available        bool
+	scope            string
+	staticSize       int
+	stats            *compiler.OutputSizeStats
+	fallbackHint     int
+	growHint         int
+	headroom         int
+	headroomBase     int
+	estimateBefore   int
+	samplesBefore    uint64
+	contextual       bool
+	yieldSize        int
+	overheadBefore   int
+	profileBand      string
+	layoutProfile    *compiler.LayoutOutputSizeProfile
+	layoutPrediction compiler.LayoutOutputSizePrediction
+	unstable         bool
+	limited          bool
+	minimum          int
+	maximum          int
+	growCalled       bool
+	capacityBefore   int
+	capacityGrow     int
+	capacityFinal    int
 }
 
 type fileOutputSizeScope struct {
@@ -49,6 +53,7 @@ const outputSizeScopeTemplate = "template"
 const outputSizeScopeFile = "file"
 const outputSizeScopePartial = "partial"
 const contextualOutputOverheadGrowLimit = 4 << 20
+const learnedOutputGrowLimit = 4 << 20
 const unstablePartialGrowLimit = 64 << 10
 const inlinePartialParentGrowLimit = 64 << 10
 
@@ -88,7 +93,10 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 			filename := plush.PunchHoleTemplateFilename(ctx)
 			if yieldSize, ok := fileOutputScopeLayoutYield(scope, filename, ctx); ok && scope.rootBytecode != nil {
 				observation.scope = outputSizeScopeFile
-				observation.stats, observation.profileBand = scope.rootBytecode.LayoutSizeProfile.Stats(yieldSize)
+				observation.layoutProfile = scope.rootBytecode.LayoutSizeProfile
+				if observation.layoutProfile != nil {
+					observation.stats, observation.layoutPrediction, observation.profileBand = observation.layoutProfile.Predict(yieldSize)
+				}
 				if observation.stats == nil {
 					observation.stats = scope.rootBytecode.LayoutSizeStats
 				}
@@ -105,11 +113,20 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 	observation.minimum, observation.maximum = observation.stats.Range()
 	observation.unstable = observation.stats.Unstable()
 	if observation.contextual {
-		overheadHint := observation.stats.GrowHint(observation.staticSize)
+		overheadHint := observation.layoutPrediction.Overhead
+		if observation.layoutProfile == nil {
+			overheadHint = observation.stats.Estimate()
+		}
+		if observation.staticSize > overheadHint {
+			overheadHint = observation.staticSize
+		}
 		if observation.samplesBefore == 0 && fallback > overheadHint {
 			overheadHint = fallback
 		}
-		observation.overheadBefore = observation.estimateBefore
+		observation.overheadBefore = observation.layoutPrediction.Overhead
+		if observation.layoutProfile == nil {
+			observation.overheadBefore = observation.estimateBefore
+		}
 		if observation.samplesBefore == 0 {
 			observation.overheadBefore = overheadHint
 		}
@@ -121,6 +138,15 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 		observation.estimateBefore = addOutputSizes(observation.yieldSize, observation.overheadBefore)
 		observation.fallbackHint = addOutputSizes(observation.yieldSize, fallback)
 		observation.growHint = contextualOutputGrowHint(observation.yieldSize, overheadHint)
+		observation.headroomBase = overheadHint
+		if observation.samplesBefore > 0 && !observation.unstable {
+			maximumHint := contextualOutputGrowHint(observation.yieldSize, contextualOutputOverheadGrowLimit)
+			observation.growHint, observation.headroom = applyOutputSizeHeadroom(
+				observation.growHint,
+				observation.stats.Headroom(observation.growHint),
+				maximumHint,
+			)
+		}
 		recordOutputGrowHint(bytecode, observation, ctx, options)
 		return observation
 	}
@@ -138,6 +164,14 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 		capped := capUnstablePartialGrow(observation.growHint, observation.staticSize)
 		observation.limited = capped < observation.growHint
 		observation.growHint = capped
+	}
+	observation.headroomBase = observation.growHint
+	if options.partialName == "" && observation.samplesBefore > 0 && !observation.unstable {
+		observation.growHint, observation.headroom = applyOutputSizeHeadroom(
+			observation.growHint,
+			observation.stats.Headroom(observation.growHint),
+			learnedOutputGrowLimit,
+		)
 	}
 	recordOutputGrowHint(bytecode, observation, ctx, options)
 	return observation
@@ -232,6 +266,19 @@ func contextualOutputGrowHint(yieldSize, overheadHint int) int {
 		overheadHint = contextualOutputOverheadGrowLimit
 	}
 	return addOutputSizes(yieldSize, overheadHint)
+}
+
+func applyOutputSizeHeadroom(growHint, headroom, maximumHint int) (int, int) {
+	if growHint < 0 {
+		growHint = 0
+	}
+	if headroom <= 0 || growHint >= maximumHint {
+		return growHint, 0
+	}
+	if headroom > maximumHint-growHint {
+		headroom = maximumHint - growHint
+	}
+	return addOutputSizes(growHint, headroom), headroom
 }
 
 func capUnstablePartialGrow(hint, staticSize int) int {
@@ -356,7 +403,19 @@ func observeOutputSize(bytecode *compiler.Bytecode, ctx hctx.Context, options ou
 			observedSize = 0
 		}
 	}
-	observation.stats.Observe(observedSize)
+	if observation.contextual && observation.layoutProfile != nil {
+		observation.layoutProfile.Observe(
+			observation.yieldSize,
+			observedSize,
+			observation.headroomBase,
+			observation.layoutPrediction,
+			observation.samplesBefore > 0 && !observation.unstable,
+		)
+	} else if options.partialName == "" && observation.samplesBefore > 0 && !observation.unstable {
+		observation.stats.ObserveWithHeadroom(observedSize, observation.headroomBase)
+	} else {
+		observation.stats.Observe(observedSize)
+	}
 	recordOutputActual(bytecode, size, observation, ctx, options)
 }
 
@@ -366,28 +425,34 @@ func recordOutputGrowHint(bytecode *compiler.Bytecode, observation outputSizeObs
 	}
 	updateOutputSizeDiagnostics(ctx, observation, func(d *plush.RenderDiagnostics) {
 		d.OutputSize = plush.RenderOutputSizeDiagnostics{
-			Available:      true,
-			Scope:          observation.scope,
-			Contextual:     observation.contextual,
-			ProfileBand:    observation.profileBand,
-			YieldSize:      observation.yieldSize,
-			OverheadBefore: observation.overheadBefore,
-			StaticSize:     observation.staticSize,
-			FallbackHint:   observation.fallbackHint,
-			GrowHint:       observation.growHint,
-			EstimateBefore: observation.estimateBefore,
-			EstimateAfter:  observation.estimateBefore,
-			SamplesBefore:  observation.samplesBefore,
-			SamplesAfter:   observation.samplesBefore,
-			Minimum:        observation.minimum,
-			Maximum:        observation.maximum,
-			Unstable:       observation.unstable,
-			Limited:        observation.limited,
-			GrowCalled:     observation.growCalled,
-			CapacityBefore: observation.capacityBefore,
-			CapacityGrow:   observation.capacityGrow,
-			CapacityFinal:  observation.capacityFinal,
-			GrowAllocated:  outputSpeculativeAllocated(observation),
+			Available:                  true,
+			Scope:                      observation.scope,
+			Contextual:                 observation.contextual,
+			ProfileBand:                observation.profileBand,
+			YieldSize:                  observation.yieldSize,
+			OverheadBefore:             observation.overheadBefore,
+			OverheadPredictor:          observation.layoutPrediction.Predictor,
+			OverheadAbsolute:           observation.layoutPrediction.Absolute,
+			OverheadRatio:              observation.layoutPrediction.Ratio,
+			OverheadAbsoluteErrorScore: layoutOutputErrorScorePercent(observation.layoutPrediction.AbsoluteErrorPPM),
+			OverheadRatioErrorScore:    layoutOutputErrorScorePercent(observation.layoutPrediction.RatioErrorPPM),
+			StaticSize:                 observation.staticSize,
+			FallbackHint:               observation.fallbackHint,
+			GrowHint:                   observation.growHint,
+			Headroom:                   observation.headroom,
+			EstimateBefore:             observation.estimateBefore,
+			EstimateAfter:              observation.estimateBefore,
+			SamplesBefore:              observation.samplesBefore,
+			SamplesAfter:               observation.samplesBefore,
+			Minimum:                    observation.minimum,
+			Maximum:                    observation.maximum,
+			Unstable:                   observation.unstable,
+			Limited:                    observation.limited,
+			GrowCalled:                 observation.growCalled,
+			CapacityBefore:             observation.capacityBefore,
+			CapacityGrow:               observation.capacityGrow,
+			CapacityFinal:              observation.capacityFinal,
+			GrowAllocated:              outputSpeculativeAllocated(observation),
 		}
 	})
 }
@@ -401,13 +466,23 @@ func recordOutputActual(bytecode *compiler.Bytecode, actual int, observation out
 	unstable := observation.stats.Unstable()
 	overheadActual := 0
 	overheadAfter := 0
+	overheadPredictorAfter := ""
 	if observation.contextual {
 		overheadActual = actual - observation.yieldSize
 		if overheadActual < 0 {
 			overheadActual = 0
 		}
-		overheadAfter = estimate
+		if observation.layoutProfile != nil {
+			_, prediction, _ := observation.layoutProfile.Predict(observation.yieldSize)
+			overheadAfter = prediction.Overhead
+			overheadPredictorAfter = prediction.Predictor
+		} else {
+			overheadAfter = estimate
+		}
 		estimate = addOutputSizes(observation.yieldSize, estimate)
+		if observation.layoutProfile != nil {
+			estimate = addOutputSizes(observation.yieldSize, overheadAfter)
+		}
 	}
 	if options.partialName != "" {
 		plush.AddRenderDiagnosticPartialOutputAllocation(
@@ -431,35 +506,46 @@ func recordOutputActual(bytecode *compiler.Bytecode, actual int, observation out
 	}
 	updateOutputSizeDiagnostics(ctx, observation, func(d *plush.RenderDiagnostics) {
 		d.OutputSize = plush.RenderOutputSizeDiagnostics{
-			Available:      true,
-			Scope:          observation.scope,
-			Contextual:     observation.contextual,
-			ProfileBand:    observation.profileBand,
-			YieldSize:      observation.yieldSize,
-			OverheadBefore: observation.overheadBefore,
-			OverheadActual: overheadActual,
-			OverheadAfter:  overheadAfter,
-			StaticSize:     observation.staticSize,
-			FallbackHint:   observation.fallbackHint,
-			GrowHint:       observation.growHint,
-			EstimateBefore: observation.estimateBefore,
-			Actual:         actual,
-			EstimateAfter:  estimate,
-			SamplesBefore:  observation.samplesBefore,
-			SamplesAfter:   samples,
-			Observed:       true,
-			Minimum:        minimum,
-			Maximum:        maximum,
-			Unstable:       unstable,
-			Limited:        observation.limited,
-			GrowCalled:     observation.growCalled,
-			CapacityBefore: observation.capacityBefore,
-			CapacityGrow:   observation.capacityGrow,
-			CapacityFinal:  observation.capacityFinal,
-			UnusedCapacity: outputUnusedCapacity(observation, actual),
-			GrowAllocated:  outputSpeculativeAllocated(observation),
+			Available:                  true,
+			Scope:                      observation.scope,
+			Contextual:                 observation.contextual,
+			ProfileBand:                observation.profileBand,
+			YieldSize:                  observation.yieldSize,
+			OverheadBefore:             observation.overheadBefore,
+			OverheadActual:             overheadActual,
+			OverheadAfter:              overheadAfter,
+			OverheadPredictor:          observation.layoutPrediction.Predictor,
+			OverheadPredictorAfter:     overheadPredictorAfter,
+			OverheadAbsolute:           observation.layoutPrediction.Absolute,
+			OverheadRatio:              observation.layoutPrediction.Ratio,
+			OverheadAbsoluteErrorScore: layoutOutputErrorScorePercent(observation.layoutPrediction.AbsoluteErrorPPM),
+			OverheadRatioErrorScore:    layoutOutputErrorScorePercent(observation.layoutPrediction.RatioErrorPPM),
+			StaticSize:                 observation.staticSize,
+			FallbackHint:               observation.fallbackHint,
+			GrowHint:                   observation.growHint,
+			Headroom:                   observation.headroom,
+			EstimateBefore:             observation.estimateBefore,
+			Actual:                     actual,
+			EstimateAfter:              estimate,
+			SamplesBefore:              observation.samplesBefore,
+			SamplesAfter:               samples,
+			Observed:                   true,
+			Minimum:                    minimum,
+			Maximum:                    maximum,
+			Unstable:                   unstable,
+			Limited:                    observation.limited,
+			GrowCalled:                 observation.growCalled,
+			CapacityBefore:             observation.capacityBefore,
+			CapacityGrow:               observation.capacityGrow,
+			CapacityFinal:              observation.capacityFinal,
+			UnusedCapacity:             outputUnusedCapacity(observation, actual),
+			GrowAllocated:              outputSpeculativeAllocated(observation),
 		}
 	})
+}
+
+func layoutOutputErrorScorePercent(errorPPM uint64) float64 {
+	return float64(errorPPM) / 10_000
 }
 
 func outputSpeculativeAllocated(observation outputSizeObservation) int {

@@ -83,6 +83,61 @@ func Benchmark_VM_Output_Size_Estimator(b *testing.B) {
 	}
 }
 
+func Benchmark_Heavy_Template_Render_Engine(b *testing.B) {
+	const source = `<main><%= for (_, entry) in entries { %><article data-id="<%= entry.ID %>"><h2><%= entry.Name %></h2><p><%= entry.Content %></p></article><% } %></main>`
+
+	ctx := outputSizeBenchmarkContext(1024, 128)
+	interpreter, err := plush.NewTemplate(source)
+	if err != nil {
+		b.Fatal(err)
+	}
+	compiled, err := Compile(source)
+	if err != nil {
+		b.Fatal(err)
+	}
+	interpreterOutput, _, err := interpreter.Exec(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	previous := plush.SetOutputSizeEstimatorEnabled(true)
+	defer plush.SetOutputSizeEstimatorEnabled(previous)
+	vmOutput, err := compiled.Render(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if interpreterOutput != vmOutput {
+		b.Fatalf("render engines produced different output: interpreter=%d bytes vm=%d bytes", len(interpreterOutput), len(vmOutput))
+	}
+
+	b.Run("interpreter_parsed", func(b *testing.B) {
+		b.ReportAllocs()
+		b.SetBytes(int64(len(interpreterOutput)))
+		for i := 0; i < b.N; i++ {
+			out, _, err := interpreter.Exec(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			benchmarkSink = out
+		}
+	})
+
+	b.Run("vm_compiled_estimator", func(b *testing.B) {
+		if _, err := compiled.Render(ctx); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.SetBytes(int64(len(vmOutput)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			out, err := compiled.Render(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			benchmarkSink = out
+		}
+	})
+}
+
 func outputSizeBenchmarkContext(count, contentSize int) *plush.Context {
 	records := make([]outputSizeBenchmarkRecord, count)
 	for i := range records {

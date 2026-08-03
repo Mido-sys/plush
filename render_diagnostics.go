@@ -62,33 +62,40 @@ type RenderDiagnostics struct {
 }
 
 type RenderOutputSizeDiagnostics struct {
-	Available      bool
-	Scope          string
-	Contextual     bool
-	YieldSize      int
-	OverheadBefore int
-	OverheadActual int
-	OverheadAfter  int
-	StaticSize     int
-	FallbackHint   int
-	GrowHint       int
-	EstimateBefore int
-	Actual         int
-	EstimateAfter  int
-	SamplesBefore  uint64
-	SamplesAfter   uint64
-	Observed       bool
-	ProfileBand    string
-	Minimum        int
-	Maximum        int
-	Unstable       bool
-	Limited        bool
-	GrowCalled     bool
-	CapacityBefore int
-	CapacityGrow   int
-	CapacityFinal  int
-	UnusedCapacity int
-	GrowAllocated  int
+	Available                  bool
+	Scope                      string
+	Contextual                 bool
+	YieldSize                  int
+	OverheadBefore             int
+	OverheadActual             int
+	OverheadAfter              int
+	OverheadPredictor          string
+	OverheadPredictorAfter     string
+	OverheadAbsolute           int
+	OverheadRatio              int
+	OverheadAbsoluteErrorScore float64
+	OverheadRatioErrorScore    float64
+	StaticSize                 int
+	FallbackHint               int
+	GrowHint                   int
+	Headroom                   int
+	EstimateBefore             int
+	Actual                     int
+	EstimateAfter              int
+	SamplesBefore              uint64
+	SamplesAfter               uint64
+	Observed                   bool
+	ProfileBand                string
+	Minimum                    int
+	Maximum                    int
+	Unstable                   bool
+	Limited                    bool
+	GrowCalled                 bool
+	CapacityBefore             int
+	CapacityGrow               int
+	CapacityFinal              int
+	UnusedCapacity             int
+	GrowAllocated              int
 }
 
 type RenderLoopOutputSizeDiagnostics struct {
@@ -244,11 +251,12 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		errorSize = -errorSize
 	}
 	header := fmt.Sprintf(
-		"scope=%s;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		d.OutputSize.StaticSize,
 		d.OutputSize.FallbackHint,
 		d.OutputSize.GrowHint,
+		d.OutputSize.Headroom,
 		d.OutputSize.EstimateBefore,
 		d.OutputSize.Actual,
 		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
@@ -271,16 +279,23 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		return header
 	}
 	return fmt.Sprintf(
-		"scope=%s;profile=%s;yield=%d;overhead=%d;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;profile=%s;yield=%d;predictor=%s;predictor-after=%s;overhead=%d;overhead-absolute=%d;overhead-ratio=%d;absolute-error-score=%.2f;ratio-error-score=%.2f;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		outputSizeProfileBand(d.OutputSize.ProfileBand),
 		d.OutputSize.YieldSize,
+		d.OutputSize.OverheadPredictor,
+		d.OutputSize.OverheadPredictorAfter,
 		d.OutputSize.OverheadBefore,
+		d.OutputSize.OverheadAbsolute,
+		d.OutputSize.OverheadRatio,
+		d.OutputSize.OverheadAbsoluteErrorScore,
+		d.OutputSize.OverheadRatioErrorScore,
 		d.OutputSize.OverheadActual,
 		d.OutputSize.OverheadAfter,
 		d.OutputSize.StaticSize,
 		d.OutputSize.FallbackHint,
 		d.OutputSize.GrowHint,
+		d.OutputSize.Headroom,
 		d.OutputSize.EstimateBefore,
 		d.OutputSize.Actual,
 		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
