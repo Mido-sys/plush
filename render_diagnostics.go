@@ -31,6 +31,9 @@ const (
 	PunchHoleCacheDisabled = "disabled"
 	PunchHoleCacheHit      = "hit"
 	PunchHoleCacheMiss     = "miss"
+
+	renderPartialOutputDetailLimit = 8
+	renderLoopOutputDetailLimit    = 8
 )
 
 var renderDiagnosticsKey = "__plush_internal_render_diagnostics_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
@@ -52,7 +55,116 @@ type RenderDiagnostics struct {
 	PunchHoleCache   string
 	EngineDuration   time.Duration
 	FastPlan         RenderFastPlanDiagnostics
+	OutputSize       RenderOutputSizeDiagnostics
+	LoopOutput       RenderLoopOutputSizeDiagnostics
+	PartialOutput    RenderPartialOutputSizeDiagnostics
 	VMHotspots       RenderVMHotspotDiagnostics
+}
+
+type RenderOutputSizeDiagnostics struct {
+	Available      bool
+	Scope          string
+	Contextual     bool
+	YieldSize      int
+	OverheadBefore int
+	OverheadActual int
+	OverheadAfter  int
+	StaticSize     int
+	FallbackHint   int
+	GrowHint       int
+	EstimateBefore int
+	Actual         int
+	EstimateAfter  int
+	SamplesBefore  uint64
+	SamplesAfter   uint64
+	Observed       bool
+	ProfileBand    string
+	Minimum        int
+	Maximum        int
+	Unstable       bool
+	Limited        bool
+	GrowCalled     bool
+	CapacityBefore int
+	CapacityGrow   int
+	CapacityFinal  int
+	UnusedCapacity int
+	GrowAllocated  int
+}
+
+type RenderLoopOutputSizeDiagnostics struct {
+	Calls         int
+	Items         int
+	KnownCount    int
+	Learned       int
+	GrowHint      int
+	Actual        int
+	AbsoluteError int
+	WithinTen     int
+	Limited       int
+	GrowCalls     int
+	GrowAllocated int
+	Details       []RenderLoopOutputSizeDetail
+}
+
+type RenderLoopOutputSizeDetail struct {
+	Name                 string
+	Line                 int
+	Calls                int
+	Items                int
+	Learned              int
+	GrowHint             int
+	Actual               int
+	AbsoluteError        int
+	WithinTen            int
+	KnownCount           int
+	LearnedBytesPerItem  int
+	ActualBytesPerItem   int
+	EstimateBytesPerItem int
+	SamplesBefore        uint64
+	SamplesAfter         uint64
+	Limited              int
+	GrowCalls            int
+	GrowAllocated        int
+}
+
+type RenderPartialOutputSizeDiagnostics struct {
+	Calls         int
+	Learned       int
+	GrowHint      int
+	Actual        int
+	AbsoluteError int
+	WithinTen     int
+	Unstable      int
+	Limited       int
+	GrowCalls     int
+	GrowAllocated int
+	Details       []RenderPartialOutputSizeDetail
+}
+
+type RenderPartialOutputSizeDetail struct {
+	Name          string
+	Calls         int
+	Learned       int
+	GrowHint      int
+	Actual        int
+	AbsoluteError int
+	Estimate      int
+	Samples       uint64
+	Minimum       int
+	Maximum       int
+	Unstable      bool
+	Limited       int
+	GrowCalls     int
+	GrowAllocated int
+}
+
+type RenderPartialOutputAllocation struct {
+	GrowCalled           bool
+	SpeculativeAllocated int
+	Unstable             bool
+	Limited              bool
+	Minimum              int
+	Maximum              int
 }
 
 type RenderFastPlanDiagnostics struct {
@@ -105,6 +217,351 @@ func (d RenderDiagnostics) FastPlanHelperNamesHeader() string {
 
 func (d RenderDiagnostics) FastPlanPartialNamesHeader() string {
 	return strings.Join(d.FastPlan.PartialNames, ";")
+}
+
+func (d RenderDiagnostics) OutputSizeHeader() string {
+	if !d.OutputSize.Available {
+		return ""
+	}
+	scope := d.OutputSize.Scope
+	if scope == "" {
+		scope = "template"
+	}
+	observed := 0
+	withinTen := 0
+	if d.OutputSize.Observed {
+		observed = 1
+		errorSize := d.OutputSize.EstimateBefore - d.OutputSize.Actual
+		if errorSize < 0 {
+			errorSize = -errorSize
+		}
+		if outputSizeErrorPercent(errorSize, d.OutputSize.Actual) < 10 {
+			withinTen = 1
+		}
+	}
+	errorSize := d.OutputSize.EstimateBefore - d.OutputSize.Actual
+	if errorSize < 0 {
+		errorSize = -errorSize
+	}
+	header := fmt.Sprintf(
+		"scope=%s;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		scope,
+		d.OutputSize.StaticSize,
+		d.OutputSize.FallbackHint,
+		d.OutputSize.GrowHint,
+		d.OutputSize.EstimateBefore,
+		d.OutputSize.Actual,
+		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
+		withinTen,
+		d.OutputSize.EstimateAfter,
+		d.OutputSize.SamplesAfter,
+		observed,
+		d.OutputSize.Minimum,
+		d.OutputSize.Maximum,
+		boolHeaderValue(d.OutputSize.Unstable),
+		boolHeaderValue(d.OutputSize.Limited),
+		boolHeaderValue(d.OutputSize.GrowCalled),
+		d.OutputSize.GrowAllocated,
+		d.OutputSize.CapacityBefore,
+		d.OutputSize.CapacityGrow,
+		d.OutputSize.CapacityFinal,
+		d.OutputSize.UnusedCapacity,
+	)
+	if !d.OutputSize.Contextual {
+		return header
+	}
+	return fmt.Sprintf(
+		"scope=%s;profile=%s;yield=%d;overhead=%d;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		scope,
+		outputSizeProfileBand(d.OutputSize.ProfileBand),
+		d.OutputSize.YieldSize,
+		d.OutputSize.OverheadBefore,
+		d.OutputSize.OverheadActual,
+		d.OutputSize.OverheadAfter,
+		d.OutputSize.StaticSize,
+		d.OutputSize.FallbackHint,
+		d.OutputSize.GrowHint,
+		d.OutputSize.EstimateBefore,
+		d.OutputSize.Actual,
+		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
+		withinTen,
+		d.OutputSize.EstimateAfter,
+		d.OutputSize.SamplesAfter,
+		observed,
+		d.OutputSize.Minimum,
+		d.OutputSize.Maximum,
+		boolHeaderValue(d.OutputSize.Unstable),
+		boolHeaderValue(d.OutputSize.Limited),
+		boolHeaderValue(d.OutputSize.GrowCalled),
+		d.OutputSize.GrowAllocated,
+		d.OutputSize.CapacityBefore,
+		d.OutputSize.CapacityGrow,
+		d.OutputSize.CapacityFinal,
+		d.OutputSize.UnusedCapacity,
+	)
+}
+
+func (d RenderDiagnostics) PartialOutputSizeHeader() string {
+	partial := d.PartialOutput
+	if partial.Calls == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"calls=%d;learned=%d;hint=%d;actual=%d;absolute-error=%d;error=%.2f;within-10=%d;unstable=%d;limited=%d;grow-calls=%d;grow-allocated=%d",
+		partial.Calls,
+		partial.Learned,
+		partial.GrowHint,
+		partial.Actual,
+		partial.AbsoluteError,
+		outputSizeErrorPercent(partial.AbsoluteError, partial.Actual),
+		partial.WithinTen,
+		partial.Unstable,
+		partial.Limited,
+		partial.GrowCalls,
+		partial.GrowAllocated,
+	)
+}
+
+func (d RenderDiagnostics) PartialOutputSizeDetailsHeader() string {
+	if len(d.PartialOutput.Details) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(d.PartialOutput.Details))
+	for _, detail := range d.PartialOutput.Details {
+		parts = append(parts, fmt.Sprintf(
+			"name=%s,calls=%d,learned=%d,hint=%d,actual=%d,error=%.2f,estimate=%d,samples=%d,min=%d,max=%d,unstable=%d,limited=%d,grow-calls=%d,grow-allocated=%d",
+			partialOutputHeaderName(detail.Name),
+			detail.Calls,
+			detail.Learned,
+			detail.GrowHint,
+			detail.Actual,
+			outputSizeErrorPercent(detail.AbsoluteError, detail.Actual),
+			detail.Estimate,
+			detail.Samples,
+			detail.Minimum,
+			detail.Maximum,
+			boolHeaderValue(detail.Unstable),
+			detail.Limited,
+			detail.GrowCalls,
+			detail.GrowAllocated,
+		))
+	}
+	return strings.Join(parts, "|")
+}
+
+func AddRenderDiagnosticPartialOutput(ctx hctx.Context, name string, learned, growHint, actual, estimate int, samples uint64) {
+	AddRenderDiagnosticPartialOutputAllocation(ctx, name, learned, growHint, actual, estimate, samples, RenderPartialOutputAllocation{})
+}
+
+func AddRenderDiagnosticLoopOutput(ctx hctx.Context, name string, line, items, learnedBytesPerItem, growHint, actual, estimateBytesPerItem int, samplesBefore, samplesAfter uint64, itemCountKnown, limited, growCalled bool, growAllocated int) {
+	if ctx == nil || items <= 0 || actual < 0 {
+		return
+	}
+	if name == "" {
+		name = "<expression>"
+	}
+	learned := outputSizeProduct(learnedBytesPerItem, items)
+	errorSize := learned - actual
+	if errorSize < 0 {
+		errorSize = -errorSize
+	}
+	withinTen := outputSizeErrorPercent(errorSize, actual) < 10
+	actualBytesPerItem := actual / items
+
+	UpdateRenderDiagnostics(ctx, func(d *RenderDiagnostics) {
+		loop := &d.LoopOutput
+		loop.Calls++
+		loop.Items += items
+		if itemCountKnown {
+			loop.KnownCount++
+		}
+		loop.Learned += learned
+		loop.GrowHint += growHint
+		loop.Actual += actual
+		loop.AbsoluteError += errorSize
+		if withinTen {
+			loop.WithinTen++
+		}
+		if limited {
+			loop.Limited++
+		}
+		if growCalled {
+			loop.GrowCalls++
+		}
+		loop.GrowAllocated += growAllocated
+
+		for i := range loop.Details {
+			if loop.Details[i].Name == name && loop.Details[i].Line == line {
+				addLoopOutputDetail(&loop.Details[i], items, learned, growHint, actual, errorSize, learnedBytesPerItem, actualBytesPerItem, estimateBytesPerItem, samplesBefore, samplesAfter, withinTen, itemCountKnown, limited, growCalled, growAllocated)
+				return
+			}
+		}
+		if len(loop.Details) >= renderLoopOutputDetailLimit {
+			return
+		}
+		detail := RenderLoopOutputSizeDetail{Name: name, Line: line}
+		addLoopOutputDetail(&detail, items, learned, growHint, actual, errorSize, learnedBytesPerItem, actualBytesPerItem, estimateBytesPerItem, samplesBefore, samplesAfter, withinTen, itemCountKnown, limited, growCalled, growAllocated)
+		loop.Details = append(loop.Details, detail)
+	})
+}
+
+func addLoopOutputDetail(detail *RenderLoopOutputSizeDetail, items, learned, growHint, actual, errorSize, learnedBytesPerItem, actualBytesPerItem, estimateBytesPerItem int, samplesBefore, samplesAfter uint64, withinTen, itemCountKnown, limited, growCalled bool, growAllocated int) {
+	detail.Calls++
+	detail.Items += items
+	detail.Learned += learned
+	detail.GrowHint += growHint
+	detail.Actual += actual
+	detail.AbsoluteError += errorSize
+	if withinTen {
+		detail.WithinTen++
+	}
+	if itemCountKnown {
+		detail.KnownCount++
+	}
+	detail.LearnedBytesPerItem = learnedBytesPerItem
+	detail.ActualBytesPerItem = actualBytesPerItem
+	detail.EstimateBytesPerItem = estimateBytesPerItem
+	detail.SamplesBefore = samplesBefore
+	detail.SamplesAfter = samplesAfter
+	if limited {
+		detail.Limited++
+	}
+	if growCalled {
+		detail.GrowCalls++
+	}
+	detail.GrowAllocated += growAllocated
+}
+
+func AddRenderDiagnosticPartialOutputAllocation(ctx hctx.Context, name string, learned, growHint, actual, estimate int, samples uint64, allocation RenderPartialOutputAllocation) {
+	if ctx == nil || actual < 0 {
+		return
+	}
+	if name == "" {
+		name = "<anonymous>"
+	}
+	errorSize := learned - actual
+	if errorSize < 0 {
+		errorSize = -errorSize
+	}
+	withinTen := outputSizeErrorPercent(errorSize, actual) < 10
+	UpdateRenderDiagnostics(ctx, func(d *RenderDiagnostics) {
+		partial := &d.PartialOutput
+		partial.Calls++
+		partial.Learned += learned
+		partial.GrowHint += growHint
+		partial.Actual += actual
+		partial.AbsoluteError += errorSize
+		if withinTen {
+			partial.WithinTen++
+		}
+		if allocation.Unstable {
+			partial.Unstable++
+		}
+		if allocation.Limited {
+			partial.Limited++
+		}
+		if allocation.GrowCalled {
+			partial.GrowCalls++
+		}
+		partial.GrowAllocated += allocation.SpeculativeAllocated
+
+		for i := range partial.Details {
+			if partial.Details[i].Name == name {
+				addPartialOutputDetail(&partial.Details[i], learned, growHint, actual, errorSize, estimate, samples, allocation)
+				return
+			}
+		}
+		if len(partial.Details) >= renderPartialOutputDetailLimit {
+			return
+		}
+		detail := RenderPartialOutputSizeDetail{Name: name}
+		addPartialOutputDetail(&detail, learned, growHint, actual, errorSize, estimate, samples, allocation)
+		partial.Details = append(partial.Details, detail)
+	})
+}
+
+func addPartialOutputDetail(detail *RenderPartialOutputSizeDetail, learned, growHint, actual, errorSize, estimate int, samples uint64, allocation RenderPartialOutputAllocation) {
+	detail.Calls++
+	detail.Learned += learned
+	detail.GrowHint += growHint
+	detail.Actual += actual
+	detail.AbsoluteError += errorSize
+	detail.Estimate = estimate
+	detail.Samples = samples
+	detail.Minimum = allocation.Minimum
+	detail.Maximum = allocation.Maximum
+	detail.Unstable = allocation.Unstable
+	if allocation.Limited {
+		detail.Limited++
+	}
+	if allocation.GrowCalled {
+		detail.GrowCalls++
+	}
+	detail.GrowAllocated += allocation.SpeculativeAllocated
+}
+
+func boolHeaderValue(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func outputSizeProfileBand(band string) string {
+	if band == "" {
+		return "none"
+	}
+	return band
+}
+
+func outputSizeErrorPercent(errorSize, actual int) float64 {
+	if actual <= 0 {
+		if errorSize == 0 {
+			return 0
+		}
+		return 100
+	}
+	return float64(errorSize) * 100 / float64(actual)
+}
+
+func outputSizeProduct(left, right int) int {
+	if left <= 0 || right <= 0 {
+		return 0
+	}
+	maximum := int(^uint(0) >> 1)
+	if left > maximum/right {
+		return maximum
+	}
+	return left * right
+}
+
+func partialOutputHeaderName(name string) string {
+	name = strings.ReplaceAll(name, "\\", "/")
+	pathParts := strings.Split(name, "/")
+	trimmed := false
+	for i := len(pathParts) - 1; i >= 0; i-- {
+		if pathParts[i] == "templates" {
+			name = ".../" + strings.Join(pathParts[i:], "/")
+			trimmed = true
+			break
+		}
+	}
+	if !trimmed && len(pathParts) > 3 {
+		name = ".../" + strings.Join(pathParts[len(pathParts)-3:], "/")
+	}
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case ',', ';', '|', '=':
+			return ' '
+		default:
+			return r
+		}
+	}, name)
+	runes := []rune(name)
+	if len(runes) > 120 {
+		name = string(runes[:120])
+	}
+	return name
 }
 
 func (d RenderDiagnostics) VMHelperHotspotsHeader() string {

@@ -16,13 +16,21 @@ import (
 // tryRenderFastBytecode is the VM fast-render entry point. A false handled
 // result means the caller should run the normal bytecode VM path.
 func tryRenderFastBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, bool, error) {
+	return tryRenderFastBytecodeWithOptions(bytecode, ctx, outputSizeOptions{})
+}
+
+func tryRenderFastBytecodeTopLevel(bytecode *compiler.Bytecode, ctx hctx.Context) (string, bool, error) {
+	return tryRenderFastBytecodeWithOptions(bytecode, ctx, outputSizeOptions{topLevel: true})
+}
+
+func tryRenderFastBytecodeWithOptions(bytecode *compiler.Bytecode, ctx hctx.Context, options outputSizeOptions) (string, bool, error) {
 	if bytecode == nil || bytecode.FastRenderPlan == nil || bytecode.HasHoles {
 		return "", false, nil
 	}
 	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
 		defer restorePartial()
 	}
-	return renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx))
+	return renderFastPlanWithBindingPlanOptions(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx), options)
 }
 
 func fastRenderPlanUsesGenericVM(plan *compiler.FastRenderPlan) bool {
@@ -116,6 +124,10 @@ func fastLoopPartSliceUsesGenericVM(parts []compiler.FastLoopPart) bool {
 // static-name, simple, mixed. Each variant must preserve Plush rendering
 // semantics or decline so the normal VM can handle the template.
 func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan) (string, bool, error) {
+	return renderFastPlanWithBindingPlanOptions(bytecode, plan, ctx, bindingPlan, outputSizeOptions{})
+}
+
+func renderFastPlanWithBindingPlanOptions(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan, options outputSizeOptions) (string, bool, error) {
 	if plan == nil {
 		return "", false, nil
 	}
@@ -123,15 +135,15 @@ func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.F
 	mixed := prepareFastMixedPlan(plan)
 	bindings := newFastRenderBindingsWithPlan(plan, ctx, bindingPlan)
 	var out strings.Builder
-	if grow := fastOutputGrowSize(mixed, bindings); grow > 0 {
-		out.Grow(grow)
-	}
+	observation := beginOutputSizeObservation(bytecode, fastOutputGrowSize(mixed, bindings), ctx, options)
+	growEmptyOutputBuilder(&out, observation.growHint, &observation)
 
 	if mixed.staticName != nil {
 		ok, err := renderFastStaticNamePlan(&out, ctx, bindings, mixed.staticName)
 		if !ok || err != nil {
 			return "", ok, err
 		}
+		observeOutputBuilderSize(bytecode, ctx, options, &out, observation)
 		return out.String(), true, nil
 	}
 
@@ -141,12 +153,12 @@ func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.F
 			return "", true, err
 		}
 		if ok {
+			observeOutputBuilderSize(bytecode, ctx, options, &out, observation)
 			return out.String(), true, nil
 		}
 		out.Reset()
-		if grow := fastOutputGrowSize(mixed, bindings); grow > 0 {
-			out.Grow(grow)
-		}
+		observation = beginOutputSizeObservation(bytecode, fastOutputGrowSize(mixed, bindings), ctx, options)
+		growEmptyOutputBuilder(&out, observation.growHint, &observation)
 	}
 
 	ok, err := renderFastMixedPlan(&out, ctx, bindings, mixed, bytecode)
@@ -154,6 +166,7 @@ func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.F
 		return "", ok, err
 	}
 
+	observeOutputBuilderSize(bytecode, ctx, options, &out, observation)
 	return out.String(), true, nil
 }
 

@@ -568,16 +568,26 @@ func renderFastDataPartialDirectInto(out *strings.Builder, partial *compiler.Fas
 		if err := evalFastPartialDataLocalValues(dataPlan, ctx, parentBindings); err != nil {
 			return true, err
 		}
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 		return true, nil
 	}
 	bindings := newFastRenderBindingsWithPlan(bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
 	if err := attachFastPartialDataLocalsFromPlan(&bindings, dataPlan, ctx, parentBindings, &localStorage); err != nil {
 		return true, err
 	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
+	start := out.Len()
 	ok, err = renderFastPlanInlineWithBindings(out, bytecode.FastRenderPlan, ctx, bindings)
 	if err != nil {
 		return ok, wrapVMPartialRenderError(ctx, partial.Line, nil, filename, err)
+	}
+	if ok {
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 	}
 	return ok, nil
 }
@@ -1154,12 +1164,22 @@ func renderFastNoDataPartialDirectInto(out *strings.Builder, name string, ctx hc
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 		return true, nil
 	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
+	start := out.Len()
 	ok, err = renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
 	if err != nil {
 		return ok, wrapVMPartialRenderError(ctx, line, nil, filename, err)
+	}
+	if ok {
+		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 	}
 	return ok, nil
 }
@@ -1382,6 +1402,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	filename, forceCacheClear, cached, ok := punchHoleCacheStateForFilename(filename, ctx, input)
 	if ok {
+		observeCachedPartialOutput(filename, cached, ctx)
 		return cached, nil
 	}
 
@@ -1390,7 +1411,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	links := partialBytecodeLinks(ctx)
 	if link, ok := links.GetLink(linkKey, sourceHash); ok {
 		if shouldFallbackPartialBytecode(link.bytecode) {
-			return renderInterpreterFallback(input, ctx, filename)
+			return renderInterpreterPartial(input, ctx, filename, link.bytecode)
 		}
 		return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 	}
@@ -1399,7 +1420,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 		if bytecode, ok := cached.(*compiler.Bytecode); ok {
 			link := links.SetWithSource(linkKey, sourceHash, input, bytecode)
 			if shouldFallbackPartialBytecode(bytecode) {
-				return renderInterpreterFallback(input, ctx, filename)
+				return renderInterpreterPartial(input, ctx, filename, bytecode)
 			}
 			return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 		}
@@ -1419,7 +1440,7 @@ func renderLinkedPartial(input string, ctx hctx.Context) (string, error) {
 	plush.CacheVMBytecodeForCleanFilenameWithSource(filename, cachedProgram, bytecode, input)
 	link := links.SetWithSource(linkKey, sourceHash, input, bytecode)
 	if shouldFallbackPartialBytecode(bytecode) {
-		return renderInterpreterFallback(input, ctx, filename)
+		return renderInterpreterPartial(input, ctx, filename, bytecode)
 	}
 	return renderLinkedPartialBytecode(link, ctx, filename, forceCacheClear)
 }
@@ -1513,6 +1534,13 @@ func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Cont
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	filename, _, cached, ok := punchHoleCacheStateForFilename(filename, ctx, input)
 	if ok {
+		if link, linked := cachedPartialBytecodeLinkForFilename(filename, ctx); linked && link != nil && link.bytecode != nil {
+			observation := beginPartialOutputObservation(link.bytecode, filename, ctx)
+			growInlineOutputBuilder(out, observation.growHint, &observation)
+			out.WriteString(cached)
+			observePartialOutput(link.bytecode, filename, ctx, len(cached), observation)
+			return true, nil
+		}
 		out.WriteString(cached)
 		return true, nil
 	}
@@ -1556,6 +1584,15 @@ func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Cont
 	return renderLinkedPartialBytecodeInline(out, link, ctx)
 }
 
+func observeCachedPartialOutput(filename, rendered string, ctx hctx.Context) {
+	link, ok := cachedPartialBytecodeLinkForFilename(filename, ctx)
+	if !ok || link == nil || link.bytecode == nil {
+		return
+	}
+	observation := beginPartialOutputObservation(link.bytecode, filename, ctx)
+	observePartialOutput(link.bytecode, filename, ctx, len(rendered), observation)
+}
+
 func cachedPartialBytecodeCanDirectInline(filename string) (bool, bool) {
 	if filename == "" {
 		return false, false
@@ -1583,7 +1620,10 @@ func renderGenericPartialInline(out *strings.Builder, input string, ctx hctx.Con
 	if err != nil {
 		return true, err
 	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
 	out.WriteString(rendered)
+	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
 	return true, nil
 }
 
@@ -1593,17 +1633,30 @@ func renderLinkedPartialBytecode(link *partialBytecodeLink, ctx hctx.Context, fi
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		observation := beginPartialOutputObservation(bytecode, filename, ctx)
+		observePartialOutput(bytecode, filename, ctx, len(bytecode.StaticOutput), observation)
 		return bytecode.StaticOutput, nil
 	}
 	if link.source != "" && shouldFallbackPartialBytecode(bytecode) {
-		return renderInterpreterFallback(link.source, ctx, filename)
+		return renderInterpreterPartial(link.source, ctx, filename, bytecode)
 	}
 	if !bytecode.HasHoles && bytecode.FastRenderPlan != nil {
-		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx)); ok || err != nil {
+		options := outputSizeOptions{partialName: filename}
+		if rendered, ok, err := renderFastPlanWithBindingPlanOptions(bytecode, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx), options); ok || err != nil {
 			return rendered, err
 		}
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, link.source)
+	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, link.source, outputSizeOptions{partialName: filename})
+}
+
+func renderInterpreterPartial(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
+	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	if err != nil {
+		return "", err
+	}
+	observation := beginPartialOutputObservation(bytecode, filename, ctx)
+	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
+	return rendered, nil
 }
 
 func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialBytecodeLink, ctx hctx.Context) (bool, error) {
@@ -1612,14 +1665,27 @@ func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialByteco
 	}
 	bytecode := link.bytecode
 	if bytecode.Static {
+		name := plush.PunchHoleTemplateFilename(ctx)
+		observation := beginPartialOutputObservation(bytecode, name, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
 		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, name, ctx, out.Len()-start, observation)
 		return true, nil
 	}
 	if bytecode.HasHoles {
 		return false, nil
 	}
 	if bytecode.FastRenderPlan != nil {
-		return renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+		name := plush.PunchHoleTemplateFilename(ctx)
+		observation := beginPartialOutputObservation(bytecode, name, ctx)
+		growInlineOutputBuilder(out, observation.growHint, &observation)
+		start := out.Len()
+		ok, err := renderFastPlanInlineSafe(out, bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+		if ok && err == nil {
+			observePartialOutput(bytecode, name, ctx, out.Len()-start, observation)
+		}
+		return ok, err
 	}
 	return false, nil
 }

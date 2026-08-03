@@ -2387,6 +2387,7 @@ func fastLoopPlanFromExpressionWithOuterNamesAndSilent(plan *FastRenderPlan, out
 		OuterNames:        append([]string(nil), outerNames...),
 		Silent:            silent,
 		Line:              line,
+		SizeStats:         &LoopSizeStats{},
 	}
 	if !appendFastLoopStatements(plan, loop, &loop.Parts, expr.Block.Statements) {
 		return nil, false

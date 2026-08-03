@@ -10,6 +10,7 @@ func updateBytecodeDiagnostics(ctx hctx.Context, bytecode *compiler.Bytecode) {
 	if ctx == nil || bytecode == nil {
 		return
 	}
+	fileOutputScope(bytecode, ctx, outputSizeOptions{topLevel: true})
 	stats := cachedFastRenderPlanDiagnostics(bytecode)
 	filename := plush.PunchHoleTemplateFilename(ctx)
 	plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {

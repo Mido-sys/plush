@@ -1096,6 +1096,7 @@ func (c *Compiler) Bytecode() *Bytecode {
 		fastRenderPlan = genericVMFastRenderPlan(fastReject)
 		fastReject = FastRenderReject{}
 	}
+	staticSize := bytecodeStaticSize(staticOutput, static, fastRenderPlan, instructions, c.constants)
 
 	return &Bytecode{
 		Instructions:     instructions,
@@ -1111,12 +1112,16 @@ func (c *Compiler) Bytecode() *Bytecode {
 		GlobalNames:      names,
 		Static:           static,
 		StaticOutput:     staticOutput,
+		StaticSize:       staticSize,
 		FastRenderPlan:   fastRenderPlan,
 		FastRejectLine:   fastReject.Line,
 		FastReject:       fastReject.Reason,
 		HasHoles:         features.HasHoles,
 		HasPartials:      features.HasPartials,
 		HasContextWrites: features.HasContextWrites,
+		OutputSizeStats:  &OutputSizeStats{},
+		LayoutSizeStats:  &OutputSizeStats{},
+		PartialSizeStats: &OutputSizeStats{},
 	}
 }
 
@@ -1137,6 +1142,69 @@ func genericVMFastRenderPlan(reject FastRenderReject) *FastRenderPlan {
 		}},
 		NameCount: 1,
 	}
+}
+
+func bytecodeStaticSize(staticOutput string, static bool, plan *FastRenderPlan, instructions code.Instructions, constants []object.Object) int {
+	if static {
+		return len(staticOutput)
+	}
+	if size := topLevelFastRenderStaticSize(plan); size > 0 {
+		return size
+	}
+	return linearInstructionStaticSize(instructions, constants)
+}
+
+func topLevelFastRenderStaticSize(plan *FastRenderPlan) int {
+	if plan == nil {
+		return 0
+	}
+	size := 0
+	for i := range plan.Segments {
+		if plan.Segments[i].Kind == FastRenderSegmentStatic {
+			size += len(plan.Segments[i].Value)
+		}
+	}
+	return size
+}
+
+func linearInstructionStaticSize(instructions code.Instructions, constants []object.Object) int {
+	size := 0
+	for i := 0; i < len(instructions); {
+		op := code.Opcode(instructions[i])
+		def, err := code.Lookup(instructions[i])
+		if err != nil {
+			return 0
+		}
+		operands, read := code.ReadOperands(def, instructions[i+1:])
+		switch op {
+		case code.OpWriteHTML:
+			value, ok := htmlConstantValue(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(value)
+		case code.OpWriteString:
+			value, ok := stringConstantValue(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(template.HTMLEscapeString(value))
+		case code.OpWriteConstant:
+			value, ok := staticConstantOutput(constants, operands[0])
+			if !ok {
+				return 0
+			}
+			size += len(value)
+		case code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteLocal, code.OpWriteGlobal,
+			code.OpWriteLocalProperty, code.OpWriteGlobalProperty, code.OpWriteNameProperty,
+			code.OpWriteCall, code.OpWriteNameCall, code.OpWrite, code.OpPop, code.OpSetName,
+			code.OpAssignName, code.OpSetGlobal, code.OpSetLocal, code.OpSetIndex:
+		default:
+			return 0
+		}
+		i += 1 + read
+	}
+	return size
 }
 
 func compileFastRenderPlanBlocks(plan *FastRenderPlan) FastRenderReject {

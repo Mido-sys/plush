@@ -317,7 +317,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 					d.VMBytecodeCache = plush.VMBytecodeCacheHitStatic
 					d.FastPath = plush.RenderFastPathStatic
 				})
-				return bytecode.StaticOutput, nil
+				return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), nil
 			}
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 				d.VMBytecodeCache = plush.VMBytecodeCacheHit
@@ -328,7 +328,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 	if shouldFallbackGenericBytecode(cachedBytecode) {
 		return renderInterpreterFallback(input, ctx, filename)
 	}
-	if rendered, ok, err := tryRenderFastBytecode(cachedBytecode, ctx); ok || err != nil {
+	if rendered, ok, err := tryRenderFastBytecodeTopLevel(cachedBytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 				d.FastPath = renderFastPathForPlan(cachedBytecode.FastRenderPlan)
@@ -360,7 +360,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 			})
 		}
 
-		return renderBytecodeVMWithState(cachedBytecode, ctx, filename, forceCacheClear, cacheSource)
+		return renderBytecodeVMWithStateTopLevel(cachedBytecode, ctx, filename, forceCacheClear, cacheSource)
 	}
 
 	filename, forceCacheClear, cached, ok := punchHoleCacheStateForFilename(filename, ctx, cacheSource)
@@ -381,9 +381,9 @@ func Render(input string, ctx hctx.Context) (string, error) {
 					d.VMBytecodeCache = plush.VMBytecodeCacheHitStatic
 					d.FastPath = plush.RenderFastPathStatic
 				})
-				return bytecode.StaticOutput, nil
+				return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), nil
 			}
-			if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
+			if rendered, ok, err := tryRenderFastBytecodeTopLevel(bytecode, ctx); ok || err != nil {
 				if ok {
 					plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 						d.VMBytecodeCache = plush.VMBytecodeCacheHit
@@ -401,7 +401,7 @@ func Render(input string, ctx hctx.Context) (string, error) {
 			if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
 				defer restorePartial()
 			}
-			return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, cacheSource)
+			return renderBytecodeVMWithStateTopLevel(bytecode, ctx, filename, forceCacheClear, cacheSource)
 		}
 	}
 
@@ -445,7 +445,7 @@ func renderSourceCachedBytecode(source string, ctx hctx.Context, bytecode *compi
 			d.VMBytecodeCache = plush.VMBytecodeCacheHitSource
 			d.FastPath = plush.RenderFastPathStatic
 		})
-		return bytecode.StaticOutput, nil
+		return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), nil
 	}
 	plush.UpdateRenderDiagnosticsForTemplate(ctx, "", func(d *plush.RenderDiagnostics) {
 		d.VMBytecodeCache = plush.VMBytecodeCacheHitSource
@@ -453,7 +453,7 @@ func renderSourceCachedBytecode(source string, ctx hctx.Context, bytecode *compi
 	if shouldFallbackGenericBytecode(bytecode) {
 		return renderInterpreterFallback(source, ctx, "")
 	}
-	if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
+	if rendered, ok, err := tryRenderFastBytecodeTopLevel(bytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, "", func(d *plush.RenderDiagnostics) {
 				d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
@@ -464,7 +464,7 @@ func renderSourceCachedBytecode(source string, ctx hctx.Context, bytecode *compi
 	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
 		defer restorePartial()
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, "", false, source)
+	return renderBytecodeVMWithStateTopLevel(bytecode, ctx, "", false, source)
 }
 
 func shouldFallbackGenericBytecode(bytecode *compiler.Bytecode) bool {
@@ -504,9 +504,9 @@ func renderBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, erro
 		plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 			d.FastPath = plush.RenderFastPathStatic
 		})
-		return bytecode.StaticOutput, nil
+		return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), nil
 	}
-	if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
+	if rendered, ok, err := tryRenderFastBytecodeTopLevel(bytecode, ctx); ok || err != nil {
 		if ok {
 			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
 				d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
@@ -527,7 +527,7 @@ func renderBytecode(bytecode *compiler.Bytecode, ctx hctx.Context) (string, erro
 			return cached, nil
 		}
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, "")
+	return renderBytecodeVMWithStateTopLevel(bytecode, ctx, filename, forceCacheClear, "")
 }
 
 func renderFastPathForPlan(plan *compiler.FastRenderPlan) string {
@@ -556,29 +556,42 @@ func punchHoleCacheStateForFilename(filename string, ctx hctx.Context, source st
 
 func renderBytecodeWithState(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string) (string, error) {
 	if bytecode != nil && bytecode.Static {
-		return bytecode.StaticOutput, nil
+		return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), nil
 	}
-	if rendered, ok, err := tryRenderFastBytecode(bytecode, ctx); ok || err != nil {
+	if rendered, ok, err := tryRenderFastBytecodeTopLevel(bytecode, ctx); ok || err != nil {
 		return rendered, err
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, filename, forceCacheClear, source)
+	return renderBytecodeVMWithStateTopLevel(bytecode, ctx, filename, forceCacheClear, source)
 }
 
 func renderBytecodeVMWithState(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string) (string, error) {
+	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, source, outputSizeOptions{})
+}
+
+func renderBytecodeVMWithStateTopLevel(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string) (string, error) {
+	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, source, outputSizeOptions{topLevel: true})
+}
+
+func renderBytecodeVMWithStateOptions(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string, options outputSizeOptions) (string, error) {
 	machine := newPooledWithContext(bytecode, ctx)
+	observation := growVMRootOutput(machine, bytecode, ctx, options)
 	if err := machine.Run(); err != nil {
 		defer machine.Release()
 		return "", machine.wrapRuntimeError(err)
 	}
 
+	recordVMRootOutputFinal(machine, &observation)
+	rootSize := vmRootOutputLen(machine)
 	rendered := machine.Rendered()
 	if bytecode == nil || !bytecode.HasHoles {
 		machine.Release()
+		observeOutputSize(bytecode, ctx, options, rootSize, observation)
 		return rendered, nil
 	}
 	holes := machine.PunchHoles()
 	machine.Release()
 	if !plush.IsPlushTemplateFile(filename) || len(holes) == 0 {
+		observeOutputSize(bytecode, ctx, options, rootSize, observation)
 		return rendered, nil
 	}
 
@@ -587,11 +600,17 @@ func renderBytecodeVMWithState(bytecode *compiler.Bytecode, ctx hctx.Context, fi
 		plush.CachePunchHoleSkeletonWithSource(filename, ctx, rendered, holes, forceCacheClear, source)
 	}
 	if plush.IsHoleRender(ctx) {
+		observeOutputSize(bytecode, ctx, options, rootSize, observation)
 		return rendered, nil
 	}
 
 	holes = plush.RenderPunchHolesConcurrentlyWith(holes, ctx, Render)
-	return plush.FillPunchHoles(rendered, holes)
+	filled, err := plush.FillPunchHoles(rendered, holes)
+	if err != nil {
+		return "", err
+	}
+	observeOutputSize(bytecode, ctx, options, rootSize, observation)
+	return filled, nil
 }
 
 func bytecodeCanUsePunchHoleCache(bytecode *compiler.Bytecode) bool {

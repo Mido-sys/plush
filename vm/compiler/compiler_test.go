@@ -1522,6 +1522,10 @@ func Test_Static_Only_Bytecode_Fast_Path(t *testing.T) {
 	bytecode := compiler.Bytecode()
 	require.True(t, bytecode.Static)
 	require.Equal(t, `<section><p>Hello</p></section>`, bytecode.StaticOutput)
+	require.Equal(t, len(`<section><p>Hello</p></section>`), bytecode.StaticSize)
+	require.NotNil(t, bytecode.OutputSizeStats)
+	require.NotNil(t, bytecode.LayoutSizeStats)
+	require.NotNil(t, bytecode.PartialSizeStats)
 	require.Equal(t, 1, instructionOpcodeCount(bytecode.Instructions, code.OpWriteHTML))
 }
 
@@ -1535,6 +1539,7 @@ func Test_Static_Only_Bytecode_Escapes_String_Literal(t *testing.T) {
 	bytecode := compiler.Bytecode()
 	require.True(t, bytecode.Static)
 	require.Equal(t, `<strong>&lt;x&gt;</strong>`, bytecode.StaticOutput)
+	require.Equal(t, len(`<strong>&lt;x&gt;</strong>`), bytecode.StaticSize)
 	require.Equal(t, 1, instructionOpcodeCount(bytecode.Instructions, code.OpWriteHTML))
 }
 
@@ -1548,7 +1553,43 @@ func Test_Static_Only_Bytecode_Includes_Scalar_Constants(t *testing.T) {
 	bytecode := compiler.Bytecode()
 	require.True(t, bytecode.Static)
 	require.Equal(t, `10<span>items</span>`, bytecode.StaticOutput)
+	require.Equal(t, len(`10<span>items</span>`), bytecode.StaticSize)
 	require.Truef(t, instructionContainsOpcode(bytecode.Instructions, code.OpWriteConstant), "expected OpWriteConstant:\n%s", bytecode.Instructions.String())
+}
+
+func Test_Output_Size_StaticSize_Excludes_NonGuaranteed_Branch_And_Loop_Static(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		size  int
+	}{
+		{
+			name:  "conditional",
+			input: `A<%= if (show) { %>B<% } %>C`,
+			size:  len("AC"),
+		},
+		{
+			name:  "loop",
+			input: `<ul><%= for (i, item) in items { %><li><%= item %></li><% } %></ul>`,
+			size:  len("<ul></ul>"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			program, err := parser.Parse(tt.input)
+			require.NoError(t, err)
+
+			compiler := New()
+			require.NoError(t, compiler.Compile(program))
+
+			bytecode := compiler.Bytecode()
+			require.NotNil(t, bytecode.OutputSizeStats)
+			require.NotNil(t, bytecode.FastRenderPlan)
+			require.Equal(t, tt.size, bytecode.StaticSize)
+			require.Greater(t, bytecode.FastRenderPlan.StaticSize, bytecode.StaticSize)
+		})
+	}
 }
 
 func Test_Bytecode_Feature_Flags(t *testing.T) {

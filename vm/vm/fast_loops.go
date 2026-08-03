@@ -123,7 +123,7 @@ func renderFastPartialSegmentWithDataPlan(out *strings.Builder, ctx hctx.Context
 	return nil
 }
 
-func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, loop *compiler.FastLoopPlan) (bool, error) {
+func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, loop *compiler.FastLoopPlan) (handled bool, renderErr error) {
 	if loop == nil {
 		return false, nil
 	}
@@ -158,10 +158,22 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 	if iter == nil {
 		return true, nil
 	}
+	startLen := out.Len()
+	renderedItems := 0
+	itemCount, itemCountKnown := fastIterableLen(iter)
+	outputSizeObservation := beginFastLoopSizeObservation(out, loop, itemCount, itemCountKnown)
+	defer func() {
+		if handled && renderErr == nil {
+			observeFastLoopOutput(ctx, loop, out.Len()-startLen, renderedItems, outputSizeObservation)
+		}
+	}()
 
 	switch iter := iter.(type) {
 	case []string:
 		if handled, err := renderFastStringKeyValueLoop(out, ctx, loop, iter); handled || err != nil {
+			if handled && err == nil {
+				renderedItems = len(iter)
+			}
 			return true, err
 		}
 		for i, value := range iter {
@@ -169,6 +181,7 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 			if err != nil {
 				return true, err
 			}
+			renderedItems++
 			if stop {
 				break
 			}
@@ -180,6 +193,7 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 			if err != nil {
 				return true, err
 			}
+			renderedItems++
 			if stop {
 				break
 			}
@@ -191,6 +205,7 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 			if err != nil {
 				return true, err
 			}
+			renderedItems++
 			if stop {
 				break
 			}
@@ -208,6 +223,9 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 	switch rv.Kind() {
 	case reflect.Array, reflect.Slice:
 		if handled, err := renderFastStructFieldLoop(out, ctx, bindings, loop, rv); handled || err != nil {
+			if handled && err == nil {
+				renderedItems = rv.Len()
+			}
 			return true, err
 		}
 		for i := 0; i < rv.Len(); i++ {
@@ -215,6 +233,7 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 			if err != nil {
 				return true, err
 			}
+			renderedItems++
 			if stop {
 				break
 			}
@@ -226,6 +245,7 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 			if err != nil {
 				return true, err
 			}
+			renderedItems++
 			if stop {
 				break
 			}

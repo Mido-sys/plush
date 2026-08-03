@@ -33,6 +33,14 @@ var holeTemplateFileKey = "__plush_internal_hole_render_key_" + fmt.Sprintf("%d"
 var interpreterPartialRenderKey = "__plush_internal_interpreter_partial_render_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var errClearCache error = errors.New("template recently cached, skipping")
 var punchHoleConcurrencyLimit atomic.Int64
+var buffaloRenderPassCounter atomic.Uint64
+
+const buffaloRenderPassKey = "__plush_internal_buffalo_render_pass__"
+
+type BuffaloRenderPass struct {
+	ID               uint64
+	TemplateFilename string
+}
 
 var templateCacheBackend TemplateCache
 
@@ -72,6 +80,10 @@ func BuffaloRendererWithContext(input string, data map[string]interface{}, helpe
 		renderData[k] = v
 	}
 	ctx := NewContextWith(renderData)
+	ctx.Set(buffaloRenderPassKey, BuffaloRenderPass{
+		ID:               buffaloRenderPassCounter.Add(1),
+		TemplateFilename: PunchHoleTemplateFilename(ctx),
+	})
 	if configure != nil {
 		configure(ctx)
 	}
@@ -83,6 +95,14 @@ func BuffaloRendererWithContext(input string, data map[string]interface{}, helpe
 		}
 	}()
 	return Render(input, ctx)
+}
+
+func BuffaloRenderPassFromContext(ctx hctx.Context) (BuffaloRenderPass, bool) {
+	if ctx == nil {
+		return BuffaloRenderPass{}, false
+	}
+	pass, ok := ctx.Value(buffaloRenderPassKey).(BuffaloRenderPass)
+	return pass, ok && pass.ID != 0
 }
 
 // Parse an input string and return a Template, and caches the parsed template.
