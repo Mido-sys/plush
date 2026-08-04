@@ -189,15 +189,30 @@ func (h *Hash) Inspect() string {
 }
 
 type CompiledFunction struct {
-	Instructions   code.Instructions
-	CallNames      map[int]string
-	LocalNames     map[int]string
-	LineNumbers    map[int]int
-	Properties     map[int]PropertyAccess
-	PropertyCaches []InlineCacheSlot
-	CallCaches     []InlineCacheSlot
-	NumLocals      int
-	NumParameters  int
+	Instructions     code.Instructions
+	CallNames        map[int]string
+	LocalNames       map[int]string
+	CapturedBindings []CapturedBinding
+	LineNumbers      map[int]int
+	Properties       map[int]PropertyAccess
+	PropertyCaches   []InlineCacheSlot
+	CallCaches       []InlineCacheSlot
+	NumLocals        int
+	NumParameters    int
+}
+
+type CapturedBindingScope uint8
+
+const (
+	CapturedBindingUnknown CapturedBindingScope = iota
+	CapturedBindingLocal
+	CapturedBindingFree
+)
+
+type CapturedBinding struct {
+	Name  string
+	Scope CapturedBindingScope
+	Index int
 }
 
 func (cf *CompiledFunction) Type() ObjectType { return COMPILED_FUNCTION_OBJ }

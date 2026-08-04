@@ -235,8 +235,8 @@ func (vm *VM) Run() error {
 			}
 
 		case code.OpSetLocal:
-			localIndex := code.ReadUint8(ins[ip+1:])
-			vm.currentFrame().ip += 1
+			localIndex := code.ReadUint16(ins[ip+1:])
+			vm.currentFrame().ip += 2
 			if err := vm.spendAssignment(); err != nil {
 				return err
 			}
@@ -244,8 +244,8 @@ func (vm *VM) Run() error {
 			vm.stack[frame.basePointer+int(localIndex)] = vm.pop()
 
 		case code.OpGetLocal:
-			localIndex := code.ReadUint8(ins[ip+1:])
-			vm.currentFrame().ip += 1
+			localIndex := code.ReadUint16(ins[ip+1:])
+			vm.currentFrame().ip += 2
 			frame := vm.currentFrame()
 			if err := vm.push(vm.stack[frame.basePointer+int(localIndex)]); err != nil {
 				return err
@@ -355,8 +355,8 @@ func (vm *VM) Run() error {
 			_ = vm.writeName(vm.currentFrame(), nameIndex, true)
 
 		case code.OpWriteLocal:
-			localIndex := code.ReadUint8(ins[ip+1:])
-			vm.currentFrame().ip += 1
+			localIndex := code.ReadUint16(ins[ip+1:])
+			vm.currentFrame().ip += 2
 			frame := vm.currentFrame()
 			vm.writeFrameOutput(frame, vm.stack[frame.basePointer+int(localIndex)])
 
@@ -366,9 +366,9 @@ func (vm *VM) Run() error {
 			vm.writeGlobal(vm.currentFrame(), globalIndex)
 
 		case code.OpWriteLocalProperty:
-			localIndex := code.ReadUint8(ins[ip+1:])
-			nameIndex := int(code.ReadUint16(ins[ip+2:]))
-			vm.currentFrame().ip += 3
+			localIndex := code.ReadUint16(ins[ip+1:])
+			nameIndex := int(code.ReadUint16(ins[ip+3:]))
+			vm.currentFrame().ip += 4
 			if err := vm.writeLocalProperty(vm.currentFrame(), int(localIndex), nameIndex, ip); err != nil {
 				return err
 			}

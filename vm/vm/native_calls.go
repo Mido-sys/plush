@@ -567,7 +567,9 @@ func (vm *VM) helperContext(block *object.Closure) plush.HelperContext {
 			return vm.runBlock(block, ctx)
 		}
 	}
-	return plush.NewHelperContextWithLine(vm.contextWithFrameLocals(), runner, vm.currentLineNumber())
+	ctx := vm.contextWithFrameLocals()
+	seedCapturedBindings(ctx, block)
+	return plush.NewHelperContextWithLine(ctx, runner, vm.currentLineNumber())
 }
 
 func (vm *VM) contextWithFrameLocals() hctx.Context {
@@ -596,6 +598,7 @@ func (vm *VM) runBlock(block *object.Closure, ctx hctx.Context) (string, error) 
 	if ctx == nil {
 		ctx = vm.ctx
 	}
+	syncCapturedBindingsFromContext(ctx, block)
 	blockCtx := ctx.New()
 	child := vm.childVM(block, nil, blockCtx)
 	defer child.Release()
@@ -604,7 +607,9 @@ func (vm *VM) runBlock(block *object.Closure, ctx hctx.Context) (string, error) 
 		return "", child.wrapRuntimeError(err)
 	}
 	vm.syncContextBindingsFromContext(ctx, blockCtx)
-	vm.syncFrameBindingsFromContext(blockCtx)
+	syncCapturedBindingsFromContext(blockCtx, block)
+	vm.syncFrameBindingsFromContextExcept(blockCtx, block)
+	vm.syncCapturedBindings(block)
 	if !object.IsNull(child.lastPopped) && child.lastPopped != nil {
 		return child.renderObject(child.lastPopped), nil
 	}

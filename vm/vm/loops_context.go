@@ -21,9 +21,13 @@ func (vm *VM) executeFor(iterable object.Object, block *object.Closure, keyName,
 		if loopCtx == nil || loopCtx == oldCtx {
 			loopCtx = vm.ctx.New()
 		}
+		seedCapturedBindings(loopCtx, block)
 		vm.ctx = loopCtx
 		defer func() {
-			vm.syncFrameBindingsFromContext(loopCtx)
+			syncCapturedBindingsFromContext(loopCtx, block)
+			vm.syncFrameBindingsFromContextExcept(loopCtx, block)
+			vm.syncCapturedBindings(block)
+			syncFreeCapturedBindingsToContext(oldCtx, block)
 			vm.ctx = oldCtx
 		}()
 	}
@@ -453,20 +457,82 @@ func (vm *VM) assignName(nameIndex int, value object.Object) error {
 		return err
 	}
 	name := vm.stringConstant(nameIndex)
+	updated := vm.assignCapturedBinding(name, value)
 	if vm.ctx != nil {
 		raw := object.ToGo(value)
 		if lookup, ok := vm.ctx.(contextIDLookup); ok {
 			if lookup.UpdateID(vm.contextNameID(lookup, nameIndex), raw) {
-				return nil
+				updated = true
 			}
 		} else if vm.ctx.Update(name, raw) {
-			return nil
+			updated = true
 		}
+	}
+	if updated {
+		return nil
 	}
 	return fmt.Errorf("%q: unknown identifier", name)
 }
 
+func (vm *VM) assignCapturedBinding(name string, value object.Object) bool {
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil {
+		return false
+	}
+	updated := false
+	for freeIndex, binding := range frame.cl.Fn.CapturedBindings {
+		if binding.Scope == object.CapturedBindingUnknown || binding.Name != name || freeIndex >= len(frame.cl.Free) {
+			continue
+		}
+		frame.cl.Free[freeIndex] = value
+		updated = true
+	}
+	return updated
+}
+
+func seedCapturedBindings(ctx hctx.Context, cl *object.Closure) {
+	if ctx == nil || cl == nil || cl.Fn == nil {
+		return
+	}
+	for freeIndex, binding := range cl.Fn.CapturedBindings {
+		if binding.Scope == object.CapturedBindingUnknown || binding.Name == "" || freeIndex >= len(cl.Free) {
+			continue
+		}
+		ctx.Set(binding.Name, object.ToGo(cl.Free[freeIndex]))
+	}
+}
+
+func syncCapturedBindingsFromContext(ctx hctx.Context, cl *object.Closure) {
+	if ctx == nil || cl == nil || cl.Fn == nil {
+		return
+	}
+	for freeIndex, binding := range cl.Fn.CapturedBindings {
+		if binding.Scope == object.CapturedBindingUnknown || binding.Name == "" || freeIndex >= len(cl.Free) {
+			continue
+		}
+		if value, ok := fastContextValue(ctx, binding.Name); ok {
+			cl.Free[freeIndex] = object.Wrap(value)
+		}
+	}
+}
+
+func syncFreeCapturedBindingsToContext(ctx hctx.Context, cl *object.Closure) {
+	if ctx == nil || cl == nil || cl.Fn == nil {
+		return
+	}
+	for freeIndex, binding := range cl.Fn.CapturedBindings {
+		if binding.Scope != object.CapturedBindingFree || binding.Name == "" || freeIndex >= len(cl.Free) {
+			continue
+		}
+		ctx.Set(binding.Name, object.ToGo(cl.Free[freeIndex]))
+	}
+}
+
 func (vm *VM) syncFrameBindingsFromContext(ctx hctx.Context) {
+	vm.syncFrameBindingsFromContextExcept(ctx, nil)
+}
+
+func (vm *VM) syncFrameBindingsFromContextExcept(ctx hctx.Context, captured *object.Closure) {
 	if vm == nil || ctx == nil {
 		return
 	}
@@ -484,6 +550,9 @@ func (vm *VM) syncFrameBindingsFromContext(ctx hctx.Context) {
 		return
 	}
 	for index, name := range frame.cl.Fn.LocalNames {
+		if capturedBindingHasName(captured, name) {
+			continue
+		}
 		value, ok := fastContextValue(ctx, name)
 		if !ok {
 			continue
@@ -493,6 +562,45 @@ func (vm *VM) syncFrameBindingsFromContext(ctx hctx.Context) {
 			continue
 		}
 		vm.stack[stackIndex] = object.Wrap(value)
+	}
+}
+
+func capturedBindingHasName(cl *object.Closure, name string) bool {
+	if cl == nil || cl.Fn == nil || len(cl.Fn.CapturedBindings) == 0 {
+		return false
+	}
+	for _, binding := range cl.Fn.CapturedBindings {
+		if binding.Name == name && binding.Scope != object.CapturedBindingUnknown {
+			return true
+		}
+	}
+	return false
+}
+
+func (vm *VM) syncCapturedBindings(cl *object.Closure) {
+	if vm == nil || cl == nil || cl.Fn == nil || len(cl.Free) == 0 {
+		return
+	}
+	frame := vm.currentFrame()
+	if frame == nil || frame.cl == nil {
+		return
+	}
+	for freeIndex, binding := range cl.Fn.CapturedBindings {
+		if freeIndex >= len(cl.Free) {
+			break
+		}
+		value := cl.Free[freeIndex]
+		switch binding.Scope {
+		case object.CapturedBindingLocal:
+			stackIndex := frame.basePointer + binding.Index
+			if stackIndex >= 0 && stackIndex < len(vm.stack) {
+				vm.stack[stackIndex] = value
+			}
+		case object.CapturedBindingFree:
+			if binding.Index >= 0 && binding.Index < len(frame.cl.Free) {
+				frame.cl.Free[binding.Index] = value
+			}
+		}
 	}
 }
 

@@ -1080,18 +1080,37 @@ func (c *Compiler) compileBlockConstant(block *ast.BlockStatement, params []stri
 	}
 
 	compiledFn := &object.CompiledFunction{
-		Instructions:   instructions,
-		CallNames:      callNames,
-		LocalNames:     localNames,
-		LineNumbers:    lineNumbers,
-		Properties:     properties,
-		PropertyCaches: object.NewInlineCacheSlots(len(instructions)),
-		CallCaches:     object.NewInlineCacheSlots(len(instructions)),
-		NumLocals:      numLocals,
-		NumParameters:  len(params),
+		Instructions:     instructions,
+		CallNames:        callNames,
+		LocalNames:       localNames,
+		CapturedBindings: capturedBindings(freeSymbols),
+		LineNumbers:      lineNumbers,
+		Properties:       properties,
+		PropertyCaches:   object.NewInlineCacheSlots(len(instructions)),
+		CallCaches:       object.NewInlineCacheSlots(len(instructions)),
+		NumLocals:        numLocals,
+		NumParameters:    len(params),
 	}
 
 	return c.addConstant(compiledFn), len(freeSymbols), nil
+}
+
+func capturedBindings(symbols []Symbol) []object.CapturedBinding {
+	if len(symbols) == 0 {
+		return nil
+	}
+	bindings := make([]object.CapturedBinding, len(symbols))
+	for index, symbol := range symbols {
+		binding := object.CapturedBinding{Name: symbol.Name, Index: symbol.Index}
+		switch symbol.Scope {
+		case LocalScope:
+			binding.Scope = object.CapturedBindingLocal
+		case FreeScope:
+			binding.Scope = object.CapturedBindingFree
+		}
+		bindings[index] = binding
+	}
+	return bindings
 }
 
 func (c *Compiler) compileOutputBlockConstant(block *ast.BlockStatement, params []string) (int, int, error) {

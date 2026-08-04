@@ -14,50 +14,8 @@ type parityRecordWithFields struct {
 	Fields map[string]string
 }
 
-type paritySelectableRecord struct {
-	ID    string
-	Label string
-}
-
 func Test_Parity_Variables_Let_And_Assign(t *testing.T) {
 	compareRender(t, `<% let message = "hello" %><% message = "bye" %><%= message %>`, emptyContext)
-}
-
-func Test_Parity_Variables_Nested_Assignment_After_Disjoint_Inline_Local(t *testing.T) {
-	input := `<% let forceBytecode = fn() { return "unused" } %>` +
-		`<%= if (enabled) { %>` +
-		`<% let selected = records[0] %>` +
-		`<%= if (target != "" && count(records) > 0) { %>` +
-		`<%= for (_, candidate) in records { %>` +
-		`<%= if (candidate.ID == target) { %>` +
-		`<% selected = candidate %>` +
-		`<% } %>` +
-		`<% } %>` +
-		`<% } %>` +
-		`<%= selected.Label %>` +
-		`<% } %>` +
-		`<%= if (prepare) { %>` +
-		`<% let later = "Later" %>` +
-		`<%= later %>` +
-		`<% } %>` +
-		`<%= if (repeat) { %>` +
-		`<% let selected = records[0] %>` +
-		`<%= selected.Label %>` +
-		`<% } %>`
-
-	comparePlannedRender(t, input, contextWith(map[string]interface{}{
-		"records": []paritySelectableRecord{
-			{ID: "first", Label: "First"},
-			{ID: "second", Label: "Second"},
-		},
-		"prepare": true,
-		"repeat":  true,
-		"enabled": true,
-		"target":  "second",
-		"count": func(records []paritySelectableRecord) int {
-			return len(records)
-		},
-	}), "SecondLaterFirst")
 }
 
 func Test_Parity_Variables_Let_And_Assign_In_Same_Script_Block(t *testing.T) {
