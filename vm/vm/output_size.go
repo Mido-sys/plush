@@ -16,30 +16,35 @@ type outputSizeOptions struct {
 }
 
 type outputSizeObservation struct {
-	available        bool
-	scope            string
-	staticSize       int
-	stats            *compiler.OutputSizeStats
-	fallbackHint     int
-	growHint         int
-	headroom         int
-	headroomBase     int
-	estimateBefore   int
-	samplesBefore    uint64
-	contextual       bool
-	yieldSize        int
-	overheadBefore   int
-	profileBand      string
-	layoutProfile    *compiler.LayoutOutputSizeProfile
-	layoutPrediction compiler.LayoutOutputSizePrediction
-	unstable         bool
-	limited          bool
-	minimum          int
-	maximum          int
-	growCalled       bool
-	capacityBefore   int
-	capacityGrow     int
-	capacityFinal    int
+	available          bool
+	scope              string
+	staticSize         int
+	stats              *compiler.OutputSizeStats
+	fallbackHint       int
+	growHint           int
+	headroom           int
+	headroomBase       int
+	estimateBefore     int
+	samplesBefore      uint64
+	contextual         bool
+	yieldSize          int
+	overheadBefore     int
+	profileBand        string
+	refinedProfileBand string
+	profileDepth       int
+	profileChildren    int
+	profileFallback    bool
+	profileFallbackMin int
+	layoutProfile      *compiler.LayoutOutputSizeProfile
+	layoutPrediction   compiler.LayoutOutputSizePrediction
+	unstable           bool
+	limited            bool
+	minimum            int
+	maximum            int
+	growCalled         bool
+	capacityBefore     int
+	capacityGrow       int
+	capacityFinal      int
 }
 
 type fileOutputSizeScope struct {
@@ -96,6 +101,11 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 				observation.layoutProfile = scope.rootBytecode.LayoutSizeProfile
 				if observation.layoutProfile != nil {
 					observation.stats, observation.layoutPrediction, observation.profileBand = observation.layoutProfile.Predict(yieldSize)
+					observation.refinedProfileBand = observation.layoutPrediction.RefinedBand
+					observation.profileDepth = observation.layoutPrediction.RefinementDepth
+					observation.profileChildren = observation.layoutPrediction.RefinementChildren
+					observation.profileFallback = observation.layoutPrediction.RefinementFallback
+					observation.profileFallbackMin = observation.layoutPrediction.RefinementFallbackMinimum
 				}
 				if observation.stats == nil {
 					observation.stats = scope.rootBytecode.LayoutSizeStats
@@ -130,7 +140,20 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 		if observation.samplesBefore == 0 {
 			observation.overheadBefore = overheadHint
 		}
-		if observation.unstable {
+		if observation.profileFallback {
+			fallbackOverhead := observation.profileFallbackMin
+			if observation.staticSize > fallbackOverhead {
+				fallbackOverhead = observation.staticSize
+			}
+			if fallback > fallbackOverhead {
+				fallbackOverhead = fallback
+			}
+			if observation.samplesBefore == 0 {
+				observation.overheadBefore = fallbackOverhead
+			}
+			observation.limited = fallbackOverhead < overheadHint
+			overheadHint = fallbackOverhead
+		} else if observation.unstable {
 			capped := capUnstableTemplateGrow(overheadHint, observation.staticSize, observation.minimum)
 			observation.limited = capped < overheadHint
 			overheadHint = capped
@@ -139,7 +162,7 @@ func beginOutputSizeObservation(bytecode *compiler.Bytecode, fallback int, ctx h
 		observation.fallbackHint = addOutputSizes(observation.yieldSize, fallback)
 		observation.growHint = contextualOutputGrowHint(observation.yieldSize, overheadHint)
 		observation.headroomBase = overheadHint
-		if observation.samplesBefore > 0 && !observation.unstable {
+		if observation.samplesBefore > 0 && !observation.unstable && !observation.profileFallback {
 			maximumHint := contextualOutputGrowHint(observation.yieldSize, contextualOutputOverheadGrowLimit)
 			observation.growHint, observation.headroom = applyOutputSizeHeadroom(
 				observation.growHint,
@@ -409,7 +432,7 @@ func observeOutputSize(bytecode *compiler.Bytecode, ctx hctx.Context, options ou
 			observedSize,
 			observation.headroomBase,
 			observation.layoutPrediction,
-			observation.samplesBefore > 0 && !observation.unstable,
+			observation.samplesBefore > 0 && !observation.unstable && !observation.profileFallback,
 		)
 	} else if options.partialName == "" && observation.samplesBefore > 0 && !observation.unstable {
 		observation.stats.ObserveWithHeadroom(observedSize, observation.headroomBase)
@@ -429,6 +452,11 @@ func recordOutputGrowHint(bytecode *compiler.Bytecode, observation outputSizeObs
 			Scope:                      observation.scope,
 			Contextual:                 observation.contextual,
 			ProfileBand:                observation.profileBand,
+			RefinedProfileBand:         observation.refinedProfileBand,
+			ProfileDepth:               observation.profileDepth,
+			ProfileChildren:            observation.profileChildren,
+			ProfileFallback:            observation.profileFallback,
+			ProfileFallbackMinimum:     observation.profileFallbackMin,
 			YieldSize:                  observation.yieldSize,
 			OverheadBefore:             observation.overheadBefore,
 			OverheadPredictor:          observation.layoutPrediction.Predictor,
@@ -473,7 +501,7 @@ func recordOutputActual(bytecode *compiler.Bytecode, actual int, observation out
 			overheadActual = 0
 		}
 		if observation.layoutProfile != nil {
-			_, prediction, _ := observation.layoutProfile.Predict(observation.yieldSize)
+			prediction := observation.layoutPrediction.AfterObservation(observation.yieldSize)
 			overheadAfter = prediction.Overhead
 			overheadPredictorAfter = prediction.Predictor
 		} else {
@@ -510,7 +538,14 @@ func recordOutputActual(bytecode *compiler.Bytecode, actual int, observation out
 			Scope:                      observation.scope,
 			Contextual:                 observation.contextual,
 			ProfileBand:                observation.profileBand,
+			RefinedProfileBand:         observation.refinedProfileBand,
+			ProfileDepth:               observation.profileDepth,
+			ProfileChildren:            observation.profileChildren,
+			ProfileFallback:            observation.profileFallback,
+			ProfileFallbackMinimum:     observation.profileFallbackMin,
 			YieldSize:                  observation.yieldSize,
+			YieldConsumed:              !observation.contextual || actual >= observation.yieldSize,
+			AccuracyValid:              !observation.contextual || actual >= observation.yieldSize,
 			OverheadBefore:             observation.overheadBefore,
 			OverheadActual:             overheadActual,
 			OverheadAfter:              overheadAfter,

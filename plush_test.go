@@ -316,7 +316,7 @@ func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 		},
 	}
 
-	r.Equal("scope=template;static=10;fallback=20;hint=30;headroom=4;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	r.Equal("scope=template;static=10;fallback=20;hint=30;headroom=4;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;accuracy-valid=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
 	r.Empty(plush.RenderDiagnostics{}.OutputSizeHeader())
 }
 
@@ -327,7 +327,10 @@ func Test_Render_Diagnostics_Contextual_Output_Size_Header(t *testing.T) {
 			Scope:                      "file",
 			Contextual:                 true,
 			ProfileBand:                "0-4k",
+			RefinedProfileBand:         "0-4k",
 			YieldSize:                  100,
+			YieldConsumed:              true,
+			AccuracyValid:              true,
 			OverheadPredictor:          "ratio",
 			OverheadPredictorAfter:     "absolute",
 			OverheadBefore:             20,
@@ -349,7 +352,27 @@ func Test_Render_Diagnostics_Contextual_Output_Size_Header(t *testing.T) {
 		},
 	}
 
-	require.Equal(t, "scope=file;profile=0-4k;yield=100;predictor=ratio;predictor-after=absolute;overhead=20;overhead-absolute=22;overhead-ratio=20;absolute-error-score=3.50;ratio-error-score=1.25;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;headroom=5;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	require.Equal(t, "scope=file;profile=0-4k;refined-profile=0-4k;profile-depth=0;profile-children=0;profile-fallback=0;profile-fallback-min=0;yield=100;yield-consumed=1;accuracy-valid=1;predictor=ratio;predictor-after=absolute;overhead=20;overhead-absolute=22;overhead-ratio=20;absolute-error-score=3.50;ratio-error-score=1.25;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;headroom=5;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+}
+
+func Test_Render_Diagnostics_Contextual_Output_Size_Excludes_Unconsumed_Yield_From_Accuracy(t *testing.T) {
+	diagnostics := plush.RenderDiagnostics{
+		OutputSize: plush.RenderOutputSizeDiagnostics{
+			Available:          true,
+			Scope:              "file",
+			Contextual:         true,
+			ProfileBand:        "4k-16k",
+			RefinedProfileBand: "4k-16k",
+			YieldSize:          11_307,
+			EstimateBefore:     82_332,
+			Actual:             7,
+			Observed:           true,
+		},
+	}
+
+	header := diagnostics.OutputSizeHeader()
+	require.Contains(t, header, ";yield-consumed=0;accuracy-valid=0;")
+	require.Contains(t, header, ";within-10=0;")
 }
 
 func Test_Render_Diagnostics_Partial_Output_Size_Headers(t *testing.T) {

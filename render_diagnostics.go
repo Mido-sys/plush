@@ -86,6 +86,13 @@ type RenderOutputSizeDiagnostics struct {
 	SamplesAfter               uint64
 	Observed                   bool
 	ProfileBand                string
+	RefinedProfileBand         string
+	ProfileDepth               int
+	ProfileChildren            int
+	ProfileFallback            bool
+	ProfileFallbackMinimum     int
+	YieldConsumed              bool
+	AccuracyValid              bool
 	Minimum                    int
 	Maximum                    int
 	Unstable                   bool
@@ -236,13 +243,17 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 	}
 	observed := 0
 	withinTen := 0
+	accuracyValid := d.OutputSize.Observed
+	if d.OutputSize.Contextual {
+		accuracyValid = accuracyValid && d.OutputSize.AccuracyValid
+	}
 	if d.OutputSize.Observed {
 		observed = 1
 		errorSize := d.OutputSize.EstimateBefore - d.OutputSize.Actual
 		if errorSize < 0 {
 			errorSize = -errorSize
 		}
-		if outputSizeErrorPercent(errorSize, d.OutputSize.Actual) < 10 {
+		if accuracyValid && outputSizeErrorPercent(errorSize, d.OutputSize.Actual) < 10 {
 			withinTen = 1
 		}
 	}
@@ -251,7 +262,7 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		errorSize = -errorSize
 	}
 	header := fmt.Sprintf(
-		"scope=%s;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;accuracy-valid=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		d.OutputSize.StaticSize,
 		d.OutputSize.FallbackHint,
@@ -264,6 +275,7 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		d.OutputSize.EstimateAfter,
 		d.OutputSize.SamplesAfter,
 		observed,
+		boolHeaderValue(accuracyValid),
 		d.OutputSize.Minimum,
 		d.OutputSize.Maximum,
 		boolHeaderValue(d.OutputSize.Unstable),
@@ -279,10 +291,17 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		return header
 	}
 	return fmt.Sprintf(
-		"scope=%s;profile=%s;yield=%d;predictor=%s;predictor-after=%s;overhead=%d;overhead-absolute=%d;overhead-ratio=%d;absolute-error-score=%.2f;ratio-error-score=%.2f;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;profile=%s;refined-profile=%s;profile-depth=%d;profile-children=%d;profile-fallback=%d;profile-fallback-min=%d;yield=%d;yield-consumed=%d;accuracy-valid=%d;predictor=%s;predictor-after=%s;overhead=%d;overhead-absolute=%d;overhead-ratio=%d;absolute-error-score=%.2f;ratio-error-score=%.2f;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		outputSizeProfileBand(d.OutputSize.ProfileBand),
+		outputSizeProfileBand(d.OutputSize.RefinedProfileBand),
+		d.OutputSize.ProfileDepth,
+		d.OutputSize.ProfileChildren,
+		boolHeaderValue(d.OutputSize.ProfileFallback),
+		d.OutputSize.ProfileFallbackMinimum,
 		d.OutputSize.YieldSize,
+		boolHeaderValue(d.OutputSize.YieldConsumed),
+		boolHeaderValue(accuracyValid),
 		d.OutputSize.OverheadPredictor,
 		d.OutputSize.OverheadPredictorAfter,
 		d.OutputSize.OverheadBefore,
