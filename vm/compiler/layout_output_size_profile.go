@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 )
 
-const layoutOutputSizeBucketCount = 10
+const layoutOutputSizeBucketCount = 12
 const layoutOutputRatioScale = uint64(1 << 20)
 const layoutOutputErrorScale = uint64(1_000_000)
 const layoutOutputErrorMaxPPM = uint64(1_000_000_000)
@@ -263,15 +263,19 @@ func layoutOutputSizeBucket(yieldSize int) (int, string) {
 		return 3, "32k-64k"
 	case yieldSize <= 128<<10:
 		return 4, "64k-128k"
+	case yieldSize <= 192<<10:
+		return 5, "128k-192k"
 	case yieldSize <= 256<<10:
-		return 5, "128k-256k"
+		return 6, "192k-256k"
+	case yieldSize <= 384<<10:
+		return 7, "256k-384k"
 	case yieldSize <= 512<<10:
-		return 6, "256k-512k"
+		return 8, "384k-512k"
 	case yieldSize <= 1<<20:
-		return 7, "512k-1m"
+		return 9, "512k-1m"
 	case yieldSize <= 4<<20:
-		return 8, "1m-4m"
+		return 10, "1m-4m"
 	default:
-		return 9, "4m+"
+		return 11, "4m+"
 	}
 }

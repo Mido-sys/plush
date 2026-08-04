@@ -26,10 +26,18 @@ func Test_LayoutOutputSizeProfile_Isolates_Yield_Size_Bands(t *testing.T) {
 	require.Equal(t, smallBand, sameSmallBand)
 
 	lowerLarge, lowerLargeBand := profile.Stats(96 << 10)
-	upperLarge, upperLargeBand := profile.Stats(199 << 10)
+	middleLarge, middleLargeBand := profile.Stats(191 << 10)
+	upperLarge, upperLargeBand := profile.Stats(232 << 10)
+	lowerExtraLarge, lowerExtraLargeBand := profile.Stats(300 << 10)
+	upperExtraLarge, upperExtraLargeBand := profile.Stats(450 << 10)
 	require.Equal(t, "64k-128k", lowerLargeBand)
-	require.Equal(t, "128k-256k", upperLargeBand)
+	require.Equal(t, "128k-192k", middleLargeBand)
+	require.Equal(t, "192k-256k", upperLargeBand)
+	require.Equal(t, "256k-384k", lowerExtraLargeBand)
+	require.Equal(t, "384k-512k", upperExtraLargeBand)
 	require.NotSame(t, lowerLarge, upperLarge)
+	require.NotSame(t, middleLarge, upperLarge)
+	require.NotSame(t, lowerExtraLarge, upperExtraLarge)
 }
 
 func Test_LayoutOutputSizeProfile_Bands(t *testing.T) {
@@ -47,10 +55,14 @@ func Test_LayoutOutputSizeProfile_Bands(t *testing.T) {
 		{yieldSize: 64 << 10, band: "32k-64k"},
 		{yieldSize: (64 << 10) + 1, band: "64k-128k"},
 		{yieldSize: 128 << 10, band: "64k-128k"},
-		{yieldSize: (128 << 10) + 1, band: "128k-256k"},
-		{yieldSize: 256 << 10, band: "128k-256k"},
-		{yieldSize: (256 << 10) + 1, band: "256k-512k"},
-		{yieldSize: 512 << 10, band: "256k-512k"},
+		{yieldSize: (128 << 10) + 1, band: "128k-192k"},
+		{yieldSize: 192 << 10, band: "128k-192k"},
+		{yieldSize: (192 << 10) + 1, band: "192k-256k"},
+		{yieldSize: 256 << 10, band: "192k-256k"},
+		{yieldSize: (256 << 10) + 1, band: "256k-384k"},
+		{yieldSize: 384 << 10, band: "256k-384k"},
+		{yieldSize: (384 << 10) + 1, band: "384k-512k"},
+		{yieldSize: 512 << 10, band: "384k-512k"},
 		{yieldSize: (512 << 10) + 1, band: "512k-1m"},
 		{yieldSize: 1 << 20, band: "512k-1m"},
 		{yieldSize: (1 << 20) + 1, band: "1m-4m"},

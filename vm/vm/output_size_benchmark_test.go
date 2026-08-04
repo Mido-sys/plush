@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,6 +13,38 @@ type outputSizeBenchmarkRecord struct {
 	ID      int
 	Name    string
 	Content string
+}
+
+func Benchmark_StringsBuilder_OutputSizePlanning(b *testing.B) {
+	chunks, outputSize := outputSizeBuilderBenchmarkChunks(1024, 128)
+	if outputSize != 190_305 {
+		b.Fatalf("unexpected benchmark output size: got %d bytes", outputSize)
+	}
+
+	for _, mode := range []struct {
+		name string
+		grow bool
+	}{
+		{name: "natural_growth"},
+		{name: "planned_grow", grow: true},
+	} {
+		mode := mode
+		b.Run(mode.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(outputSize))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				var out strings.Builder
+				if mode.grow {
+					out.Grow(outputSize)
+				}
+				for _, chunk := range chunks {
+					_, _ = out.WriteString(chunk)
+				}
+				benchmarkSink = out.String()
+			}
+		})
+	}
 }
 
 func Benchmark_VM_Output_Size_Estimator(b *testing.B) {
@@ -148,4 +181,30 @@ func outputSizeBenchmarkContext(count, contentSize int) *plush.Context {
 		}
 	}
 	return plush.NewContextWith(map[string]interface{}{"entries": records})
+}
+
+func outputSizeBuilderBenchmarkChunks(count, contentSize int) ([]string, int) {
+	content := strings.Repeat("x", contentSize)
+	chunks := make([]string, 0, 2+count*7)
+	chunks = append(chunks, "<main>")
+	for i := 0; i < count; i++ {
+		id := strconv.Itoa(i)
+		chunks = append(
+			chunks,
+			`<article data-id="`,
+			id,
+			`"><h2>entry-`,
+			id,
+			`</h2><p>`,
+			content,
+			`</p></article>`,
+		)
+	}
+	chunks = append(chunks, "</main>")
+
+	outputSize := 0
+	for _, chunk := range chunks {
+		outputSize += len(chunk)
+	}
+	return chunks, outputSize
 }
