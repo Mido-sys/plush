@@ -24,6 +24,12 @@ func Test_LayoutOutputSizeProfile_Isolates_Yield_Size_Bands(t *testing.T) {
 	sameSmall, sameSmallBand := profile.Stats(20_000)
 	require.Same(t, small, sameSmall)
 	require.Equal(t, smallBand, sameSmallBand)
+
+	lowerLarge, lowerLargeBand := profile.Stats(96 << 10)
+	upperLarge, upperLargeBand := profile.Stats(199 << 10)
+	require.Equal(t, "64k-128k", lowerLargeBand)
+	require.Equal(t, "128k-256k", upperLargeBand)
+	require.NotSame(t, lowerLarge, upperLarge)
 }
 
 func Test_LayoutOutputSizeProfile_Bands(t *testing.T) {
@@ -34,8 +40,20 @@ func Test_LayoutOutputSizeProfile_Bands(t *testing.T) {
 		{yieldSize: 0, band: "0-4k"},
 		{yieldSize: 4 << 10, band: "0-4k"},
 		{yieldSize: (4 << 10) + 1, band: "4k-16k"},
+		{yieldSize: 16 << 10, band: "4k-16k"},
+		{yieldSize: (16 << 10) + 1, band: "16k-32k"},
 		{yieldSize: 32 << 10, band: "16k-32k"},
 		{yieldSize: (32 << 10) + 1, band: "32k-64k"},
+		{yieldSize: 64 << 10, band: "32k-64k"},
+		{yieldSize: (64 << 10) + 1, band: "64k-128k"},
+		{yieldSize: 128 << 10, band: "64k-128k"},
+		{yieldSize: (128 << 10) + 1, band: "128k-256k"},
+		{yieldSize: 256 << 10, band: "128k-256k"},
+		{yieldSize: (256 << 10) + 1, band: "256k-512k"},
+		{yieldSize: 512 << 10, band: "256k-512k"},
+		{yieldSize: (512 << 10) + 1, band: "512k-1m"},
+		{yieldSize: 1 << 20, band: "512k-1m"},
+		{yieldSize: (1 << 20) + 1, band: "1m-4m"},
 		{yieldSize: 4 << 20, band: "1m-4m"},
 		{yieldSize: (4 << 20) + 1, band: "4m+"},
 	}
@@ -45,6 +63,16 @@ func Test_LayoutOutputSizeProfile_Bands(t *testing.T) {
 		_, band := profile.Stats(test.yieldSize)
 		require.Equal(t, test.band, band)
 	}
+}
+
+func Test_NextLayoutOutputRatio_Moves_Symmetrically(t *testing.T) {
+	require.Equal(t, uint64(90), nextLayoutOutputRatio(80, 160, 1))
+	require.Equal(t, uint64(150), nextLayoutOutputRatio(160, 80, 1))
+	require.Equal(t, uint64(81), nextLayoutOutputRatio(80, 81, 1))
+	require.Equal(t, uint64(79), nextLayoutOutputRatio(80, 79, 1))
+
+	// Upward outliers are capped at four times the current ratio before moving.
+	require.Equal(t, uint64(137), nextLayoutOutputRatio(100, 1_000, 1))
 }
 
 func Test_LayoutOutputSizeProfile_Selects_Ratio_For_Proportional_Overhead(t *testing.T) {
