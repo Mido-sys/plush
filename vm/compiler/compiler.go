@@ -1153,6 +1153,7 @@ func (c *Compiler) Bytecode() *Bytecode {
 		fastRenderPlan = genericVMFastRenderPlan(fastReject)
 		fastReject = FastRenderReject{}
 	}
+	prepareFastBindingSyncPlans(fastRenderPlan)
 	staticSize := bytecodeStaticSize(staticOutput, static, fastRenderPlan, instructions, c.constants)
 
 	return &Bytecode{

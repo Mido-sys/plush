@@ -1226,6 +1226,36 @@ func Test_VM_Fast_Render_Loop_Local_Assignment_Does_Not_Leak(t *testing.T) {
 	require.Equal(t, "ab", out)
 }
 
+func Test_VM_Fast_Render_Branch_Local_Shadow_Does_Not_Replace_Outer_Assignment(t *testing.T) {
+	tmpl, err := Compile(`<% let result = "" %><%= for (_, item) in items { %><% result = result + "A" %><%= if (true) { %><% let result = "inner" %><%= result %><% } %><% result = result + "B" %><% } %>|<%= result %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+
+	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
+		"items": []int{1, 2},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, "innerinner|ABAB", out)
+}
+
+func Test_VM_Fast_Render_Assignment_Before_Same_Scope_Shadow_Matches_Interpreter(t *testing.T) {
+	source := `<% let result = "" %><%= for (_, item) in items { %><% result = result + "A" %><% let result = "inner" %><% result = result + "X" %><% } %><%= result %>`
+	data := map[string]interface{}{"items": []int{1}}
+
+	expected, err := plush.RenderInterpreter(source, plush.NewContextWith(data))
+	require.NoError(t, err)
+
+	tmpl, err := Compile(source)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+
+	out, err := tmpl.Render(plush.NewContextWith(data))
+	require.NoError(t, err)
+	require.Equal(t, expected, out)
+}
+
 func Test_VM_Fast_Render_Prefix_Condition_And_Loop_Concat(t *testing.T) {
 	tmpl, err := Compile(`<%= if (!userSignedIn) { %>Guest<% } else { %>User<% } %><%= for (item) in menu.Items { %><%= item.Name + " x " + item.Count %>;<% } %>`)
 	require.NoError(t, err)

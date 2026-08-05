@@ -85,6 +85,17 @@ type FastRenderSegment struct {
 	OutputCache   object.InlineCacheSlot
 }
 
+// FastBindingSyncPlan lists outer binding slots that a lexical scope may
+// update and local slots that must be restored when the scope exits. Prepared
+// distinguishes a compiled empty plan from an older or manually assembled
+// plan that still needs runtime analysis.
+type FastBindingSyncPlan struct {
+	NameIndexes       []int
+	LocalNameIndexes  []int
+	ParentNameIndexes []int
+	Prepared          bool
+}
+
 type FastRenderPlan struct {
 	Bindings   []string
 	Segments   []FastRenderSegment
@@ -147,6 +158,7 @@ type FastLoopPlan struct {
 	HasLet            bool
 	HasAssign         bool
 	PartFlagsSet      bool
+	BindingSync       FastBindingSyncPlan
 	Line              int
 	SizeStats         *LoopSizeStats
 }
@@ -274,29 +286,33 @@ type FastGenericPlan struct {
 }
 
 type FastConditionalBranch struct {
-	Condition FastValuePlan
-	Segments  []FastRenderSegment
-	Line      int
+	Condition   FastValuePlan
+	Segments    []FastRenderSegment
+	BindingSync FastBindingSyncPlan
+	Line        int
 }
 
 type FastConditionalPlan struct {
-	Branches     []FastConditionalBranch
-	ElseSegments []FastRenderSegment
-	Line         int
-	Silent       bool
+	Branches        []FastConditionalBranch
+	ElseSegments    []FastRenderSegment
+	ElseBindingSync FastBindingSyncPlan
+	Line            int
+	Silent          bool
 }
 
 type FastLoopConditionalBranch struct {
-	Condition FastValuePlan
-	Parts     []FastLoopPart
-	Line      int
+	Condition   FastValuePlan
+	Parts       []FastLoopPart
+	BindingSync FastBindingSyncPlan
+	Line        int
 }
 
 type FastLoopConditionalPlan struct {
-	Branches  []FastLoopConditionalBranch
-	ElseParts []FastLoopPart
-	Line      int
-	Silent    bool
+	Branches        []FastLoopConditionalBranch
+	ElseParts       []FastLoopPart
+	ElseBindingSync FastBindingSyncPlan
+	Line            int
+	Silent          bool
 }
 
 type EmittedInstruction struct {
