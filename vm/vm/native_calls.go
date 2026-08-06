@@ -213,6 +213,7 @@ func cachedFastCallEntry(rt reflect.Type, raw interface{}, slot *object.InlineCa
 		rt:                               rt,
 		plan:                             cachedCallPlan(rt),
 		invoker:                          writeFastBuilderInvokerForRaw(raw),
+		blockInvoker:                     fastTagsBlockInvokerForRaw(raw),
 		valueInvoker:                     valueFastInvokerForRaw(raw),
 		contextualValueInvoker:           contextualValueFastInvokerForRaw(raw),
 		contextualValueInvokerReflective: contextualValueFastInvokerUsesReflection(raw),

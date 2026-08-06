@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
@@ -18,10 +19,13 @@ type callCacheEntry struct {
 	noFast  bool
 }
 
+type fastBlockInvoker func(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, helperCtx plush.HelperContext) error
+
 type fastBuilderCallCacheEntry struct {
 	rt                               reflect.Type
 	plan                             *callPlan
 	invoker                          writeFastBuilderInvoker
+	blockInvoker                     fastBlockInvoker
 	valueInvoker                     valueFastInvoker
 	contextualValueInvoker           contextualValueFastInvoker
 	contextualValueInvokerReflective bool

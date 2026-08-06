@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"reflect"
@@ -244,6 +245,19 @@ func writeFastBlockCallValue(out *strings.Builder, ctx hctx.Context, name string
 	entry := cachedFastCallEntry(rv.Type(), raw, cacheSlot)
 	if entry == nil || entry.plan == nil {
 		return fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
+	}
+	if entry.blockInvoker != nil {
+		var start time.Time
+		if vmHotspots.Enabled() {
+			start = time.Now()
+		}
+		err := entry.blockInvoker(out, ctx, name, raw, args, helperCtx)
+		if !errors.Is(err, errFastWriteUnsupported) {
+			if vmHotspots.Enabled() {
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
+			return err
+		}
 	}
 	var start time.Time
 	if vmHotspots.Enabled() {

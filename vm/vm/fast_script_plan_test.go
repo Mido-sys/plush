@@ -410,6 +410,40 @@ func Test_VM_Fast_Render_Hctx_Block_Helper_Set_Is_Visible_To_Receiver_Calls(t *t
 	require.Equal(t, `<form action="/records" method="POST">input:Fields[0].EntryID:second:field_input</form>`, out)
 }
 
+func Test_VM_Fast_Render_Tags_Form_And_InputTag_Use_Direct_Calls(t *testing.T) {
+	tmpl, err := Compile(`<%= form({method: "POST"}) { %><%= f.InputTag({name:"Name", value:"Mido"}) %><% } %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"form": func(_ tags.Options, help hctx.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanTagFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML("<form>" + body + "</form>"), nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, `<form><input name="Name" type="text" value="Mido" /></form>`, out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionCalls)
+
+	paths := map[string]plush.RenderVMHelperCallPathDiagnostics{}
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		paths[detail.Name] = detail
+	}
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["form"].Path)
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["InputTag"].Path)
+}
+
 func Test_VM_Fast_Render_Hctx_Block_Helper_Set_Survives_Reused_Bytecode_With_New_Context(t *testing.T) {
 	tmpl, err := Compile(`<%= form({action: submitPath(), method: "POST"}) { %><%= f.InputTag({name:"Fields[0].Value", value: record.Value, class:"field_input"}) %><% } %>`)
 	require.NoError(t, err)

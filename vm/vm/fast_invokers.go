@@ -14,6 +14,9 @@ import (
 )
 
 func writeFastBuilderInvokerForRaw(raw interface{}) writeFastBuilderInvoker {
+	if invoker := writeFastTagsBuilderInvokerForRaw(raw); invoker != nil {
+		return invoker
+	}
 	switch raw.(type) {
 	case func():
 		return func(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs) error {
@@ -420,6 +423,9 @@ func writeFastBuilderInvokerForRaw(raw interface{}) writeFastBuilderInvoker {
 }
 
 func valueFastInvokerForRaw(raw interface{}) valueFastInvoker {
+	if invoker := valueFastTagsInvokerForRaw(raw); invoker != nil {
+		return invoker
+	}
 	switch raw.(type) {
 	case func():
 		return func(name string, raw interface{}, args *fastCallArgs) (interface{}, error) {
