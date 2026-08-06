@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/object"
 )
@@ -1193,6 +1194,11 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 
 	rt := rv.Type()
 	plan := cachedCallPlanForSlot(rt, cacheSlot)
+	if block == nil && name != "partial" {
+		if handled, err := vm.tryCallRegisteredFastValueHelper(name, numArgs, true); handled || err != nil {
+			return err
+		}
+	}
 	vmHotspots := vm.renderVMHotspots()
 	var start time.Time
 	if vmHotspots.Enabled() {
@@ -1238,6 +1244,9 @@ func (vm *VM) writeNativeCall(name string, callee object.Object, numArgs int, ca
 func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, cacheSlot *object.InlineCacheSlot, calleeOnStack bool) error {
 	if name != "partial" {
 		if handled, err := vm.tryFastWriteNativeValueCall(name, raw, numArgs, cacheSlot, calleeOnStack); handled || err != nil {
+			return err
+		}
+		if handled, err := vm.tryWriteRegisteredFastValueHelper(name, numArgs, calleeOnStack); handled || err != nil {
 			return err
 		}
 	}
@@ -1348,6 +1357,52 @@ func (vm *VM) tryFastWriteNativeValueCall(name string, raw interface{}, numArgs 
 		vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
 	}
 	return true, nil
+}
+
+func (vm *VM) tryCallRegisteredFastValueHelper(name string, numArgs int, calleeOnStack bool) (bool, error) {
+	value, callCtx, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
+	if !handled || err != nil {
+		return handled, err
+	}
+	vm.sp -= numArgs
+	if calleeOnStack {
+		vm.sp--
+	}
+	vm.syncContextBindingsFromContext(vm.ctx, callCtx)
+	vm.syncFrameBindingsFromContext(callCtx)
+	return true, vm.push(object.Wrap(value))
+}
+
+func (vm *VM) tryWriteRegisteredFastValueHelper(name string, numArgs int, calleeOnStack bool) (bool, error) {
+	value, callCtx, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
+	if !handled || err != nil {
+		return handled, err
+	}
+	vm.sp -= numArgs
+	if calleeOnStack {
+		vm.sp--
+	}
+	vm.syncContextBindingsFromContext(vm.ctx, callCtx)
+	vm.syncFrameBindingsFromContext(callCtx)
+	vm.writeFrameOutput(vm.currentFrame(), object.Wrap(value))
+	return true, nil
+}
+
+func (vm *VM) registeredFastValueHelperResult(name string, numArgs int) (interface{}, hctx.Context, bool, error) {
+	helper, ok := fastValueHelperForContext(vm.ctx, name)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	if numArgs < 0 || vm.sp < numArgs {
+		return nil, nil, false, nil
+	}
+	var argStore fastCallArgs
+	for _, obj := range vm.stack[vm.sp-numArgs : vm.sp] {
+		argStore.Append(obj)
+	}
+	callCtx := vm.contextWithFrameLocals()
+	value, handled, err := callRegisteredFastValueHelper(callCtx, name, helper, fastCallArgsOrNil(&argStore, numArgs), vm.renderVMHotspots())
+	return value, callCtx, handled, err
 }
 
 func (vm *VM) writeNativeReturnValue(frame *Frame, value reflect.Value, plan *callPlan) {

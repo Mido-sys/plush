@@ -24,10 +24,12 @@ type valueFastInvoker func(name string, raw interface{}, args *fastCallArgs) (in
 type contextualValueFastInvoker func(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context) (interface{}, error)
 type fastStructLoopDirectCallWriter func(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, plan *fastStructLoopCallPlan, loopKey interface{}, item reflect.Value) (bool, error)
 type FastHelperFunc func(FastWriter, FastArgs) error
+type FastValueHelperFunc func(hctx.Context, FastArgs) (interface{}, error)
 
 type fastHelperRegistry struct {
-	mu      sync.RWMutex
-	helpers map[string]FastHelperFunc
+	mu           sync.RWMutex
+	helpers      map[string]FastHelperFunc
+	valueHelpers map[string]FastValueHelperFunc
 }
 
 type FastWriter struct {
@@ -55,6 +57,27 @@ func SetFastHelper(ctx hctx.Context, name string, helper FastHelperFunc) {
 
 func ClearFastHelper(ctx hctx.Context, name string) {
 	SetFastHelper(ctx, name, nil)
+}
+
+func SetFastValueHelper(ctx hctx.Context, name string, helper FastValueHelperFunc) {
+	if ctx == nil || name == "" {
+		return
+	}
+	registry := fastHelperRegistryForContext(ctx, true)
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if registry.valueHelpers == nil {
+		registry.valueHelpers = map[string]FastValueHelperFunc{}
+	}
+	if helper == nil {
+		delete(registry.valueHelpers, name)
+		return
+	}
+	registry.valueHelpers[name] = helper
+}
+
+func ClearFastValueHelper(ctx hctx.Context, name string) {
+	SetFastValueHelper(ctx, name, nil)
 }
 
 func fastHelperRegistryForContext(ctx hctx.Context, create bool) *fastHelperRegistry {
@@ -86,6 +109,20 @@ func fastHelperForContext(ctx hctx.Context, name string) (FastHelperFunc, bool) 
 	return helper, ok && helper != nil
 }
 
+func fastValueHelperForContext(ctx hctx.Context, name string) (FastValueHelperFunc, bool) {
+	if name == "" {
+		return nil, false
+	}
+	registry := fastHelperRegistryForContext(ctx, false)
+	if registry == nil {
+		return nil, false
+	}
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	helper, ok := registry.valueHelpers[name]
+	return helper, ok && helper != nil
+}
+
 func writeRegisteredFastHelper(out *strings.Builder, ctx hctx.Context, helper FastHelperFunc, args *fastCallArgs) (bool, error) {
 	if out == nil || helper == nil {
 		return false, nil
@@ -107,6 +144,24 @@ func writeRegisteredFastHelperNamed(out *strings.Builder, ctx hctx.Context, name
 		vmHotspots.AddHelperCall(name, vmHelperCallSignature(reflect.TypeOf(helper)), plush.RenderVMHelperCallDirect, time.Since(start))
 	}
 	return handled, err
+}
+
+func callRegisteredFastValueHelper(ctx hctx.Context, name string, helper FastValueHelperFunc, args *fastCallArgs, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (interface{}, bool, error) {
+	if helper == nil {
+		return nil, false, nil
+	}
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
+	value, err := helper(ctx, FastArgs{args: args})
+	if errors.Is(err, ErrFastUnsupported) {
+		return nil, false, nil
+	}
+	if vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(reflect.TypeOf(helper)), plush.RenderVMHelperCallDirect, time.Since(start))
+	}
+	return value, true, err
 }
 
 func (w FastWriter) Context() hctx.Context {

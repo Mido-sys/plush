@@ -298,6 +298,48 @@ func Test_Render_Diagnostics_VM_Hotspots_Header(t *testing.T) {
 	r.Equal("row_card:1:4.000", diagnostics.VMPartialHotspotsHeader())
 }
 
+func Test_Render_Diagnostics_VM_Helper_Call_Paths(t *testing.T) {
+	ctx := plush.NewContext()
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "format:value", "func(string) string", plush.RenderVMHelperCallDirect, 2*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "format:value", "func(string) string", plush.RenderVMHelperCallDirect, time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "custom,value", "func(plush_test.namedValue) string", plush.RenderVMHelperCallReflection, 4*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperTiming(ctx, "legacy", time.Millisecond)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 4, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.InDelta(t, 3.0, diagnostics.VMHelperDirectDurationMilliseconds(), 0.001)
+	require.InDelta(t, 4.0, diagnostics.VMHelperReflectionDurationMilliseconds(), 0.001)
+	require.InDelta(t, 25.0, diagnostics.VMHelperReflectionPercent(), 0.001)
+	require.Equal(t, "direct-calls=2;reflection-calls=1;unclassified-calls=1;reflection-percent=25.00;direct-time-ms=3.000;reflection-time-ms=4.000;direct-details-dropped=0;reflection-details-dropped=0", diagnostics.VMHelperCallPathsHeader())
+	require.Equal(t, "path=reflection,name=custom_value,signature=func(plush_test.namedValue) string,calls=1,time-ms=4.000|path=direct,name=format:value,signature=func(string) string,calls=2,time-ms=3.000", diagnostics.VMHelperCallPathDetailsHeader())
+}
+
+func Test_Render_Diagnostics_VM_Helper_Call_Path_Details_Are_Bounded(t *testing.T) {
+	ctx := plush.NewContext()
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("direct-%d", i)
+		plush.AddRenderDiagnosticVMHelperCall(ctx, name, "func() string", plush.RenderVMHelperCallDirect, time.Microsecond)
+		name = fmt.Sprintf("reflection-%d", i)
+		plush.AddRenderDiagnosticVMHelperCall(ctx, name, "func(custom) string", plush.RenderVMHelperCallReflection, time.Microsecond)
+	}
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 20, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 10, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 10, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 16)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectDetailsDropped)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperReflectionDetailsDropped)
+}
+
 func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 	r := require.New(t)
 	diagnostics := plush.RenderDiagnostics{
@@ -402,6 +444,78 @@ func Test_Render_Diagnostics_VM_Hotspots_Default_Off(t *testing.T) {
 	r.False(ok)
 	r.Zero(diagnostics.VMHotspots.HelperCalls)
 	r.Zero(diagnostics.VMHotspots.PartialCalls)
+}
+
+func Test_Render_Diagnostics_VM_Hotspot_Recorder_Snapshots_Setting(t *testing.T) {
+	r := require.New(t)
+	ctx := plush.NewContext()
+
+	disabled := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.False(disabled.Enabled())
+
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+	disabled.AddHelperTiming("before-enable", time.Millisecond)
+
+	enabled := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.True(enabled.Enabled())
+	plush.DisableRenderVMHotspotDiagnostics(ctx)
+	enabled.AddHelperTiming("captured-helper", 2*time.Millisecond)
+	enabled.AddPartialTiming("captured-partial", 3*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperTiming(ctx, "after-disable", time.Millisecond)
+
+	nextRender := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.False(nextRender.Enabled())
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	r.True(ok)
+	r.Equal(1, diagnostics.VMHotspots.HelperCalls)
+	r.Equal(2*time.Millisecond, diagnostics.VMHotspots.HelperDuration)
+	r.Equal(1, diagnostics.VMHotspots.PartialCalls)
+	r.Equal(3*time.Millisecond, diagnostics.VMHotspots.PartialDuration)
+	r.Contains(diagnostics.VMHelperHotspotsHeader(), "captured-helper:1:2.000")
+	r.Contains(diagnostics.VMPartialHotspotsHeader(), "captured-partial:1:3.000")
+}
+
+var vmHotspotEnabledBenchmarkSink bool
+
+func Benchmark_Render_Diagnostics_VM_Hotspot_Disabled_Check(b *testing.B) {
+	ctx := plush.NewContext()
+	recorder := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+
+	b.Run("context-lookup", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			vmHotspotEnabledBenchmarkSink = plush.RenderVMHotspotDiagnosticsEnabled(ctx)
+		}
+	})
+	b.Run("render-snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			vmHotspotEnabledBenchmarkSink = recorder.Enabled()
+		}
+	})
+}
+
+func Benchmark_Render_Diagnostics_VM_Hotspot_Record(b *testing.B) {
+	b.Run("context-lookup", func(b *testing.B) {
+		ctx := plush.NewContext()
+		plush.EnableRenderVMHotspotDiagnostics(ctx)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			plush.AddRenderDiagnosticVMHelperTiming(ctx, "helper", time.Nanosecond)
+		}
+	})
+	b.Run("render-snapshot", func(b *testing.B) {
+		ctx := plush.NewContext()
+		plush.EnableRenderVMHotspotDiagnostics(ctx)
+		recorder := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			recorder.AddHelperTiming("helper", time.Nanosecond)
+		}
+	})
 }
 
 func Test_Output_Size_Estimator_Can_Be_Disabled_And_Restored(t *testing.T) {

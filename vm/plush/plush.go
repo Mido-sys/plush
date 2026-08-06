@@ -12,6 +12,7 @@ type Template = vm.Template
 type FastWriter = vm.FastWriter
 type FastArgs = vm.FastArgs
 type FastHelperFunc = vm.FastHelperFunc
+type FastValueHelperFunc = vm.FastValueHelperFunc
 
 var ErrFastUnsupported = vm.ErrFastUnsupported
 
@@ -55,4 +56,15 @@ func SetFastHelper(ctx hctx.Context, name string, helper FastHelperFunc) {
 
 func ClearFastHelper(ctx hctx.Context, name string) {
 	vm.ClearFastHelper(ctx, name)
+}
+
+// SetFastValueHelper registers an optional custom fast value helper for a
+// helper name on this context. It is used when a helper result is needed as a
+// Go value, such as assignments, conditions, arguments, and loops.
+func SetFastValueHelper(ctx hctx.Context, name string, helper FastValueHelperFunc) {
+	vm.SetFastValueHelper(ctx, name, helper)
+}
+
+func ClearFastValueHelper(ctx hctx.Context, name string) {
+	vm.ClearFastValueHelper(ctx, name)
 }

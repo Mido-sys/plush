@@ -94,6 +94,11 @@ func fastCallValueWithEntryDiagnostics(name string, raw interface{}, args *fastC
 	if entry == nil || entry.plan == nil {
 		return nil, fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
+	if helper, ok := fastValueHelperForContext(ctx, name); ok {
+		if value, handled, err := callRegisteredFastValueHelper(ctx, name, helper, args, vmHotspots); handled || err != nil {
+			return value, err
+		}
+	}
 	var helperStart time.Time
 	if vmHotspots.Enabled() {
 		helperStart = time.Now()
