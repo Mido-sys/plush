@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func enableDetailedEstimatorDiagnostics(t *testing.T) {
+	t.Helper()
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsDetailed)
+	t.Cleanup(func() {
+		plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+	})
+}
+
 func Test_Render_Diagnostics_Fast_Render_Plan_Stats(t *testing.T) {
 	plan := &compiler.FastRenderPlan{
 		Bindings: []string{"name", "items", "label"},
@@ -95,6 +103,7 @@ func Test_Render_Diagnostics_Context_Expose_Fast_Render_Plan_Stats(t *testing.T)
 }
 
 func Test_Render_Diagnostics_Context_Expose_Output_Size_Stats(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	tmpl, err := Compile(`<h1><%= name %></h1>`)
 	require.NoError(t, err)
 

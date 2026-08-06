@@ -1184,6 +1184,7 @@ func Test_VM_Output_Size_Stats_Source_Cache_Is_Per_Bytecode(t *testing.T) {
 }
 
 func Test_VM_Output_Size_Stats_Nested_Partial_Learns_Without_Changing_Template_Stats(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	partial, err := Compile(`<span><%= name %></span>`)
 	require.NoError(t, err)
 	ctx := plush.NewContextWith(map[string]interface{}{"name": "Fry"})
@@ -1223,6 +1224,7 @@ func Test_VM_Output_Size_GrowHint_Uses_Fallback_Only_Until_Learned(t *testing.T)
 }
 
 func Test_VM_Output_Size_Headroom_Prevents_Repeated_Small_Underestimate_Growth(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	const learned = 212_907
 	const actual = 214_285
 	const expectedHeadroom = actual - learned
@@ -1289,6 +1291,30 @@ func Test_VM_Output_Size_Estimator_Disabled_Skips_All_Adaptive_Learning(t *testi
 	require.Equal(t, uint64(1), loop.SizeStats.Samples())
 }
 
+func Test_VM_Output_Size_Estimator_Learns_With_Diagnostics_Off(t *testing.T) {
+	previousEstimator := plush.SetOutputSizeEstimatorEnabled(true)
+	defer plush.SetOutputSizeEstimatorEnabled(previousEstimator)
+	previousDiagnostics := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previousDiagnostics)
+
+	tmpl, err := Compile(`<%= for (_, item) in items { %><span><%= item %></span><% } %>`)
+	require.NoError(t, err)
+	loop := tmpl.bytecode.FastRenderPlan.Segments[0].Loop
+	require.NotNil(t, loop)
+
+	ctx := plush.NewContextWith(map[string]interface{}{"items": []string{"one", "two"}})
+	rendered, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<span>one</span><span>two</span>", rendered)
+	require.Equal(t, uint64(1), tmpl.bytecode.OutputSizeStats.Samples())
+	require.Equal(t, uint64(1), loop.SizeStats.Samples())
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.False(t, diagnostics.OutputSize.Available)
+	require.Zero(t, diagnostics.LoopOutput.Calls)
+}
+
 func Test_VM_Contextual_Output_Grow_Uses_Exact_Yield_And_Caps_Only_Overhead(t *testing.T) {
 	const yieldSize = 22 << 20
 
@@ -1297,6 +1323,7 @@ func Test_VM_Contextual_Output_Grow_Uses_Exact_Yield_And_Caps_Only_Overhead(t *t
 }
 
 func Test_VM_Partial_Output_Size_Caps_Unstable_Speculative_Grow(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	bytecode := &compiler.Bytecode{
 		StaticSize:       32,
 		PartialSizeStats: &compiler.OutputSizeStats{},
@@ -1361,6 +1388,7 @@ func Test_VM_Partial_Output_Size_Does_Not_Double_Large_Parent_Builder(t *testing
 }
 
 func Test_VM_Output_Size_Diagnostics_Do_Not_Mix_Nested_Render_Snapshots(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	outer := &compiler.Bytecode{
 		StaticSize:      4,
 		OutputSizeStats: &compiler.OutputSizeStats{},

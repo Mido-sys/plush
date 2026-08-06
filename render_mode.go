@@ -9,15 +9,36 @@ import (
 
 type RenderMode int32
 
+// OutputSizeEstimatorDiagnosticsMode controls how much estimator observability
+// is collected. It does not enable or disable estimator learning.
+type OutputSizeEstimatorDiagnosticsMode int32
+
 const (
 	RenderModeInterpreter RenderMode = iota
 	RenderModeVM
 )
 
+const (
+	// OutputSizeEstimatorDiagnosticsDetailed preserves aggregate and per-loop /
+	// per-partial diagnostics.
+	OutputSizeEstimatorDiagnosticsDetailed OutputSizeEstimatorDiagnosticsMode = iota
+	// OutputSizeEstimatorDiagnosticsSummary preserves aggregate diagnostics but
+	// skips per-loop and per-partial detail collection.
+	OutputSizeEstimatorDiagnosticsSummary
+	// OutputSizeEstimatorDiagnosticsOff disables estimator diagnostics while
+	// leaving estimator learning and builder growth enabled.
+	OutputSizeEstimatorDiagnosticsOff
+)
+
 var renderMode atomic.Int32
 var vmGenericFallback atomic.Bool
 var outputSizeEstimatorDisabled atomic.Bool
+var outputSizeEstimatorDiagnosticsMode atomic.Int32
 var vmRenderer atomic.Value
+
+func init() {
+	outputSizeEstimatorDiagnosticsMode.Store(int32(OutputSizeEstimatorDiagnosticsOff))
+}
 
 var ErrVMRendererNotRegistered = errors.New("plush VM renderer is not registered")
 
@@ -54,6 +75,33 @@ func SetOutputSizeEstimatorEnabled(enabled bool) bool {
 // is enabled. The estimator is enabled by default.
 func OutputSizeEstimatorEnabled() bool {
 	return !outputSizeEstimatorDisabled.Load()
+}
+
+// SetOutputSizeEstimatorDiagnosticsMode changes estimator diagnostic
+// collection and returns the previous mode. Diagnostics are off by default,
+// and invalid values also select off to avoid enabling instrumentation
+// accidentally.
+func SetOutputSizeEstimatorDiagnosticsMode(mode OutputSizeEstimatorDiagnosticsMode) OutputSizeEstimatorDiagnosticsMode {
+	mode = normalizeOutputSizeEstimatorDiagnosticsMode(mode)
+	previous := OutputSizeEstimatorDiagnosticsMode(outputSizeEstimatorDiagnosticsMode.Swap(int32(mode)))
+	return normalizeOutputSizeEstimatorDiagnosticsMode(previous)
+}
+
+// GetOutputSizeEstimatorDiagnosticsMode returns the current estimator
+// diagnostic collection mode.
+func GetOutputSizeEstimatorDiagnosticsMode() OutputSizeEstimatorDiagnosticsMode {
+	return normalizeOutputSizeEstimatorDiagnosticsMode(OutputSizeEstimatorDiagnosticsMode(outputSizeEstimatorDiagnosticsMode.Load()))
+}
+
+func normalizeOutputSizeEstimatorDiagnosticsMode(mode OutputSizeEstimatorDiagnosticsMode) OutputSizeEstimatorDiagnosticsMode {
+	switch mode {
+	case OutputSizeEstimatorDiagnosticsDetailed,
+		OutputSizeEstimatorDiagnosticsSummary,
+		OutputSizeEstimatorDiagnosticsOff:
+		return mode
+	default:
+		return OutputSizeEstimatorDiagnosticsOff
+	}
 }
 
 func RegisterVMRenderer(renderer RenderFunc) {

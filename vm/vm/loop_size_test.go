@@ -10,6 +10,7 @@ import (
 )
 
 func Test_VM_Fast_Loop_Size_Learns_And_Predicts(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	tmpl, err := Compile(`<%= for (_, item) in items { %><li><%= item %></li><% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)

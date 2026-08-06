@@ -15,7 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func enableDetailedEstimatorDiagnostics(t *testing.T) {
+	t.Helper()
+	previous := rootplush.SetOutputSizeEstimatorDiagnosticsMode(rootplush.OutputSizeEstimatorDiagnosticsDetailed)
+	t.Cleanup(func() {
+		rootplush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+	})
+}
+
 func Test_Buffalo_Render_Pass_File_Output_Tracks_Layout_Not_Nested_Renders(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -89,6 +98,7 @@ func Test_Buffalo_Render_Pass_File_Output_Tracks_Layout_Not_Nested_Renders(t *te
 }
 
 func Test_Buffalo_Render_Pass_File_Output_Isolates_Yield_Size_Bands(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -133,6 +143,7 @@ func Test_Buffalo_Render_Pass_File_Output_Isolates_Yield_Size_Bands(t *testing.T
 }
 
 func Test_Buffalo_Render_Pass_File_Output_Refines_Unstable_Band(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -194,6 +205,7 @@ func Test_Buffalo_Render_Pass_File_Output_Refines_Unstable_Band(t *testing.T) {
 }
 
 func Test_Buffalo_Render_Pass_File_Output_Does_Not_Learn_Unconsumed_Yield(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -233,6 +245,7 @@ func Test_Buffalo_Render_Pass_File_Output_Does_Not_Learn_Unconsumed_Yield(t *tes
 }
 
 func Test_Buffalo_Render_Pass_File_Output_Selects_Proportional_Layout_Predictor(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()

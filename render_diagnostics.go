@@ -442,6 +442,10 @@ func AddRenderDiagnosticLoopOutput(ctx hctx.Context, name string, line, items, l
 	if ctx == nil || items <= 0 || actual < 0 {
 		return
 	}
+	mode := GetOutputSizeEstimatorDiagnosticsMode()
+	if mode == OutputSizeEstimatorDiagnosticsOff {
+		return
+	}
 	if name == "" {
 		name = "<expression>"
 	}
@@ -474,6 +478,9 @@ func AddRenderDiagnosticLoopOutput(ctx hctx.Context, name string, line, items, l
 			loop.GrowCalls++
 		}
 		loop.GrowAllocated += growAllocated
+		if mode != OutputSizeEstimatorDiagnosticsDetailed {
+			return
+		}
 
 		for i := range loop.Details {
 			if loop.Details[i].Name == name && loop.Details[i].Line == line {
@@ -521,6 +528,10 @@ func AddRenderDiagnosticPartialOutputAllocation(ctx hctx.Context, name string, l
 	if ctx == nil || actual < 0 {
 		return
 	}
+	mode := GetOutputSizeEstimatorDiagnosticsMode()
+	if mode == OutputSizeEstimatorDiagnosticsOff {
+		return
+	}
 	if name == "" {
 		name = "<anonymous>"
 	}
@@ -549,6 +560,9 @@ func AddRenderDiagnosticPartialOutputAllocation(ctx hctx.Context, name string, l
 			partial.GrowCalls++
 		}
 		partial.GrowAllocated += allocation.SpeculativeAllocated
+		if mode != OutputSizeEstimatorDiagnosticsDetailed {
+			return
+		}
 
 		for i := range partial.Details {
 			if partial.Details[i].Name == name {

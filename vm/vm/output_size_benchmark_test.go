@@ -73,16 +73,21 @@ func Benchmark_VM_Output_Size_Estimator(b *testing.B) {
 		workload := workload
 		b.Run(workload.name, func(b *testing.B) {
 			for _, mode := range []struct {
-				name    string
-				enabled bool
+				name        string
+				enabled     bool
+				diagnostics plush.OutputSizeEstimatorDiagnosticsMode
 			}{
-				{name: "disabled"},
-				{name: "enabled", enabled: true},
+				{name: "disabled", diagnostics: plush.OutputSizeEstimatorDiagnosticsOff},
+				{name: "enabled_diagnostics_off", enabled: true, diagnostics: plush.OutputSizeEstimatorDiagnosticsOff},
+				{name: "enabled_diagnostics_summary", enabled: true, diagnostics: plush.OutputSizeEstimatorDiagnosticsSummary},
+				{name: "enabled_diagnostics_detailed", enabled: true, diagnostics: plush.OutputSizeEstimatorDiagnosticsDetailed},
 			} {
 				mode := mode
 				b.Run(mode.name, func(b *testing.B) {
 					previous := plush.SetOutputSizeEstimatorEnabled(mode.enabled)
 					defer plush.SetOutputSizeEstimatorEnabled(previous)
+					previousDiagnostics := plush.SetOutputSizeEstimatorDiagnosticsMode(mode.diagnostics)
+					defer plush.SetOutputSizeEstimatorDiagnosticsMode(previousDiagnostics)
 
 					tmpl, err := Compile(source)
 					if err != nil {

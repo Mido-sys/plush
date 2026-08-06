@@ -419,6 +419,10 @@ func Test_Render_Diagnostics_Contextual_Output_Size_Excludes_Unconsumed_Yield_Fr
 
 func Test_Render_Diagnostics_Partial_Output_Size_Headers(t *testing.T) {
 	r := require.New(t)
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsDetailed)
+	t.Cleanup(func() {
+		plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+	})
 	ctx := plush.NewContext()
 
 	plush.AddRenderDiagnosticPartialOutput(ctx, "components/item.plush", 90, 100, 100, 95, 3)
@@ -527,6 +531,47 @@ func Test_Output_Size_Estimator_Can_Be_Disabled_And_Restored(t *testing.T) {
 	r.False(plush.OutputSizeEstimatorEnabled())
 	r.False(plush.SetOutputSizeEstimatorEnabled(true))
 	r.True(plush.OutputSizeEstimatorEnabled())
+}
+
+func Test_Output_Size_Estimator_Diagnostics_Mode_Can_Be_Changed_And_Restored(t *testing.T) {
+	r := require.New(t)
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsSummary)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, previous)
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsSummary, plush.GetOutputSizeEstimatorDiagnosticsMode())
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsSummary, plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff))
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.GetOutputSizeEstimatorDiagnosticsMode())
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.SetOutputSizeEstimatorDiagnosticsMode(99))
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.GetOutputSizeEstimatorDiagnosticsMode())
+}
+
+func Test_Output_Size_Estimator_Summary_Diagnostics_Skip_Details(t *testing.T) {
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsSummary)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	ctx := plush.NewContext()
+	plush.AddRenderDiagnosticLoopOutput(ctx, "items", 12, 2, 10, 20, 20, 10, 1, 2, true, false, true, 32)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "row.plush", 20, 20, 20, 20, 2)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.LoopOutput.Calls)
+	require.Empty(t, diagnostics.LoopOutput.Details)
+	require.Equal(t, 1, diagnostics.PartialOutput.Calls)
+	require.Empty(t, diagnostics.PartialOutput.Details)
+}
+
+func Test_Output_Size_Estimator_Off_Diagnostics_Skip_Aggregates(t *testing.T) {
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	ctx := plush.NewContext()
+	plush.AddRenderDiagnosticLoopOutput(ctx, "items", 12, 2, 10, 20, 20, 10, 1, 2, true, false, true, 32)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "row.plush", 20, 20, 20, 20, 2)
+
+	_, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.False(t, ok)
 }
 
 func Test_Render_Diagnostics_VM_Hotspots_Concurrent_Update(t *testing.T) {

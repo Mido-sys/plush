@@ -443,7 +443,8 @@ func observeOutputSize(bytecode *compiler.Bytecode, ctx hctx.Context, options ou
 }
 
 func recordOutputGrowHint(bytecode *compiler.Bytecode, observation outputSizeObservation, ctx hctx.Context, options outputSizeOptions) {
-	if !options.topLevel || !outputSizeStatsEnabled(ctx, options) || bytecode == nil || ctx == nil {
+	if !options.topLevel || !outputSizeStatsEnabled(ctx, options) || bytecode == nil || ctx == nil ||
+		plush.GetOutputSizeEstimatorDiagnosticsMode() == plush.OutputSizeEstimatorDiagnosticsOff {
 		return
 	}
 	updateOutputSizeDiagnostics(ctx, observation, func(d *plush.RenderDiagnostics) {
@@ -487,6 +488,9 @@ func recordOutputGrowHint(bytecode *compiler.Bytecode, observation outputSizeObs
 
 func recordOutputActual(bytecode *compiler.Bytecode, actual int, observation outputSizeObservation, ctx hctx.Context, options outputSizeOptions) {
 	if !outputSizeStatsEnabled(ctx, options) || bytecode == nil || ctx == nil {
+		return
+	}
+	if plush.GetOutputSizeEstimatorDiagnosticsMode() == plush.OutputSizeEstimatorDiagnosticsOff {
 		return
 	}
 	estimate, samples := outputSizeEstimateAndSamples(observation.stats)
