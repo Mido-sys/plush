@@ -1088,6 +1088,25 @@ func contextualValueFastInvokerForRaw(raw interface{}) contextualValueFastInvoke
 	}
 }
 
+func contextualValueFastInvokerUsesReflection(raw interface{}) bool {
+	switch raw.(type) {
+	case func(string, plush.HelperContext) string,
+		func(string, hctx.HelperContext) string,
+		func(string, plush.HelperContext) (string, error),
+		func(string, hctx.HelperContext) (string, error),
+		func(string, plush.HelperContext) template.HTML,
+		func(string, hctx.HelperContext) template.HTML,
+		func(string, plush.HelperContext) (template.HTML, error),
+		func(string, hctx.HelperContext) (template.HTML, error):
+		return false
+	}
+	rt := reflect.TypeOf(raw)
+	if rt == nil || rt.Kind() != reflect.Func || rt.IsVariadic() || rt.NumIn() < 2 {
+		return false
+	}
+	return optionalArgKindFor(rt.In(rt.NumIn()-1)) == optionalArgHelperContext
+}
+
 func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 	switch raw.(type) {
 	case func():

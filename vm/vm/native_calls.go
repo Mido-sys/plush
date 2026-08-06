@@ -13,6 +13,10 @@ import (
 )
 
 func writeFastCallValue(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, cacheSlot *object.InlineCacheSlot) error {
+	return writeFastCallValueWithDiagnostics(out, ctx, name, raw, args, cacheSlot, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func writeFastCallValueWithDiagnostics(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, cacheSlot *object.InlineCacheSlot, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) error {
 	if obj, ok := raw.(object.Object); ok {
 		raw = object.ToGo(obj)
 	}
@@ -24,25 +28,37 @@ func writeFastCallValue(out *strings.Builder, ctx hctx.Context, name string, raw
 		return fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
 	entry := cachedFastCallEntry(rv.Type(), raw, cacheSlot)
-	return writeFastCallValueWithEntry(out, ctx, name, raw, args, entry)
+	return writeFastCallValueWithEntryDiagnostics(out, ctx, name, raw, args, entry, vmHotspots)
 }
 
 func writeFastCallValueWithEntry(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, entry *fastBuilderCallCacheEntry) error {
+	return writeFastCallValueWithEntryDiagnostics(out, ctx, name, raw, args, entry, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func writeFastCallValueWithEntryDiagnostics(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, entry *fastBuilderCallCacheEntry, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) error {
 	if entry == nil {
 		return fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
 	if entry.invoker != nil {
-		start := time.Now()
+		var start time.Time
+		if vmHotspots.Enabled() {
+			start = time.Now()
+		}
 		if err := entry.invoker(out, ctx, name, raw, args); err != nil {
 			if !errors.Is(err, errFastWriteUnsupported) {
+				if vmHotspots.Enabled() {
+					vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+				}
 				return err
 			}
 		} else {
-			plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+			if vmHotspots.Enabled() {
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return nil
 		}
 	}
-	value, err := fastCallValueWithEntry(name, raw, args, ctx, entry)
+	value, err := fastCallValueWithEntryDiagnostics(name, raw, args, ctx, entry, vmHotspots)
 	if err != nil {
 		return err
 	}
@@ -51,6 +67,10 @@ func writeFastCallValueWithEntry(out *strings.Builder, ctx hctx.Context, name st
 }
 
 func fastCallValue(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context, cacheSlot *object.InlineCacheSlot) (interface{}, error) {
+	return fastCallValueWithDiagnostics(name, raw, args, ctx, cacheSlot, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func fastCallValueWithDiagnostics(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context, cacheSlot *object.InlineCacheSlot, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (interface{}, error) {
 	if obj, ok := raw.(object.Object); ok {
 		raw = object.ToGo(obj)
 	}
@@ -62,47 +82,83 @@ func fastCallValue(name string, raw interface{}, args *fastCallArgs, ctx hctx.Co
 		return nil, fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
 	entry := cachedFastCallEntry(rv.Type(), raw, cacheSlot)
-	return fastCallValueWithEntry(name, raw, args, ctx, entry)
+	return fastCallValueWithEntryDiagnostics(name, raw, args, ctx, entry, vmHotspots)
 }
 
 func fastCallValueWithEntry(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context, entry *fastBuilderCallCacheEntry) (interface{}, error) {
+	return fastCallValueWithEntryDiagnostics(name, raw, args, ctx, entry, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func fastCallValueWithEntryDiagnostics(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context, entry *fastBuilderCallCacheEntry, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (interface{}, error) {
 	rv := reflect.ValueOf(raw)
 	if entry == nil || entry.plan == nil {
 		return nil, fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
-	helperStart := time.Now()
+	var helperStart time.Time
+	if vmHotspots.Enabled() {
+		helperStart = time.Now()
+	}
 	if value, handled, err := fastHelperContextCallValue(name, raw, args, ctx); handled || err != nil {
-		if handled {
-			plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(helperStart))
+		if handled && vmHotspots.Enabled() {
+			vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(helperStart))
 		}
 		return value, err
 	}
 	if entry.contextualValueInvoker != nil {
-		start := time.Now()
+		var start time.Time
+		if vmHotspots.Enabled() {
+			start = time.Now()
+		}
 		if value, err := entry.contextualValueInvoker(name, raw, args, ctx); err == nil {
-			plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+			if vmHotspots.Enabled() {
+				path := plush.RenderVMHelperCallDirect
+				if entry.contextualValueInvokerReflective {
+					path = plush.RenderVMHelperCallReflection
+				}
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), path, time.Since(start))
+			}
 			return value, nil
 		} else if !errors.Is(err, errFastWriteUnsupported) {
+			if vmHotspots.Enabled() {
+				path := plush.RenderVMHelperCallDirect
+				if entry.contextualValueInvokerReflective {
+					path = plush.RenderVMHelperCallReflection
+				}
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), path, time.Since(start))
+			}
 			return nil, err
 		}
 	}
 	if entry.valueInvoker != nil {
-		start := time.Now()
+		var start time.Time
+		if vmHotspots.Enabled() {
+			start = time.Now()
+		}
 		if value, err := entry.valueInvoker(name, raw, args); err == nil {
-			plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+			if vmHotspots.Enabled() {
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return value, nil
 		} else if !errors.Is(err, errFastWriteUnsupported) {
+			if vmHotspots.Enabled() {
+				vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return nil, err
 		}
 	}
-	start := time.Now()
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	var scratch [4]reflect.Value
 	reflectArgs, err := fastReflectArgsInto(name, entry.plan, args, ctx, scratch[:0])
 	if err != nil {
 		return nil, err
 	}
 	res := rv.Call(reflectArgs)
-	plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+	if vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallReflection, time.Since(start))
+	}
 	if len(res) == 0 {
 		return nil, nil
 	}
@@ -149,16 +205,24 @@ func cachedFastCallEntry(rt reflect.Type, raw interface{}, slot *object.InlineCa
 		}
 	}
 	entry := &fastBuilderCallCacheEntry{
-		rt:                     rt,
-		plan:                   cachedCallPlan(rt),
-		invoker:                writeFastBuilderInvokerForRaw(raw),
-		valueInvoker:           valueFastInvokerForRaw(raw),
-		contextualValueInvoker: contextualValueFastInvokerForRaw(raw),
+		rt:                               rt,
+		plan:                             cachedCallPlan(rt),
+		invoker:                          writeFastBuilderInvokerForRaw(raw),
+		valueInvoker:                     valueFastInvokerForRaw(raw),
+		contextualValueInvoker:           contextualValueFastInvokerForRaw(raw),
+		contextualValueInvokerReflective: contextualValueFastInvokerUsesReflection(raw),
 	}
 	if slot != nil {
 		slot.Store(entry)
 	}
 	return entry
+}
+
+func vmHelperCallSignature(rt reflect.Type) string {
+	if rt == nil {
+		return "<unknown>"
+	}
+	return rt.String()
 }
 
 func fastReflectArgsInto(name string, plan *callPlan, rawArgs *fastCallArgs, ctx hctx.Context, scratch []reflect.Value) ([]reflect.Value, error) {
@@ -621,15 +685,17 @@ func (vm *VM) childVM(cl *object.Closure, args []object.Object, ctx hctx.Context
 	frames := borrowFrames(true)
 	frames[0] = frame
 	child := &VM{
-		constants:   vm.constants,
-		stack:       borrowStack(true),
-		globals:     vm.globals,
-		globalNames: vm.globalNames,
-		frames:      frames,
-		framesIndex: 1,
-		ctx:         ctx,
-		holes:       vm.holes,
-		pooled:      true,
+		constants:          vm.constants,
+		stack:              borrowStack(true),
+		globals:            vm.globals,
+		globalNames:        vm.globalNames,
+		frames:             frames,
+		framesIndex:        1,
+		ctx:                ctx,
+		vmHotspots:         vm.vmHotspots,
+		vmHotspotsCaptured: vm.vmHotspotsCaptured,
+		holes:              vm.holes,
+		pooled:             true,
 	}
 	child.resetChild(cl, args, ctx)
 	return child

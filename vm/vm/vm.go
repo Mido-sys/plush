@@ -44,7 +44,9 @@ type VM struct {
 	frames      []*Frame
 	framesIndex int
 
-	ctx hctx.Context
+	ctx                hctx.Context
+	vmHotspots         plush.RenderVMHotspotDiagnosticsRecorder
+	vmHotspotsCaptured bool
 
 	holes              *[]plush.HoleMarker
 	deferHolePositions bool
@@ -85,6 +87,17 @@ type contextIDLookup interface {
 
 type contextIDBinder interface {
 	InternIDs([]string, []int)
+}
+
+func (vm *VM) renderVMHotspots() plush.RenderVMHotspotDiagnosticsRecorder {
+	if vm == nil {
+		return plush.RenderVMHotspotDiagnosticsRecorder{}
+	}
+	if !vm.vmHotspotsCaptured {
+		vm.vmHotspots = plush.CaptureRenderVMHotspotDiagnostics(vm.ctx)
+		vm.vmHotspotsCaptured = true
+	}
+	return vm.vmHotspots
 }
 
 type Template struct {

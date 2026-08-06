@@ -91,7 +91,7 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 		if err != nil {
 			return err
 		}
-		if handled, err := writeRegisteredFastHelperNamed(writeOut, ctx, call.Name, helper, args); handled || err != nil {
+		if handled, err := writeRegisteredFastHelperNamed(writeOut, ctx, call.Name, helper, args, bindings.vmHotspots); handled || err != nil {
 			if err != nil {
 				return fastLineError(call.Line, err)
 			}
@@ -106,7 +106,7 @@ func writeFastCallSegment(out *strings.Builder, ctx hctx.Context, bindings fastR
 	if err != nil {
 		return err
 	}
-	if err := writeFastCallValue(writeOut, ctx, call.Name, raw, args, &call.Cache); err != nil {
+	if err := writeFastCallValueWithDiagnostics(writeOut, ctx, call.Name, raw, args, &call.Cache, bindings.vmHotspots); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -135,13 +135,13 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 	}
 	helperCtx := plush.NewHelperContext(ctx, func(blockCtx hctx.Context) (string, error) {
 		scoped := fastBlockContext(blockCtx, bindings)
-		rendered, err := renderFastBlockCallBytecode(call, scoped)
+		rendered, err := renderFastBlockCallBytecode(call, scoped, bindings.vmHotspots)
 		scopedBindings := bindings
 		scopedBindings.ctx = scoped
 		scopedBindings.syncLocalValuesFromContext()
 		return rendered, err
 	})
-	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
+	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -170,19 +170,19 @@ func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings
 	}
 	helperCtx := plush.NewHelperContext(ctx, func(blockCtx hctx.Context) (string, error) {
 		scoped := fastLoopBlockContext(blockCtx, bindings, loop, loopKey, loopValue)
-		rendered, err := renderFastBlockCallBytecode(call, scoped)
+		rendered, err := renderFastBlockCallBytecode(call, scoped, bindings.vmHotspots)
 		scopedBindings := bindings
 		scopedBindings.ctx = scoped
 		scopedBindings.syncLocalValuesFromContext()
 		return rendered, err
 	})
-	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache); err != nil {
+	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
 }
 
-func renderFastBlockCallBytecode(call *compiler.FastBlockCallPlan, ctx hctx.Context) (string, error) {
+func renderFastBlockCallBytecode(call *compiler.FastBlockCallPlan, ctx hctx.Context, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (string, error) {
 	if call == nil || call.BlockBytecode == nil {
 		return "", nil
 	}
@@ -191,14 +191,14 @@ func renderFastBlockCallBytecode(call *compiler.FastBlockCallPlan, ctx hctx.Cont
 		return bytecode.StaticOutput, nil
 	}
 	if bytecode.FastRenderPlan != nil {
-		if rendered, ok, err := renderFastPlanWithBindingPlan(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx)); ok || err != nil {
+		if rendered, ok, err := renderFastPlanWithBindingPlanDiagnostics(bytecode, bytecode.FastRenderPlan, ctx, topLevelFastBindingPlan(bytecode.FastRenderPlan, ctx), vmHotspots); ok || err != nil {
 			return rendered, err
 		}
 	}
 	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
 		defer restorePartial()
 	}
-	return renderBytecodeVMWithState(bytecode, ctx, "", false, "")
+	return renderBytecodeVMWithStateDiagnostics(bytecode, ctx, "", false, "", vmHotspots)
 }
 
 func fastBlockContext(ctx hctx.Context, bindings fastRenderBindings) hctx.Context {
@@ -230,7 +230,7 @@ func fastLoopBlockContext(ctx hctx.Context, bindings fastRenderBindings, loop *c
 	return scoped
 }
 
-func writeFastBlockCallValue(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, helperCtx plush.HelperContext, cacheSlot *object.InlineCacheSlot) error {
+func writeFastBlockCallValue(out *strings.Builder, ctx hctx.Context, name string, raw interface{}, args *fastCallArgs, helperCtx plush.HelperContext, cacheSlot *object.InlineCacheSlot, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) error {
 	if obj, ok := raw.(object.Object); ok {
 		raw = object.ToGo(obj)
 	}
@@ -245,14 +245,19 @@ func writeFastBlockCallValue(out *strings.Builder, ctx hctx.Context, name string
 	if entry == nil || entry.plan == nil {
 		return fmt.Errorf("%+v (%T) is an invalid function", raw, raw)
 	}
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	var scratch [4]reflect.Value
 	reflectArgs, err := fastReflectArgsIntoWithHelperContext(name, entry.plan, args, ctx, helperCtx, scratch[:0])
 	if err != nil {
 		return err
 	}
-	start := time.Now()
 	res := rv.Call(reflectArgs)
-	plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+	if vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallReflection, time.Since(start))
+	}
 	return writeFastReflectCallResults(out, ctx, name, res)
 }
 
@@ -337,29 +342,56 @@ func writeFastDirectStringCallSegment(out *strings.Builder, ctx hctx.Context, bi
 	if !ok {
 		return false, nil
 	}
+	var start time.Time
+	var signature string
+	if bindings.vmHotspots.Enabled() {
+		start = time.Now()
+		signature = vmHelperCallSignature(reflect.TypeOf(raw))
+	}
 	switch fn := raw.(type) {
 	case func(string) string:
 		writeFastEscapedString(out, fn(arg))
+		if bindings.vmHotspots.Enabled() {
+			bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, nil
 	case func(string) (string, error):
 		value, err := fn(arg)
 		if err != nil {
+			if bindings.vmHotspots.Enabled() {
+				bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return true, fastLineError(call.Line, fmt.Errorf("could not call %s function: %w", call.Name, err))
 		}
 		writeFastEscapedString(out, value)
+		if bindings.vmHotspots.Enabled() {
+			bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, nil
 	case func(string) template.HTML:
 		out.WriteString(string(fn(arg)))
+		if bindings.vmHotspots.Enabled() {
+			bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, nil
 	case func(string) (template.HTML, error):
 		value, err := fn(arg)
 		if err != nil {
+			if bindings.vmHotspots.Enabled() {
+				bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return true, fastLineError(call.Line, fmt.Errorf("could not call %s function: %w", call.Name, err))
 		}
 		out.WriteString(string(value))
+		if bindings.vmHotspots.Enabled() {
+			bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, nil
 	case func(string) object.Object:
 		writeFastObject(out, ctx, fn(arg))
+		if bindings.vmHotspots.Enabled() {
+			bindings.vmHotspots.AddHelperCall(call.Name, signature, plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, nil
 	}
 	return false, nil

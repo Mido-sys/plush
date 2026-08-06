@@ -19,11 +19,12 @@ type callCacheEntry struct {
 }
 
 type fastBuilderCallCacheEntry struct {
-	rt                     reflect.Type
-	plan                   *callPlan
-	invoker                writeFastBuilderInvoker
-	valueInvoker           valueFastInvoker
-	contextualValueInvoker contextualValueFastInvoker
+	rt                               reflect.Type
+	plan                             *callPlan
+	invoker                          writeFastBuilderInvoker
+	valueInvoker                     valueFastInvoker
+	contextualValueInvoker           contextualValueFastInvoker
+	contextualValueInvokerReflective bool
 }
 
 type fastCallArgs struct {

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
@@ -314,7 +315,7 @@ func evalFastLoopCallValuePlan(call *compiler.FastCallPlan, ctx hctx.Context, bi
 	if err != nil {
 		return nil, true, err
 	}
-	result, err := fastCallValue(call.Name, raw, args, ctx, &call.Cache)
+	result, err := fastCallValueWithDiagnostics(call.Name, raw, args, ctx, &call.Cache, bindings.vmHotspots)
 	if err != nil {
 		return nil, true, fastLineError(call.Line, err)
 	}
@@ -1689,7 +1690,11 @@ func evalFastPathSteps(base interface{}, steps []compiler.FastPathStep, ctx hctx
 }
 
 func evalFastPathStep(base interface{}, step *compiler.FastPathStep, ctx hctx.Context) (interface{}, error) {
-	return evalFastPathStepWithBindings(base, step, ctx, fastRenderBindings{}, nil, nil, false)
+	bindings := fastRenderBindings{
+		ctx:        ctx,
+		vmHotspots: plush.CaptureRenderVMHotspotDiagnostics(ctx),
+	}
+	return evalFastPathStepWithBindings(base, step, ctx, bindings, nil, nil, false)
 }
 
 func evalFastPathStepWithBindings(base interface{}, step *compiler.FastPathStep, ctx hctx.Context, bindings fastRenderBindings, loopKey, loopValue interface{}, loopAware bool) (interface{}, error) {
@@ -1742,7 +1747,7 @@ func evalFastPathStepWithBindings(base interface{}, step *compiler.FastPathStep,
 			}
 			args = &argStore
 		}
-		value, err := fastCallValue(step.Value, base, args, ctx, &step.CallCache)
+		value, err := fastCallValueWithDiagnostics(step.Value, base, args, ctx, &step.CallCache, bindings.vmHotspots)
 		if err != nil {
 			return nil, fastLineError(step.Line, err)
 		}

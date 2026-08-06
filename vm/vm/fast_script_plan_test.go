@@ -1256,6 +1256,65 @@ func Test_VM_Fast_Render_Assignment_Before_Same_Scope_Shadow_Matches_Interpreter
 	require.Equal(t, expected, out)
 }
 
+func Test_VM_Fast_Render_Binding_Metadata_Budget_Fallback_Matches_Interpreter(t *testing.T) {
+	const depth = 64
+
+	var source strings.Builder
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<% let value`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(` = "" %>`)
+	}
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<%= if (true) { %><% value`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(` = "updated" %>`)
+	}
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<% } %>`)
+	}
+	source.WriteString(`<%= value63 %>`)
+
+	expected, err := plush.RenderInterpreter(source.String(), plush.NewContext())
+	require.NoError(t, err)
+
+	tmpl, err := Compile(source.String())
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+	prepared, unprepared := fastBindingSyncConditionalPlanCounts(tmpl.bytecode.FastRenderPlan.Segments)
+	require.Positive(t, prepared)
+	require.Positive(t, unprepared)
+
+	out, err := tmpl.Render(plush.NewContext())
+	require.NoError(t, err)
+	require.Equal(t, expected, out)
+}
+
+func fastBindingSyncConditionalPlanCounts(segments []compiler.FastRenderSegment) (prepared, unprepared int) {
+	for i := range segments {
+		segment := &segments[i]
+		if segment.Kind != compiler.FastRenderSegmentConditional || segment.Conditional == nil {
+			continue
+		}
+		for branchIndex := range segment.Conditional.Branches {
+			branch := &segment.Conditional.Branches[branchIndex]
+			if branch.BindingSync.Prepared {
+				prepared++
+			} else {
+				unprepared++
+			}
+			childPrepared, childUnprepared := fastBindingSyncConditionalPlanCounts(branch.Segments)
+			prepared += childPrepared
+			unprepared += childUnprepared
+		}
+		childPrepared, childUnprepared := fastBindingSyncConditionalPlanCounts(segment.Conditional.ElseSegments)
+		prepared += childPrepared
+		unprepared += childUnprepared
+	}
+	return prepared, unprepared
+}
+
 func Test_VM_Fast_Render_Prefix_Condition_And_Loop_Concat(t *testing.T) {
 	tmpl, err := Compile(`<%= if (!userSignedIn) { %>Guest<% } else { %>User<% } %><%= for (item) in menu.Items { %><%= item.Name + " x " + item.Count %>;<% } %>`)
 	require.NoError(t, err)

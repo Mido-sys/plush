@@ -1223,6 +1223,44 @@ func Test_VM_Helper_Call_Render_Fast_Plan(t *testing.T) {
 	}
 }
 
+func Test_VM_Helper_Call_Path_Diagnostics_Distinguish_Direct_And_Reflection(t *testing.T) {
+	type namedValue string
+
+	tmpl, err := Compile(`<%= direct("one") %><%= reflected("two") %>`)
+	require.NoError(t, err)
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"direct": func(value string) string {
+			return value
+		},
+		"reflected": func(value namedValue) string {
+			return string(value)
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "onetwo", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperDirectDetailsDropped)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionDetailsDropped)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 2)
+
+	paths := map[string]plush.RenderVMHelperCallPathDiagnostics{}
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		paths[detail.Name] = detail
+	}
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["direct"].Path)
+	require.Equal(t, "func(string) string", paths["direct"].Signature)
+	require.Equal(t, plush.RenderVMHelperCallReflection, paths["reflected"].Path)
+	require.Contains(t, paths["reflected"].Signature, "namedValue")
+}
+
 func Test_VM_Helper_Call_Value_Argument_Can_Satisfy_Pointer_Parameter(t *testing.T) {
 	tmpl, err := Compile(`<%= render_section(section) %>`)
 	require.NoError(t, err)

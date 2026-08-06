@@ -607,3 +607,33 @@ func Test_VM_Run_Block_Return_Output_And_Error_Branches(t *testing.T) {
 	require.Error(t, err)
 
 }
+
+var vmFastHelperDiagnosticsBenchmarkSink interface{}
+
+func Benchmark_VM_Fast_Helper_Diagnostics_Disabled(b *testing.B) {
+	ctx := plush.NewContext()
+	raw := func() string { return "value" }
+	entry := cachedFastCallEntry(reflect.TypeOf(raw), raw, nil)
+	recorder := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+
+	b.Run("context-capture-per-call", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			value, err := fastCallValueWithEntry("value", raw, nil, ctx, entry)
+			if err != nil {
+				b.Fatal(err)
+			}
+			vmFastHelperDiagnosticsBenchmarkSink = value
+		}
+	})
+	b.Run("render-snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			value, err := fastCallValueWithEntryDiagnostics("value", raw, nil, ctx, entry, recorder)
+			if err != nil {
+				b.Fatal(err)
+			}
+			vmFastHelperDiagnosticsBenchmarkSink = value
+		}
+	})
+}

@@ -126,3 +126,92 @@ func Test_Prepare_Fast_Binding_Sync_Plan_Identifies_Outer_Assignment_Shadowed_La
 	require.Equal(t, []int{0}, loop.BindingSync.LocalNameIndexes)
 	require.Equal(t, []int{0}, loop.BindingSync.ParentNameIndexes)
 }
+
+func Test_Fast_Binding_Sync_Classifies_Every_Segment_Kind(t *testing.T) {
+	for kind := FastRenderSegmentStatic; kind < fastRenderSegmentKindCount; kind++ {
+		require.NotEqualf(t, fastBindingEffectUnknown, fastRenderSegmentBindingEffect(kind), "segment kind %d is not classified", kind)
+	}
+}
+
+func Test_Fast_Binding_Sync_Classifies_Every_Loop_Part_Kind(t *testing.T) {
+	for kind := FastLoopPartStatic; kind < fastLoopPartKindCount; kind++ {
+		require.NotEqualf(t, fastBindingEffectUnknown, fastLoopPartBindingEffect(kind), "loop-part kind %d is not classified", kind)
+	}
+}
+
+func Test_Fast_Binding_Sync_Leaves_Unknown_Segment_Plan_Unprepared(t *testing.T) {
+	plan := fastSegmentBindingSyncPlan([]FastRenderSegment{
+		{Kind: FastRenderSegmentAssign, Value: "outer", NameIndex: 0},
+		{Kind: FastRenderSegmentKind(255)},
+	})
+
+	require.False(t, plan.Prepared)
+	require.Empty(t, plan.NameIndexes)
+	require.Empty(t, plan.LocalNameIndexes)
+}
+
+func Test_Fast_Binding_Sync_Leaves_Containing_Loop_Unprepared_For_Unknown_Nested_Part(t *testing.T) {
+	nested := &FastLoopConditionalPlan{
+		Branches: []FastLoopConditionalBranch{{
+			Parts: []FastLoopPart{{Kind: FastLoopPartKind(255)}},
+		}},
+	}
+	loop := &FastLoopPlan{Parts: []FastLoopPart{{
+		Kind:        FastLoopPartConditional,
+		Conditional: nested,
+	}}}
+
+	plan := &FastRenderPlan{Segments: []FastRenderSegment{{Kind: FastRenderSegmentLoop, Loop: loop}}}
+	prepareFastBindingSyncPlans(plan)
+
+	require.False(t, nested.Branches[0].BindingSync.Prepared)
+	require.False(t, loop.BindingSync.Prepared)
+}
+
+func Test_Fast_Binding_Sync_Metadata_Is_Bounded_For_Deeply_Nested_Plans(t *testing.T) {
+	const depth = 64
+
+	var nested *FastLoopPlan
+	for index := 0; index < depth; index++ {
+		parts := []FastLoopPart{{
+			Kind:      FastLoopPartAssign,
+			NameIndex: index,
+		}}
+		if nested != nil {
+			parts = append(parts, FastLoopPart{Kind: FastLoopPartLoop, Loop: nested})
+		}
+		nested = &FastLoopPlan{Parts: parts}
+	}
+	plan := &FastRenderPlan{Segments: []FastRenderSegment{{Kind: FastRenderSegmentLoop, Loop: nested}}}
+	limit := fastBindingSyncMetadataLimit(fastBindingSyncSegmentNodeCount(plan.Segments))
+
+	prepareFastBindingSyncPlans(plan)
+
+	retained, prepared, unprepared := fastBindingSyncLoopMetadata(nested)
+	require.LessOrEqual(t, retained, limit)
+	require.Positive(t, prepared)
+	require.Positive(t, unprepared)
+}
+
+func fastBindingSyncLoopMetadata(loop *FastLoopPlan) (retained, prepared, unprepared int) {
+	if loop == nil {
+		return 0, 0, 0
+	}
+	if loop.BindingSync.Prepared {
+		prepared++
+		retained += fastBindingSyncMetadataEntryCount(loop.BindingSync)
+	} else {
+		unprepared++
+	}
+	for i := range loop.Parts {
+		part := &loop.Parts[i]
+		if part.Kind != FastLoopPartLoop {
+			continue
+		}
+		childRetained, childPrepared, childUnprepared := fastBindingSyncLoopMetadata(part.Loop)
+		retained += childRetained
+		prepared += childPrepared
+		unprepared += childUnprepared
+	}
+	return retained, prepared, unprepared
+}

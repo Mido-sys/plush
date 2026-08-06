@@ -94,11 +94,25 @@ func Test_Unprepared_Fast_Binding_Scope_Retains_Full_Copy_Fallback(t *testing.T)
 	}
 	parts := []compiler.FastLoopPart{{Kind: compiler.FastLoopPartLet, NameIndex: 0, Value: "local"}}
 
-	_, scoped, undo, cleanup := fastRenderLoopPartScopeForLet(plush.NewContext(), bindings, parts, compiler.FastBindingSyncPlan{})
-	defer cleanup()
+	_, scoped, undo, scope := fastRenderLoopPartScopeForLet(plush.NewContext(), bindings, parts, compiler.FastBindingSyncPlan{})
+	defer scope.release()
 	scoped.setLocal(0, "inner")
 	undo.restore(&scoped)
 
+	require.Equal(t, "outer", bindings.localVals[0])
+}
+
+func Test_Prepared_Fast_Loop_Conditional_Scope_Does_Not_Allocate(t *testing.T) {
+	ctx, bindings, loop, conditional := fastLoopConditionalScopeFixture()
+	var out strings.Builder
+	var renderErr error
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		renderErr = renderFastLoopConditional(&out, ctx, bindings, loop, conditional, 0, "temporary")
+	})
+
+	require.NoError(t, renderErr)
+	require.Zero(t, allocs)
 	require.Equal(t, "outer", bindings.localVals[0])
 }
 
@@ -141,6 +155,20 @@ func Benchmark_VM_Fast_Binding_Scope(b *testing.B) {
 		}
 		fastBindingScopeBenchmarkSink = result
 	})
+}
+
+func Benchmark_VM_Fast_Loop_Conditional_Scope(b *testing.B) {
+	ctx, bindings, loop, conditional := fastLoopConditionalScopeFixture()
+	var out strings.Builder
+
+	require.NoError(b, renderFastLoopConditional(&out, ctx, bindings, loop, conditional, 0, "temporary"))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := renderFastLoopConditional(&out, ctx, bindings, loop, conditional, 0, "temporary"); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 var fastNestedBindingScopeBenchmarkSink string
@@ -218,4 +246,28 @@ func fastBindingScopeTestBindings(count int) fastRenderBindings {
 		bindings.localVals[i] = "original"
 	}
 	return bindings
+}
+
+func fastLoopConditionalScopeFixture() (*plush.Context, fastRenderBindings, *compiler.FastLoopPlan, *compiler.FastLoopConditionalPlan) {
+	ctx := plush.NewContext()
+	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"local"}}, ctx)
+	bindings.localOK = []bool{true}
+	bindings.localVals = []interface{}{"outer"}
+	loop := &compiler.FastLoopPlan{ValueName: "item"}
+	conditional := &compiler.FastLoopConditionalPlan{
+		Branches: []compiler.FastLoopConditionalBranch{{
+			Condition: compiler.FastValuePlan{Kind: compiler.FastValueBool, BoolValue: true},
+			Parts: []compiler.FastLoopPart{{
+				Kind:      compiler.FastLoopPartLet,
+				Value:     "local",
+				NameIndex: 0,
+				ValuePlan: compiler.FastValuePlan{Kind: compiler.FastValuePath, NameIndex: -1},
+			}},
+			BindingSync: compiler.FastBindingSyncPlan{
+				Prepared:         true,
+				LocalNameIndexes: []int{0},
+			},
+		}},
+	}
+	return ctx, bindings, loop, conditional
 }

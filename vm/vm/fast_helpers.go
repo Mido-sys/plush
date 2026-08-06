@@ -97,11 +97,14 @@ func writeRegisteredFastHelper(out *strings.Builder, ctx hctx.Context, helper Fa
 	return true, err
 }
 
-func writeRegisteredFastHelperNamed(out *strings.Builder, ctx hctx.Context, name string, helper FastHelperFunc, args *fastCallArgs) (bool, error) {
-	start := time.Now()
+func writeRegisteredFastHelperNamed(out *strings.Builder, ctx hctx.Context, name string, helper FastHelperFunc, args *fastCallArgs, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (bool, error) {
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	handled, err := writeRegisteredFastHelper(out, ctx, helper, args)
-	if handled {
-		plush.AddRenderDiagnosticVMHelperTiming(ctx, name, time.Since(start))
+	if handled && vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(reflect.TypeOf(helper)), plush.RenderVMHelperCallDirect, time.Since(start))
 	}
 	return handled, err
 }

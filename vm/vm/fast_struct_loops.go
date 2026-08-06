@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
@@ -187,7 +189,7 @@ func writeFastStructLoopCallPartWithLoop(out *strings.Builder, ctx hctx.Context,
 			}
 			argsReady = true
 		}
-		if handled, err := writeRegisteredFastHelperNamed(out, callCtx(), call.Name, helper, fastCallArgsOrNil(&args, len(plan.args))); handled || err != nil {
+		if handled, err := writeRegisteredFastHelperNamed(out, callCtx(), call.Name, helper, fastCallArgsOrNil(&args, len(plan.args)), bindings.vmHotspots); handled || err != nil {
 			if err != nil {
 				return fastLineError(call.Line, err)
 			}
@@ -195,9 +197,19 @@ func writeFastStructLoopCallPartWithLoop(out *strings.Builder, ctx hctx.Context,
 		}
 	}
 	if resolved.directWriter != nil {
+		var start time.Time
+		if bindings.vmHotspots.Enabled() {
+			start = time.Now()
+		}
 		if handled, err := resolved.directWriter(out, ctx, bindings, plan, loopKey, item); err != nil {
+			if handled && bindings.vmHotspots.Enabled() {
+				bindings.vmHotspots.AddHelperCall(call.Name, vmHelperCallSignature(resolved.entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return fastLineError(call.Line, err)
 		} else if handled {
+			if bindings.vmHotspots.Enabled() {
+				bindings.vmHotspots.AddHelperCall(call.Name, vmHelperCallSignature(resolved.entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return nil
 		}
 	}
@@ -208,11 +220,21 @@ func writeFastStructLoopCallPartWithLoop(out *strings.Builder, ctx hctx.Context,
 			}
 			argsReady = true
 		}
+		var start time.Time
+		if bindings.vmHotspots.Enabled() {
+			start = time.Now()
+		}
 		if err := resolved.entry.invoker(out, ctx, call.Name, resolved.raw, fastCallArgsOrNil(&args, len(plan.args))); err != nil {
 			if !errors.Is(err, errFastWriteUnsupported) {
+				if bindings.vmHotspots.Enabled() {
+					bindings.vmHotspots.AddHelperCall(call.Name, vmHelperCallSignature(resolved.entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+				}
 				return fastLineError(call.Line, err)
 			}
 		} else {
+			if bindings.vmHotspots.Enabled() {
+				bindings.vmHotspots.AddHelperCall(call.Name, vmHelperCallSignature(resolved.entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+			}
 			return nil
 		}
 	}
@@ -230,7 +252,7 @@ func writeFastStructLoopCallPartWithLoop(out *strings.Builder, ctx hctx.Context,
 		}
 		argsReady = true
 	}
-	if err := writeFastCallValueWithEntry(out, fastStructLoopHelperContext(ctx, callCtx, resolved.entry, len(plan.args)), call.Name, resolved.raw, fastCallArgsOrNil(&args, len(plan.args)), resolved.entry); err != nil {
+	if err := writeFastCallValueWithEntryDiagnostics(out, fastStructLoopHelperContext(ctx, callCtx, resolved.entry, len(plan.args)), call.Name, resolved.raw, fastCallArgsOrNil(&args, len(plan.args)), resolved.entry, bindings.vmHotspots); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil
@@ -357,6 +379,10 @@ func writeFastStructLoopReflectCall(out *strings.Builder, ctx hctx.Context, bind
 	if plan == nil || plan.call == nil || resolved == nil || resolved.entry == nil || resolved.entry.plan == nil {
 		return errFastWriteUnsupported
 	}
+	var start time.Time
+	if bindings.vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	callPlan := resolved.entry.plan
 	args := resolved.reflectArgs[:0]
 	for i := range plan.args {
@@ -374,6 +400,9 @@ func writeFastStructLoopReflectCall(out *strings.Builder, ctx hctx.Context, bind
 	}
 	resolved.reflectArgs = args[:0]
 	results := resolved.fn.Call(args)
+	if bindings.vmHotspots.Enabled() {
+		bindings.vmHotspots.AddHelperCall(plan.call.Name, vmHelperCallSignature(resolved.entry.rt), plush.RenderVMHelperCallReflection, time.Since(start))
+	}
 	return writeFastReflectCallResults(out, ctx, plan.call.Name, results)
 }
 

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/vm/code"
@@ -1161,7 +1162,7 @@ func (vm *VM) tryWriteRegisteredFastHelper(name string, numArgs int, calleeOnSta
 	for _, obj := range vm.stack[vm.sp-numArgs : vm.sp] {
 		args.Append(obj)
 	}
-	handled, err := writeRegisteredFastHelperNamed(&frame.output, vm.ctx, name, helper, fastCallArgsOrNil(&args, numArgs))
+	handled, err := writeRegisteredFastHelperNamed(&frame.output, vm.ctx, name, helper, fastCallArgsOrNil(&args, numArgs), vm.renderVMHotspots())
 	if err != nil || !handled {
 		return handled, err
 	}
@@ -1192,6 +1193,11 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 
 	rt := rv.Type()
 	plan := cachedCallPlanForSlot(rt, cacheSlot)
+	vmHotspots := vm.renderVMHotspots()
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	var scratch [1]reflect.Value
 	vm.lastHelperContext = nil
 	args, err := vm.reflectArgs(name, plan, numArgs, block, scratch[:0])
@@ -1201,6 +1207,9 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 	helperCtx := vm.lastHelperContext
 
 	res := rv.Call(args)
+	if name != "partial" && vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(rt), plush.RenderVMHelperCallReflection, time.Since(start))
+	}
 	if helperCtx != nil {
 		if name != "partial" {
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
@@ -1246,6 +1255,11 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 
 	rt := rv.Type()
 	plan := cachedCallPlanForSlot(rt, cacheSlot)
+	vmHotspots := vm.renderVMHotspots()
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	var scratch [1]reflect.Value
 	vm.lastHelperContext = nil
 	args, err := vm.reflectArgs(name, plan, numArgs, nil, scratch[:0])
@@ -1255,6 +1269,9 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 	helperCtx := vm.lastHelperContext
 
 	res := rv.Call(args)
+	if name != "partial" && vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(rt), plush.RenderVMHelperCallReflection, time.Since(start))
+	}
 	if helperCtx != nil {
 		if name != "partial" {
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
@@ -1312,12 +1329,23 @@ func (vm *VM) tryFastWriteNativeValueCall(name string, raw interface{}, numArgs 
 	if calleeOnStack {
 		vm.sp--
 	}
+	vmHotspots := vm.renderVMHotspots()
+	var start time.Time
+	if vmHotspots.Enabled() {
+		start = time.Now()
+	}
 	if err := entry.invoker(vm, vm.currentFrame(), name, raw, args); err != nil {
 		if errors.Is(err, errFastWriteUnsupported) {
 			vm.sp = oldSP
 			return false, nil
 		}
+		if vmHotspots.Enabled() {
+			vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
+		}
 		return true, err
+	}
+	if vmHotspots.Enabled() {
+		vmHotspots.AddHelperCall(name, vmHelperCallSignature(entry.rt), plush.RenderVMHelperCallDirect, time.Since(start))
 	}
 	return true, nil
 }

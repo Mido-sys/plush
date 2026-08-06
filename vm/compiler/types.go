@@ -47,6 +47,9 @@ type FastRenderReject struct {
 
 type FastRenderSegmentKind uint8
 
+// When adding a segment kind, classify its binding behavior in
+// fastRenderSegmentBindingEffect. The binding-sync plan is trusted by the VM
+// to restore lexical scopes without copying every local binding.
 const (
 	FastRenderSegmentStatic FastRenderSegmentKind = iota
 	FastRenderSegmentName
@@ -61,6 +64,7 @@ const (
 	FastRenderSegmentAssign
 	FastRenderSegmentReturn
 	FastRenderSegmentGeneric
+	fastRenderSegmentKindCount
 )
 
 type FastRenderSegment struct {
@@ -87,8 +91,9 @@ type FastRenderSegment struct {
 
 // FastBindingSyncPlan lists outer binding slots that a lexical scope may
 // update and local slots that must be restored when the scope exits. Prepared
-// distinguishes a compiled empty plan from an older or manually assembled
-// plan that still needs runtime analysis.
+// distinguishes a completed plan from one that is older, manually assembled,
+// unclassified, or deferred by the metadata budget and needs compatibility
+// handling in the VM.
 type FastBindingSyncPlan struct {
 	NameIndexes       []int
 	LocalNameIndexes  []int
@@ -110,6 +115,9 @@ type FastRenderPlan struct {
 
 type FastLoopPartKind uint8
 
+// When adding a loop-part kind, classify its binding behavior in
+// fastLoopPartBindingEffect. Unclassified kinds must leave binding-sync plans
+// unprepared so the VM uses its compatibility path.
 const (
 	FastLoopPartStatic FastLoopPartKind = iota
 	FastLoopPartKey
@@ -126,6 +134,7 @@ const (
 	FastLoopPartLet
 	FastLoopPartAssign
 	FastLoopPartReturn
+	fastLoopPartKindCount
 )
 
 type FastLoopPart struct {

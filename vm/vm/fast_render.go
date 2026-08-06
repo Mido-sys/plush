@@ -127,13 +127,21 @@ func renderFastPlanWithBindingPlan(bytecode *compiler.Bytecode, plan *compiler.F
 	return renderFastPlanWithBindingPlanOptions(bytecode, plan, ctx, bindingPlan, outputSizeOptions{})
 }
 
+func renderFastPlanWithBindingPlanDiagnostics(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (string, bool, error) {
+	return renderFastPlanWithBindingPlanOptionsDiagnostics(bytecode, plan, ctx, bindingPlan, outputSizeOptions{}, vmHotspots)
+}
+
 func renderFastPlanWithBindingPlanOptions(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan, options outputSizeOptions) (string, bool, error) {
+	return renderFastPlanWithBindingPlanOptionsDiagnostics(bytecode, plan, ctx, bindingPlan, options, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func renderFastPlanWithBindingPlanOptionsDiagnostics(bytecode *compiler.Bytecode, plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan, options outputSizeOptions, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (string, bool, error) {
 	if plan == nil {
 		return "", false, nil
 	}
 
 	mixed := prepareFastMixedPlan(plan)
-	bindings := newFastRenderBindingsWithPlan(plan, ctx, bindingPlan)
+	bindings := newFastRenderBindingsWithPlanDiagnostics(plan, ctx, bindingPlan, vmHotspots)
 	var out strings.Builder
 	observation := beginOutputSizeObservation(bytecode, fastOutputGrowSize(mixed, bindings), ctx, options)
 	growEmptyOutputBuilder(&out, observation.growHint, &observation)
@@ -1159,7 +1167,7 @@ func evalFastSimpleValue(plan *fastSimpleValuePlan, ctx hctx.Context, bindings f
 		for i := range value.Path {
 			step := &value.Path[i]
 			var err error
-			raw, err = evalFastPathStep(raw, step, ctx)
+			raw, err = evalFastPathStepWithBindings(raw, step, ctx, bindings, nil, nil, false)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1248,7 +1256,7 @@ func evalFastCallValuePlan(call *compiler.FastCallPlan, simpleArgs []*fastSimple
 			argStore.Append(value)
 		}
 	}
-	result, err := fastCallValue(call.Name, raw, args, ctx, &call.Cache)
+	result, err := fastCallValueWithDiagnostics(call.Name, raw, args, ctx, &call.Cache, bindings.vmHotspots)
 	if err != nil {
 		return nil, true, fastLineError(call.Line, err)
 	}
