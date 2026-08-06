@@ -944,6 +944,34 @@ func valueFastInvokerForRaw(raw interface{}) valueFastInvoker {
 
 func contextualValueFastInvokerForRaw(raw interface{}) contextualValueFastInvoker {
 	switch raw.(type) {
+	case func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error):
+		return func(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context) (interface{}, error) {
+			partialName, data, ok := fastStringMapHelperArgs(args)
+			if !ok {
+				return nil, errFastWriteUnsupported
+			}
+			value, err := raw.(func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error))(
+				partialName, data, plush.NewHelperContext(ctx, nil),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("could not call %s function: %w", name, err)
+			}
+			return value, nil
+		}
+	case func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error):
+		return func(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context) (interface{}, error) {
+			partialName, data, ok := fastStringMapHelperArgs(args)
+			if !ok {
+				return nil, errFastWriteUnsupported
+			}
+			value, err := raw.(func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error))(
+				partialName, data, plush.NewHelperContext(ctx, nil),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("could not call %s function: %w", name, err)
+			}
+			return value, nil
+		}
 	case func(string, plush.HelperContext) string:
 		return func(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context) (interface{}, error) {
 			if args.Len() != 1 {
@@ -1103,7 +1131,9 @@ func contextualValueFastInvokerUsesReflection(raw interface{}) bool {
 		func(string, plush.HelperContext) template.HTML,
 		func(string, hctx.HelperContext) template.HTML,
 		func(string, plush.HelperContext) (template.HTML, error),
-		func(string, hctx.HelperContext) (template.HTML, error):
+		func(string, hctx.HelperContext) (template.HTML, error),
+		func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error),
+		func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error):
 		return false
 	}
 	rt := reflect.TypeOf(raw)
@@ -1115,6 +1145,46 @@ func contextualValueFastInvokerUsesReflection(raw interface{}) bool {
 
 func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 	switch raw.(type) {
+	case func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error):
+		return func(vm *VM, frame *Frame, name string, raw interface{}, args []object.Object) error {
+			partialName, data, ok := fastStringMapObjectArgs(args)
+			if !ok {
+				return errFastWriteUnsupported
+			}
+			helperCtx := vm.helperContext(nil)
+			value, err := raw.(func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error))(
+				partialName, data, helperCtx,
+			)
+			if name != "partial" {
+				vm.syncContextBindingsFromContext(vm.ctx, helperCtx.Context)
+			}
+			vm.syncFrameBindingsFromContext(helperCtx.Context)
+			if err != nil {
+				return fmt.Errorf("could not call %s function: %w", name, err)
+			}
+			writeFastHTML(frame, value)
+			return nil
+		}
+	case func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error):
+		return func(vm *VM, frame *Frame, name string, raw interface{}, args []object.Object) error {
+			partialName, data, ok := fastStringMapObjectArgs(args)
+			if !ok {
+				return errFastWriteUnsupported
+			}
+			helperCtx := vm.helperContext(nil)
+			value, err := raw.(func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error))(
+				partialName, data, helperCtx,
+			)
+			if name != "partial" {
+				vm.syncContextBindingsFromContext(vm.ctx, helperCtx.Context)
+			}
+			vm.syncFrameBindingsFromContext(helperCtx.Context)
+			if err != nil {
+				return fmt.Errorf("could not call %s function: %w", name, err)
+			}
+			writeFastHTML(frame, value)
+			return nil
+		}
 	case func():
 		return func(vm *VM, frame *Frame, name string, raw interface{}, args []object.Object) error {
 			if len(args) != 0 {
@@ -1606,6 +1676,51 @@ func fastWriteRawStringArg(value interface{}) (string, bool) {
 			return rv.String(), true
 		}
 		return "", false
+	}
+}
+
+func fastStringMapHelperArgs(args *fastCallArgs) (string, map[string]interface{}, bool) {
+	if args == nil || args.Len() < 1 || args.Len() > 2 {
+		return "", nil, false
+	}
+	name, ok := fastWriteRawStringArg(args.Raw(0))
+	if !ok {
+		return "", nil, false
+	}
+	if args.Len() == 1 {
+		return name, map[string]interface{}{}, true
+	}
+	data, ok := fastStringMapArg(args.Raw(1))
+	return name, data, ok
+}
+
+func fastStringMapObjectArgs(args []object.Object) (string, map[string]interface{}, bool) {
+	if len(args) < 1 || len(args) > 2 {
+		return "", nil, false
+	}
+	name, ok := fastWriteStringArg(args[0])
+	if !ok {
+		return "", nil, false
+	}
+	if len(args) == 1 {
+		return name, map[string]interface{}{}, true
+	}
+	data, ok := fastStringMapArg(object.ToGo(args[1]))
+	return name, data, ok
+}
+
+func fastStringMapArg(value interface{}) (map[string]interface{}, bool) {
+	value = fastArgGoValue(value)
+	if value == nil {
+		return nil, true
+	}
+	switch value := value.(type) {
+	case map[string]interface{}:
+		return value, true
+	case hctx.Map:
+		return map[string]interface{}(value), true
+	default:
+		return nil, false
 	}
 }
 

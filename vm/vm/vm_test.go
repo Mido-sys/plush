@@ -1585,6 +1585,57 @@ func Test_VM_Partial_Render_Fast_Plan_Reuses_Linked_Bytecode(t *testing.T) {
 	require.True(t, links.hasFeederID)
 }
 
+func Test_VM_Generic_Partial_With_Local_Uses_Direct_Partial_Renderer(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "selection.plush", name)
+			return `<% selected = "after" %><%= selected %>`, nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	tmpl, err := Compile(`<% let selected = "before" %><%= partial("selection.plush") %>|<%= selected %>`)
+	require.NoError(t, err)
+	tmpl.bytecode.FastRenderPlan = nil
+	tmpl.bytecode.HasPartials = true
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "after|after", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.VMHotspots.PartialCalls)
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		require.NotEqual(t, "partial", detail.Name)
+	}
+}
+
+func Test_VM_Generic_Data_Partial_Uses_Direct_Typed_Invoker(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "card.plush", name)
+			return `<strong><%= label %></strong>`, nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	tmpl, err := Compile(`<%= partial("card.plush", {label: "Mido"}) %>`)
+	require.NoError(t, err)
+	tmpl.bytecode.FastRenderPlan = nil
+	tmpl.bytecode.HasPartials = true
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<strong>Mido</strong>", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 1)
+	require.Equal(t, "partial", diagnostics.VMHotspots.HelperCallPaths[0].Name)
+	require.Equal(t, plush.RenderVMHelperCallDirect, diagnostics.VMHotspots.HelperCallPaths[0].Path)
+}
+
 func Test_VM_Partial_Render_Binding_Plan_Reuses_Linked_Binding_I_Ds(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{
 		"name": "Mido",

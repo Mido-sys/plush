@@ -1242,10 +1242,10 @@ func (vm *VM) writeNativeCall(name string, callee object.Object, numArgs int, ca
 }
 
 func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, cacheSlot *object.InlineCacheSlot, calleeOnStack bool) error {
+	if handled, err := vm.tryFastWriteNativeValueCall(name, raw, numArgs, cacheSlot, calleeOnStack); handled || err != nil {
+		return err
+	}
 	if name != "partial" {
-		if handled, err := vm.tryFastWriteNativeValueCall(name, raw, numArgs, cacheSlot, calleeOnStack); handled || err != nil {
-			return err
-		}
 		if handled, err := vm.tryWriteRegisteredFastValueHelper(name, numArgs, calleeOnStack); handled || err != nil {
 			return err
 		}

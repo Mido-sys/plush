@@ -281,6 +281,35 @@ func Test_VM_Contextual_Value_Fast_Invoker_For_Hctx_Helper_Context_Error(t *test
 	require.ErrorContains(t, err, "could not call datetime function: boom date")
 }
 
+func Test_VM_String_Map_Helper_Context_Invoker_Is_Direct(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{"suffix": "-ctx"})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	raw := func(name string, data map[string]interface{}, help plush.HelperContext) (template.HTML, error) {
+		label, _ := data["label"].(string)
+		return template.HTML(name + ":" + label + help.Value("suffix").(string)), nil
+	}
+	entry := cachedFastCallEntry(reflect.TypeOf(raw), raw, nil)
+	require.Nil(t, entry.invoker)
+	require.NotNil(t, entry.contextualValueInvoker)
+	require.False(t, entry.contextualValueInvokerReflective)
+
+	var out strings.Builder
+	require.NoError(t, writeFastCallValueWithEntry(&out, ctx, "partial", raw, fastArgs("row.plush"), entry))
+	require.Equal(t, "row.plush:-ctx", out.String())
+
+	value, err := fastCallValueWithEntry("partial", raw, fastArgs("card.plush", map[string]interface{}{"label": "Mido"}), ctx, entry)
+	require.NoError(t, err)
+	require.Equal(t, template.HTML("card.plush:Mido-ctx"), value)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 1)
+	require.Equal(t, "partial", diagnostics.VMHotspots.HelperCallPaths[0].Name)
+	require.Equal(t, plush.RenderVMHelperCallDirect, diagnostics.VMHotspots.HelperCallPaths[0].Path)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperCallPaths[0].Calls)
+}
+
 func Test_VM_Reset_Child_Cleans_Reused_State(t *testing.T) {
 	oldCtx := plush.NewContext()
 	newCtx := plush.NewContext()

@@ -74,13 +74,13 @@ func (vm *VM) tryWriteLiteralPartialNameCall(name string, raw interface{}, numAr
 	if frame == nil {
 		return false, nil
 	}
-	if frame.cl != nil && frame.cl.Fn != nil && frame.cl.Fn.NumLocals > 0 {
-		return false, nil
-	}
-
 	oldSP := vm.sp
 	vm.sp -= numArgs
-	handled, err := renderFastNoDataPartialIntoWithDiagnostics(&frame.output, arg.Value, vm.ctx, vm.currentLineNumber(), vm.renderVMHotspots())
+	callCtx := vm.contextWithFrameLocals()
+	handled, err := renderFastNoDataPartialIntoWithDiagnostics(&frame.output, arg.Value, callCtx, vm.currentLineNumber(), vm.renderVMHotspots())
+	if handled || err != nil {
+		vm.syncFrameBindingsFromContext(callCtx)
+	}
 	if err != nil {
 		return true, err
 	}

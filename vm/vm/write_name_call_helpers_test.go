@@ -155,20 +155,32 @@ func Test_VM_Execute_Write_Name_Call_Direct_Literal_Partial_Respects_Custom_Help
 	require.Equal(t, 0, machine.sp)
 }
 
-func Test_VM_Execute_Write_Name_Call_Direct_Literal_Partial_Skips_When_Frame_Has_Locals(t *testing.T) {
+func Test_VM_Execute_Write_Name_Call_Direct_Literal_Partial_Synchronizes_Frame_Locals(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{
 		"partial": vmPartialHelper,
 		"partialFeeder": func(name string) (string, error) {
-			require.Equal(t, "fallback_skip.plush", name)
-			return `<span>fallback</span>`, nil
+			require.Equal(t, "local.plush", name)
+			return `<% selected = "after" %><span><%= selected %></span>`, nil
 		},
 	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
 	machine := newWriteNameCallTestVM(ctx, "partial")
 	machine.currentFrame().cl.Fn.NumLocals = 1
+	machine.currentFrame().cl.Fn.LocalNames = map[int]string{0: "selected"}
+	machine.stack[0] = &object.String{Value: "before"}
+	machine.sp = 1
 
-	require.NoError(t, machine.push(&object.String{Value: "fallback_skip.plush"}))
+	require.NoError(t, machine.push(&object.String{Value: "local.plush"}))
 	require.NoError(t, machine.executeWriteNameCall(0, 1, nil))
-	require.Equal(t, `<span>fallback</span>`, machine.currentFrame().output.String())
+	require.Equal(t, `<span>after</span>`, machine.currentFrame().output.String())
 	require.True(t, machine.currentFrame().hasOutput)
-	require.Equal(t, 0, machine.sp)
+	require.Equal(t, 1, machine.sp)
+	require.Equal(t, "after", object.ToGo(machine.stack[0]))
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.VMHotspots.PartialCalls)
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		require.NotEqual(t, "partial", detail.Name)
+	}
 }
