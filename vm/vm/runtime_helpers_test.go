@@ -14,6 +14,7 @@ import (
 	"github.com/gobuffalo/plush/v5/helpers/meta"
 	"github.com/gobuffalo/plush/v5/parser"
 	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
+	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,35 @@ func newRuntimeHelperTestVM(ctx hctx.Context) *VM {
 		ctx:         ctx,
 		holes:       &[]plush.HoleMarker{},
 	}
+}
+
+func Test_VM_Sync_Dynamic_Context_Bindings_Uses_Prepared_Name_Indexes(t *testing.T) {
+	target := newIDLookupTestContext(map[string]interface{}{})
+	source := plush.NewContextWith(map[string]interface{}{"name": "updated"})
+	machine := newRuntimeHelperTestVM(target)
+	frame := machine.currentFrame()
+	frame.cl.Fn.DynamicContextNamesReady = true
+	frame.cl.Fn.DynamicContextNameIndexes = []int{0}
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "updated", target.values["name"])
+	require.Equal(t, 1, target.internID)
+
+	source.Set("name", "again")
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "again", target.values["name"])
+	require.Equal(t, 1, target.internID)
+}
+
+func Test_VM_Sync_Dynamic_Context_Bindings_Falls_Back_For_Manual_Functions(t *testing.T) {
+	target := newIDLookupTestContext(map[string]interface{}{})
+	source := plush.NewContextWith(map[string]interface{}{"name": "fallback"})
+	machine := newRuntimeHelperTestVM(target)
+	frame := machine.currentFrame()
+	frame.cl.Fn.Instructions = code.Make(code.OpWriteName, 0)
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "fallback", target.values["name"])
 }
 
 func Test_VM_Runtime_Line_Context_And_Write_Helpers(t *testing.T) {

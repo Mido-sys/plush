@@ -3124,6 +3124,44 @@ func Test_Phase_11_Nested_Function_Call_Name_Metadata(t *testing.T) {
 	require.True(t, foundInner, "expected outer function constant to record inner() call")
 }
 
+func Test_Compiler_Dynamic_Context_Name_Metadata(t *testing.T) {
+	program, err := parser.Parse(`<%= name %><%= user.Name %><% name = "updated" %>`)
+	require.NoError(t, err)
+
+	compiler := New()
+	require.NoError(t, compiler.Compile(program))
+
+	bytecode := compiler.Bytecode()
+	require.True(t, bytecode.DynamicContextNamesReady)
+	require.Equal(t, []string{"name", "user"}, dynamicContextNamesForTest(bytecode.Constants, bytecode.DynamicContextNameIndexes))
+
+	_, ready := dynamicContextNameIndexesFromInstructions(code.Instructions{byte(255)}, bytecode.Constants)
+	require.False(t, ready)
+
+	program, err = ParseScript(`fn() { return user.Name }`)
+	require.NoError(t, err)
+	compiler = New()
+	require.NoError(t, compiler.Compile(program))
+
+	bytecode = compiler.Bytecode()
+	fn, ok := bytecode.Constants[len(bytecode.Constants)-1].(*object.CompiledFunction)
+	require.Truef(t, ok, "last constant is not compiled function: %T", bytecode.Constants[len(bytecode.Constants)-1])
+	require.True(t, fn.DynamicContextNamesReady)
+	require.Equal(t, []string{"user"}, dynamicContextNamesForTest(bytecode.Constants, fn.DynamicContextNameIndexes))
+}
+
+func dynamicContextNamesForTest(constants []object.Object, indexes []int) []string {
+	names := make([]string, 0, len(indexes))
+	for _, index := range indexes {
+		name, ok := stringConstantValue(constants, index)
+		if !ok {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 func Test_Global_Let_Statements(t *testing.T) {
 	tests := []compilerTestCase{
 		{

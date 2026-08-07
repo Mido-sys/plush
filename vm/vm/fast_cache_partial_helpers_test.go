@@ -274,6 +274,21 @@ func Test_VM_Partial_Overlay_Update_ID_Branches(t *testing.T) {
 	require.False(t, local.UpdateID(missingID, nil))
 }
 
+func Test_VM_Partial_Overlay_InternID_Caches_Name_ID(t *testing.T) {
+	parent := newIDLookupTestContext(map[string]interface{}{})
+	local := borrowPartialOverlayContext(parent)
+	defer releasePartialOverlayContext(local)
+
+	first := local.InternID("section")
+	require.Equal(t, 1, parent.internID)
+	require.Equal(t, first, local.InternID("section"))
+	require.Equal(t, 1, parent.internID)
+
+	local.SetID(first, "value")
+	require.Equal(t, first, local.InternID("section"))
+	require.Equal(t, 1, parent.internID)
+}
+
 func Test_VM_Partial_Overlay_Render_Assigns_Missing_Map_Value_To_Existing_Local(t *testing.T) {
 	type record struct {
 		Fields map[string]string

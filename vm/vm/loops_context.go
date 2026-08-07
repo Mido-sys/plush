@@ -289,7 +289,10 @@ func (vm *VM) contextValueByNameIndex(nameIndex int) (interface{}, bool) {
 }
 
 func (vm *VM) contextNameID(lookup contextIDLookup, nameIndex int) int {
-	name := vm.stringConstant(nameIndex)
+	return vm.contextStringID(lookup, vm.stringConstant(nameIndex))
+}
+
+func (vm *VM) contextStringID(lookup contextIDLookup, name string) int {
 	for i := 0; i < vm.nameIDCacheLen; i++ {
 		if vm.nameIDCache[i].name == name {
 			return vm.nameIDCache[i].id
@@ -609,7 +612,7 @@ func (vm *VM) syncContextBindingsFromContext(target hctx.Context, source hctx.Co
 		return
 	}
 	for _, name := range vm.globalNames {
-		syncContextBinding(target, source, name)
+		vm.syncContextBinding(target, source, name)
 	}
 
 	frame := vm.currentFrame()
@@ -618,13 +621,19 @@ func (vm *VM) syncContextBindingsFromContext(target hctx.Context, source hctx.Co
 		return
 	}
 	for _, name := range frame.cl.Fn.LocalNames {
-		syncContextBinding(target, source, name)
+		vm.syncContextBinding(target, source, name)
 	}
 	vm.syncDynamicContextBindingsFromContext(target, source, frame)
 }
 
 func (vm *VM) syncDynamicContextBindingsFromContext(target hctx.Context, source hctx.Context, frame *Frame) {
-	if vm == nil || target == nil || source == nil || frame == nil {
+	if vm == nil || target == nil || source == nil || frame == nil || frame.cl == nil || frame.cl.Fn == nil {
+		return
+	}
+	if frame.cl.Fn.DynamicContextNamesReady {
+		for _, nameIndex := range frame.cl.Fn.DynamicContextNameIndexes {
+			vm.syncContextBindingByNameIndex(target, source, nameIndex)
+		}
 		return
 	}
 	seen := map[string]struct{}{}
@@ -640,7 +649,7 @@ func (vm *VM) syncDynamicContextBindingsFromContext(target hctx.Context, source 
 		if len(operands) > 0 && dynamicContextNameOpcode(op) {
 			name := vm.stringConstant(operands[0])
 			if _, ok := seen[name]; !ok {
-				syncContextBinding(target, source, name)
+				vm.syncContextBinding(target, source, name)
 				seen[name] = struct{}{}
 			}
 		}
@@ -658,7 +667,11 @@ func dynamicContextNameOpcode(op code.Opcode) bool {
 	}
 }
 
-func syncContextBinding(target hctx.Context, source hctx.Context, name string) {
+func (vm *VM) syncContextBindingByNameIndex(target hctx.Context, source hctx.Context, nameIndex int) {
+	if vm == nil {
+		return
+	}
+	name := vm.stringConstant(nameIndex)
 	if name == "" {
 		return
 	}
@@ -667,7 +680,34 @@ func syncContextBinding(target hctx.Context, source hctx.Context, name string) {
 		return
 	}
 	if lookup, ok := target.(contextIDLookup); ok {
-		id := lookup.InternID(name)
+		id := vm.contextNameID(lookup, nameIndex)
+		if lookup.UpdateID(id, value) {
+			return
+		}
+		lookup.SetID(id, value)
+		return
+	}
+	if target.Update(name, value) {
+		return
+	}
+	target.Set(name, value)
+}
+
+func (vm *VM) syncContextBinding(target hctx.Context, source hctx.Context, name string) {
+	if name == "" {
+		return
+	}
+	value, ok := fastContextValue(source, name)
+	if !ok {
+		return
+	}
+	if lookup, ok := target.(contextIDLookup); ok {
+		var id int
+		if vm == nil {
+			id = lookup.InternID(name)
+		} else {
+			id = vm.contextStringID(lookup, name)
+		}
 		if lookup.UpdateID(id, value) {
 			return
 		}

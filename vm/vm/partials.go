@@ -100,6 +100,7 @@ type partialOverlayContext struct {
 	extra      map[string]interface{}
 	extraIDs   map[int]interface{}
 	idNames    map[int]string
+	nameIDs    map[string]int
 	idInterner *plush.InternTable
 }
 
@@ -145,6 +146,9 @@ func (c *partialOverlayContext) reset(parent hctx.Context) {
 	}
 	if c.idNames != nil {
 		clear(c.idNames)
+	}
+	if c.nameIDs != nil {
+		clear(c.nameIDs)
 	}
 	c.idInterner = nil
 	c.parent = parent
@@ -270,6 +274,9 @@ func (c *partialOverlayContext) Lookup(key string) (interface{}, bool) {
 func (c *partialOverlayContext) InternID(key string) int {
 	if c == nil {
 		return -1
+	}
+	if id, ok := c.idForName(key); ok {
+		return id
 	}
 	var id int
 	if lookup, ok := c.parent.(contextIDLookup); ok {
@@ -436,6 +443,9 @@ func (c *partialOverlayContext) setLocal(key string, value interface{}) {
 }
 
 func (c *partialOverlayContext) setLocalWithID(key string, id int, value interface{}) {
+	if key != "" && id >= 0 {
+		c.rememberIDName(id, key)
+	}
 	if key != "" && c.setLocalExisting(key, value) {
 		c.setLocalIDExisting(id, value)
 		return
@@ -464,10 +474,42 @@ func (c *partialOverlayContext) rememberIDName(id int, key string) {
 	if c == nil || id < 0 || key == "" {
 		return
 	}
+	if c.nameIDs != nil {
+		if existing, ok := c.nameIDs[key]; ok && existing == id {
+			if c.idNames != nil {
+				if existingName, ok := c.idNames[id]; ok && existingName == key {
+					return
+				}
+			}
+		}
+	} else {
+		c.nameIDs = make(map[string]int, 4)
+	}
+	c.nameIDs[key] = id
 	if c.idNames == nil {
 		c.idNames = make(map[int]string, 4)
 	}
+	if existingName, ok := c.idNames[id]; ok && existingName == key {
+		return
+	}
 	c.idNames[id] = key
+}
+
+func (c *partialOverlayContext) idForName(key string) (int, bool) {
+	if c == nil || key == "" {
+		return -1, false
+	}
+	if c.nameIDs != nil {
+		if id, ok := c.nameIDs[key]; ok {
+			return id, true
+		}
+	}
+	for i := 0; i < c.count; i++ {
+		if c.inline[i].key == key {
+			return c.inline[i].id, true
+		}
+	}
+	return -1, false
 }
 
 func (c *partialOverlayContext) nameForID(id int) (string, bool) {

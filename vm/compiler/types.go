@@ -9,31 +9,33 @@ import (
 )
 
 type Bytecode struct {
-	Instructions      code.Instructions
-	CallNames         map[int]string
-	LocalNames        map[int]string
-	LineNumbers       map[int]int
-	Properties        map[int]object.PropertyAccess
-	PropertyCaches    []object.InlineCacheSlot
-	CallCaches        []object.InlineCacheSlot
-	NumLocals         int
-	NumGlobals        int
-	Constants         []object.Object
-	GlobalNames       map[int]string
-	Static            bool
-	StaticOutput      string
-	StaticSize        int
-	FastRenderPlan    *FastRenderPlan
-	FastRejectLine    int
-	FastReject        string
-	FastDiagnostics   atomic.Value
-	OutputSizeStats   *OutputSizeStats
-	LayoutSizeStats   *OutputSizeStats
-	LayoutSizeProfile *LayoutOutputSizeProfile
-	PartialSizeStats  *OutputSizeStats
-	HasHoles          bool
-	HasPartials       bool
-	HasContextWrites  bool
+	Instructions              code.Instructions
+	CallNames                 map[int]string
+	LocalNames                map[int]string
+	DynamicContextNameIndexes []int
+	DynamicContextNamesReady  bool
+	LineNumbers               map[int]int
+	Properties                map[int]object.PropertyAccess
+	PropertyCaches            []object.InlineCacheSlot
+	CallCaches                []object.InlineCacheSlot
+	NumLocals                 int
+	NumGlobals                int
+	Constants                 []object.Object
+	GlobalNames               map[int]string
+	Static                    bool
+	StaticOutput              string
+	StaticSize                int
+	FastRenderPlan            *FastRenderPlan
+	FastRejectLine            int
+	FastReject                string
+	FastDiagnostics           atomic.Value
+	OutputSizeStats           *OutputSizeStats
+	LayoutSizeStats           *OutputSizeStats
+	LayoutSizeProfile         *LayoutOutputSizeProfile
+	PartialSizeStats          *OutputSizeStats
+	HasHoles                  bool
+	HasPartials               bool
+	HasContextWrites          bool
 }
 
 func (b *Bytecode) ContextWrites() bool {

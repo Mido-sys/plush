@@ -46,14 +46,16 @@ func newWithContextDiagnosticsState(bytecode *compiler.Bytecode, ctx hctx.Contex
 	}
 
 	mainFn := &object.CompiledFunction{
-		Instructions:   bytecode.Instructions,
-		CallNames:      bytecode.CallNames,
-		LocalNames:     bytecode.LocalNames,
-		LineNumbers:    bytecode.LineNumbers,
-		Properties:     bytecode.Properties,
-		PropertyCaches: bytecode.PropertyCaches,
-		CallCaches:     bytecode.CallCaches,
-		NumLocals:      bytecode.NumLocals,
+		Instructions:              bytecode.Instructions,
+		CallNames:                 bytecode.CallNames,
+		LocalNames:                bytecode.LocalNames,
+		DynamicContextNameIndexes: bytecode.DynamicContextNameIndexes,
+		DynamicContextNamesReady:  bytecode.DynamicContextNamesReady,
+		LineNumbers:               bytecode.LineNumbers,
+		Properties:                bytecode.Properties,
+		PropertyCaches:            bytecode.PropertyCaches,
+		CallCaches:                bytecode.CallCaches,
+		NumLocals:                 bytecode.NumLocals,
 	}
 	mainClosure := &object.Closure{Fn: mainFn}
 	mainFrame := newFrame(mainClosure, 0, pooled)

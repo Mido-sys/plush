@@ -189,16 +189,18 @@ func (h *Hash) Inspect() string {
 }
 
 type CompiledFunction struct {
-	Instructions     code.Instructions
-	CallNames        map[int]string
-	LocalNames       map[int]string
-	CapturedBindings []CapturedBinding
-	LineNumbers      map[int]int
-	Properties       map[int]PropertyAccess
-	PropertyCaches   []InlineCacheSlot
-	CallCaches       []InlineCacheSlot
-	NumLocals        int
-	NumParameters    int
+	Instructions              code.Instructions
+	CallNames                 map[int]string
+	LocalNames                map[int]string
+	DynamicContextNameIndexes []int
+	DynamicContextNamesReady  bool
+	CapturedBindings          []CapturedBinding
+	LineNumbers               map[int]int
+	Properties                map[int]PropertyAccess
+	PropertyCaches            []InlineCacheSlot
+	CallCaches                []InlineCacheSlot
+	NumLocals                 int
+	NumParameters             int
 }
 
 type CapturedBindingScope uint8
