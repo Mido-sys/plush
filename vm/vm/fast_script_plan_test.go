@@ -410,6 +410,40 @@ func Test_VM_Fast_Render_Hctx_Block_Helper_Set_Is_Visible_To_Receiver_Calls(t *t
 	require.Equal(t, `<form action="/records" method="POST">input:Fields[0].EntryID:second:field_input</form>`, out)
 }
 
+func Test_VM_Fast_Render_Tags_Form_And_InputTag_Use_Direct_Calls(t *testing.T) {
+	tmpl, err := Compile(`<%= form({method: "POST"}) { %><%= f.InputTag({name:"Name", value:"Mido"}) %><% } %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"form": func(_ tags.Options, help hctx.HelperContext) (template.HTML, error) {
+			help.Set("f", fastScriptPlanTagFormBuilder{})
+			body, err := help.Block()
+			if err != nil {
+				return "", err
+			}
+			return template.HTML("<form>" + body + "</form>"), nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, `<form><input name="Name" type="text" value="Mido" /></form>`, out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionCalls)
+
+	paths := map[string]plush.RenderVMHelperCallPathDiagnostics{}
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		paths[detail.Name] = detail
+	}
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["form"].Path)
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["InputTag"].Path)
+}
+
 func Test_VM_Fast_Render_Hctx_Block_Helper_Set_Survives_Reused_Bytecode_With_New_Context(t *testing.T) {
 	tmpl, err := Compile(`<%= form({action: submitPath(), method: "POST"}) { %><%= f.InputTag({name:"Fields[0].Value", value: record.Value, class:"field_input"}) %><% } %>`)
 	require.NoError(t, err)
@@ -1224,6 +1258,95 @@ func Test_VM_Fast_Render_Loop_Local_Assignment_Does_Not_Leak(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.Equal(t, "ab", out)
+}
+
+func Test_VM_Fast_Render_Branch_Local_Shadow_Does_Not_Replace_Outer_Assignment(t *testing.T) {
+	tmpl, err := Compile(`<% let result = "" %><%= for (_, item) in items { %><% result = result + "A" %><%= if (true) { %><% let result = "inner" %><%= result %><% } %><% result = result + "B" %><% } %>|<%= result %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+
+	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
+		"items": []int{1, 2},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, "innerinner|ABAB", out)
+}
+
+func Test_VM_Fast_Render_Assignment_Before_Same_Scope_Shadow_Matches_Interpreter(t *testing.T) {
+	source := `<% let result = "" %><%= for (_, item) in items { %><% result = result + "A" %><% let result = "inner" %><% result = result + "X" %><% } %><%= result %>`
+	data := map[string]interface{}{"items": []int{1}}
+
+	expected, err := plush.RenderInterpreter(source, plush.NewContextWith(data))
+	require.NoError(t, err)
+
+	tmpl, err := Compile(source)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+
+	out, err := tmpl.Render(plush.NewContextWith(data))
+	require.NoError(t, err)
+	require.Equal(t, expected, out)
+}
+
+func Test_VM_Fast_Render_Binding_Metadata_Budget_Fallback_Matches_Interpreter(t *testing.T) {
+	const depth = 64
+
+	var source strings.Builder
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<% let value`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(` = "" %>`)
+	}
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<%= if (true) { %><% value`)
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString(` = "updated" %>`)
+	}
+	for index := 0; index < depth; index++ {
+		source.WriteString(`<% } %>`)
+	}
+	source.WriteString(`<%= value63 %>`)
+
+	expected, err := plush.RenderInterpreter(source.String(), plush.NewContext())
+	require.NoError(t, err)
+
+	tmpl, err := Compile(source.String())
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan, tmpl.bytecode.FastReject)
+	require.Empty(t, tmpl.bytecode.FastReject)
+	prepared, unprepared := fastBindingSyncConditionalPlanCounts(tmpl.bytecode.FastRenderPlan.Segments)
+	require.Positive(t, prepared)
+	require.Positive(t, unprepared)
+
+	out, err := tmpl.Render(plush.NewContext())
+	require.NoError(t, err)
+	require.Equal(t, expected, out)
+}
+
+func fastBindingSyncConditionalPlanCounts(segments []compiler.FastRenderSegment) (prepared, unprepared int) {
+	for i := range segments {
+		segment := &segments[i]
+		if segment.Kind != compiler.FastRenderSegmentConditional || segment.Conditional == nil {
+			continue
+		}
+		for branchIndex := range segment.Conditional.Branches {
+			branch := &segment.Conditional.Branches[branchIndex]
+			if branch.BindingSync.Prepared {
+				prepared++
+			} else {
+				unprepared++
+			}
+			childPrepared, childUnprepared := fastBindingSyncConditionalPlanCounts(branch.Segments)
+			prepared += childPrepared
+			unprepared += childUnprepared
+		}
+		childPrepared, childUnprepared := fastBindingSyncConditionalPlanCounts(segment.Conditional.ElseSegments)
+		prepared += childPrepared
+		unprepared += childUnprepared
+	}
+	return prepared, unprepared
 }
 
 func Test_VM_Fast_Render_Prefix_Condition_And_Loop_Concat(t *testing.T) {

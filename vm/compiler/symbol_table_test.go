@@ -194,3 +194,30 @@ func Test_Inline_Block_Symbol_Table_Uses_Function_Local_Owner(t *testing.T) {
 	require.Equal(t, param, actual)
 	require.Empty(t, inline.FreeSymbols)
 }
+
+func Test_Disjoint_Inline_Block_Symbol_Tables_Use_Unique_Root_Local_Indexes(t *testing.T) {
+	root := NewSymbolTable()
+	first := NewInlineBlockSymbolTable(root)
+	second := NewInlineBlockSymbolTable(root)
+	third := NewInlineBlockSymbolTable(root)
+
+	firstLocal := first.Define("first")
+	secondLocal := second.Define("second")
+	reusedFirstLocal := third.Define("first")
+
+	require.Equal(t, Symbol{Name: "first", Scope: LocalScope, Index: 0}, firstLocal)
+	require.Equal(t, Symbol{Name: "second", Scope: LocalScope, Index: 1}, secondLocal)
+	require.Equal(t, Symbol{Name: "first", Scope: LocalScope, Index: 0}, reusedFirstLocal)
+	require.Zero(t, root.numDefinitions, "inline locals must not consume global indexes")
+}
+
+func Test_Nested_Inline_Block_Shadow_Uses_A_Unique_Root_Local_Index(t *testing.T) {
+	root := NewSymbolTable()
+	outer := NewInlineBlockSymbolTable(root)
+	outerLocal := outer.Define("value")
+	inner := NewInlineBlockSymbolTable(outer)
+	innerLocal := inner.Define("value")
+
+	require.Equal(t, Symbol{Name: "value", Scope: LocalScope, Index: 0}, outerLocal)
+	require.Equal(t, Symbol{Name: "value", Scope: LocalScope, Index: 1}, innerLocal)
+}

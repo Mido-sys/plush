@@ -298,6 +298,48 @@ func Test_Render_Diagnostics_VM_Hotspots_Header(t *testing.T) {
 	r.Equal("row_card:1:4.000", diagnostics.VMPartialHotspotsHeader())
 }
 
+func Test_Render_Diagnostics_VM_Helper_Call_Paths(t *testing.T) {
+	ctx := plush.NewContext()
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "format:value", "func(string) string", plush.RenderVMHelperCallDirect, 2*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "format:value", "func(string) string", plush.RenderVMHelperCallDirect, time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperCall(ctx, "custom,value", "func(plush_test.namedValue) string", plush.RenderVMHelperCallReflection, 4*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperTiming(ctx, "legacy", time.Millisecond)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 4, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.InDelta(t, 3.0, diagnostics.VMHelperDirectDurationMilliseconds(), 0.001)
+	require.InDelta(t, 4.0, diagnostics.VMHelperReflectionDurationMilliseconds(), 0.001)
+	require.InDelta(t, 25.0, diagnostics.VMHelperReflectionPercent(), 0.001)
+	require.Equal(t, "direct-calls=2;reflection-calls=1;unclassified-calls=1;reflection-percent=25.00;direct-time-ms=3.000;reflection-time-ms=4.000;direct-details-dropped=0;reflection-details-dropped=0", diagnostics.VMHelperCallPathsHeader())
+	require.Equal(t, "path=reflection,name=custom_value,signature=func(plush_test.namedValue) string,calls=1,time-ms=4.000|path=direct,name=format:value,signature=func(string) string,calls=2,time-ms=3.000", diagnostics.VMHelperCallPathDetailsHeader())
+}
+
+func Test_Render_Diagnostics_VM_Helper_Call_Path_Details_Are_Bounded(t *testing.T) {
+	ctx := plush.NewContext()
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("direct-%d", i)
+		plush.AddRenderDiagnosticVMHelperCall(ctx, name, "func() string", plush.RenderVMHelperCallDirect, time.Microsecond)
+		name = fmt.Sprintf("reflection-%d", i)
+		plush.AddRenderDiagnosticVMHelperCall(ctx, name, "func(custom) string", plush.RenderVMHelperCallReflection, time.Microsecond)
+	}
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 20, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 10, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 10, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 16)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectDetailsDropped)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperReflectionDetailsDropped)
+}
+
 func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 	r := require.New(t)
 	diagnostics := plush.RenderDiagnostics{
@@ -306,6 +348,7 @@ func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 			StaticSize:     10,
 			FallbackHint:   20,
 			GrowHint:       30,
+			Headroom:       4,
 			EstimateBefore: 25,
 			Actual:         28,
 			EstimateAfter:  27,
@@ -315,37 +358,71 @@ func Test_Render_Diagnostics_Output_Size_Header(t *testing.T) {
 		},
 	}
 
-	r.Equal("scope=template;static=10;fallback=20;hint=30;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	r.Equal("scope=template;static=10;fallback=20;hint=30;headroom=4;learned=25;actual=28;error=10.71;within-10=0;estimate=27;samples=3;observed=1;accuracy-valid=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
 	r.Empty(plush.RenderDiagnostics{}.OutputSizeHeader())
 }
 
 func Test_Render_Diagnostics_Contextual_Output_Size_Header(t *testing.T) {
 	diagnostics := plush.RenderDiagnostics{
 		OutputSize: plush.RenderOutputSizeDiagnostics{
-			Available:      true,
-			Scope:          "file",
-			Contextual:     true,
-			ProfileBand:    "0-4k",
-			YieldSize:      100,
-			OverheadBefore: 20,
-			OverheadActual: 21,
-			OverheadAfter:  21,
-			StaticSize:     10,
-			FallbackHint:   115,
-			GrowHint:       120,
-			EstimateBefore: 120,
-			Actual:         121,
-			EstimateAfter:  121,
-			SamplesAfter:   2,
-			Observed:       true,
+			Available:                  true,
+			Scope:                      "file",
+			Contextual:                 true,
+			ProfileBand:                "0-4k",
+			RefinedProfileBand:         "0-4k",
+			YieldSize:                  100,
+			YieldConsumed:              true,
+			AccuracyValid:              true,
+			OverheadPredictor:          "ratio",
+			OverheadPredictorAfter:     "absolute",
+			OverheadBefore:             20,
+			OverheadAbsolute:           22,
+			OverheadRatio:              20,
+			OverheadAbsoluteErrorScore: 3.5,
+			OverheadRatioErrorScore:    1.25,
+			OverheadActual:             21,
+			OverheadAfter:              21,
+			StaticSize:                 10,
+			FallbackHint:               115,
+			GrowHint:                   120,
+			Headroom:                   5,
+			EstimateBefore:             120,
+			Actual:                     121,
+			EstimateAfter:              121,
+			SamplesAfter:               2,
+			Observed:                   true,
 		},
 	}
 
-	require.Equal(t, "scope=file;profile=0-4k;yield=100;overhead=20;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+	require.Equal(t, "scope=file;profile=0-4k;refined-profile=0-4k;profile-depth=0;profile-children=0;profile-fallback=0;profile-fallback-min=0;yield=100;yield-consumed=1;accuracy-valid=1;predictor=ratio;predictor-after=absolute;overhead=20;overhead-absolute=22;overhead-ratio=20;absolute-error-score=3.50;ratio-error-score=1.25;overhead-actual=21;overhead-estimate=21;static=10;fallback=115;hint=120;headroom=5;learned=120;actual=121;error=0.83;within-10=1;estimate=121;samples=2;observed=1;min=0;max=0;unstable=0;limited=0;grow-called=0;grow-allocated=0;cap-before=0;cap-after-grow=0;cap-final=0;unused-cap=0", diagnostics.OutputSizeHeader())
+}
+
+func Test_Render_Diagnostics_Contextual_Output_Size_Excludes_Unconsumed_Yield_From_Accuracy(t *testing.T) {
+	diagnostics := plush.RenderDiagnostics{
+		OutputSize: plush.RenderOutputSizeDiagnostics{
+			Available:          true,
+			Scope:              "file",
+			Contextual:         true,
+			ProfileBand:        "4k-16k",
+			RefinedProfileBand: "4k-16k",
+			YieldSize:          11_307,
+			EstimateBefore:     82_332,
+			Actual:             7,
+			Observed:           true,
+		},
+	}
+
+	header := diagnostics.OutputSizeHeader()
+	require.Contains(t, header, ";yield-consumed=0;accuracy-valid=0;")
+	require.Contains(t, header, ";within-10=0;")
 }
 
 func Test_Render_Diagnostics_Partial_Output_Size_Headers(t *testing.T) {
 	r := require.New(t)
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsDetailed)
+	t.Cleanup(func() {
+		plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+	})
 	ctx := plush.NewContext()
 
 	plush.AddRenderDiagnosticPartialOutput(ctx, "components/item.plush", 90, 100, 100, 95, 3)
@@ -373,6 +450,78 @@ func Test_Render_Diagnostics_VM_Hotspots_Default_Off(t *testing.T) {
 	r.Zero(diagnostics.VMHotspots.PartialCalls)
 }
 
+func Test_Render_Diagnostics_VM_Hotspot_Recorder_Snapshots_Setting(t *testing.T) {
+	r := require.New(t)
+	ctx := plush.NewContext()
+
+	disabled := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.False(disabled.Enabled())
+
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+	disabled.AddHelperTiming("before-enable", time.Millisecond)
+
+	enabled := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.True(enabled.Enabled())
+	plush.DisableRenderVMHotspotDiagnostics(ctx)
+	enabled.AddHelperTiming("captured-helper", 2*time.Millisecond)
+	enabled.AddPartialTiming("captured-partial", 3*time.Millisecond)
+	plush.AddRenderDiagnosticVMHelperTiming(ctx, "after-disable", time.Millisecond)
+
+	nextRender := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	r.False(nextRender.Enabled())
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	r.True(ok)
+	r.Equal(1, diagnostics.VMHotspots.HelperCalls)
+	r.Equal(2*time.Millisecond, diagnostics.VMHotspots.HelperDuration)
+	r.Equal(1, diagnostics.VMHotspots.PartialCalls)
+	r.Equal(3*time.Millisecond, diagnostics.VMHotspots.PartialDuration)
+	r.Contains(diagnostics.VMHelperHotspotsHeader(), "captured-helper:1:2.000")
+	r.Contains(diagnostics.VMPartialHotspotsHeader(), "captured-partial:1:3.000")
+}
+
+var vmHotspotEnabledBenchmarkSink bool
+
+func Benchmark_Render_Diagnostics_VM_Hotspot_Disabled_Check(b *testing.B) {
+	ctx := plush.NewContext()
+	recorder := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+
+	b.Run("context-lookup", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			vmHotspotEnabledBenchmarkSink = plush.RenderVMHotspotDiagnosticsEnabled(ctx)
+		}
+	})
+	b.Run("render-snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			vmHotspotEnabledBenchmarkSink = recorder.Enabled()
+		}
+	})
+}
+
+func Benchmark_Render_Diagnostics_VM_Hotspot_Record(b *testing.B) {
+	b.Run("context-lookup", func(b *testing.B) {
+		ctx := plush.NewContext()
+		plush.EnableRenderVMHotspotDiagnostics(ctx)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			plush.AddRenderDiagnosticVMHelperTiming(ctx, "helper", time.Nanosecond)
+		}
+	})
+	b.Run("render-snapshot", func(b *testing.B) {
+		ctx := plush.NewContext()
+		plush.EnableRenderVMHotspotDiagnostics(ctx)
+		recorder := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			recorder.AddHelperTiming("helper", time.Nanosecond)
+		}
+	})
+}
+
 func Test_Output_Size_Estimator_Can_Be_Disabled_And_Restored(t *testing.T) {
 	r := require.New(t)
 	previous := plush.SetOutputSizeEstimatorEnabled(false)
@@ -382,6 +531,47 @@ func Test_Output_Size_Estimator_Can_Be_Disabled_And_Restored(t *testing.T) {
 	r.False(plush.OutputSizeEstimatorEnabled())
 	r.False(plush.SetOutputSizeEstimatorEnabled(true))
 	r.True(plush.OutputSizeEstimatorEnabled())
+}
+
+func Test_Output_Size_Estimator_Diagnostics_Mode_Can_Be_Changed_And_Restored(t *testing.T) {
+	r := require.New(t)
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsSummary)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, previous)
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsSummary, plush.GetOutputSizeEstimatorDiagnosticsMode())
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsSummary, plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff))
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.GetOutputSizeEstimatorDiagnosticsMode())
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.SetOutputSizeEstimatorDiagnosticsMode(99))
+	r.Equal(plush.OutputSizeEstimatorDiagnosticsOff, plush.GetOutputSizeEstimatorDiagnosticsMode())
+}
+
+func Test_Output_Size_Estimator_Summary_Diagnostics_Skip_Details(t *testing.T) {
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsSummary)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	ctx := plush.NewContext()
+	plush.AddRenderDiagnosticLoopOutput(ctx, "items", 12, 2, 10, 20, 20, 10, 1, 2, true, false, true, 32)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "row.plush", 20, 20, 20, 20, 2)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.LoopOutput.Calls)
+	require.Empty(t, diagnostics.LoopOutput.Details)
+	require.Equal(t, 1, diagnostics.PartialOutput.Calls)
+	require.Empty(t, diagnostics.PartialOutput.Details)
+}
+
+func Test_Output_Size_Estimator_Off_Diagnostics_Skip_Aggregates(t *testing.T) {
+	previous := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+
+	ctx := plush.NewContext()
+	plush.AddRenderDiagnosticLoopOutput(ctx, "items", 12, 2, 10, 20, 20, 10, 1, 2, true, false, true, 32)
+	plush.AddRenderDiagnosticPartialOutput(ctx, "row.plush", 20, 20, 20, 20, 2)
+
+	_, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.False(t, ok)
 }
 
 func Test_Render_Diagnostics_VM_Hotspots_Concurrent_Update(t *testing.T) {

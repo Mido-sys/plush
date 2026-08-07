@@ -25,20 +25,37 @@ func newPooledWithContext(bytecode *compiler.Bytecode, ctx hctx.Context) *VM {
 	return newWithContext(bytecode, ctx, true)
 }
 
+func newPooledWithContextDiagnostics(bytecode *compiler.Bytecode, ctx hctx.Context, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) *VM {
+	return newWithContextDiagnostics(bytecode, ctx, true, vmHotspots)
+}
+
 func newWithContext(bytecode *compiler.Bytecode, ctx hctx.Context, pooled bool) *VM {
+	if ctx == nil {
+		ctx = plush.NewContext()
+	}
+	return newWithContextDiagnosticsState(bytecode, ctx, pooled, plush.RenderVMHotspotDiagnosticsRecorder{}, false)
+}
+
+func newWithContextDiagnostics(bytecode *compiler.Bytecode, ctx hctx.Context, pooled bool, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) *VM {
+	return newWithContextDiagnosticsState(bytecode, ctx, pooled, vmHotspots, true)
+}
+
+func newWithContextDiagnosticsState(bytecode *compiler.Bytecode, ctx hctx.Context, pooled bool, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder, vmHotspotsCaptured bool) *VM {
 	if ctx == nil {
 		ctx = plush.NewContext()
 	}
 
 	mainFn := &object.CompiledFunction{
-		Instructions:   bytecode.Instructions,
-		CallNames:      bytecode.CallNames,
-		LocalNames:     bytecode.LocalNames,
-		LineNumbers:    bytecode.LineNumbers,
-		Properties:     bytecode.Properties,
-		PropertyCaches: bytecode.PropertyCaches,
-		CallCaches:     bytecode.CallCaches,
-		NumLocals:      bytecode.NumLocals,
+		Instructions:              bytecode.Instructions,
+		CallNames:                 bytecode.CallNames,
+		LocalNames:                bytecode.LocalNames,
+		DynamicContextNameIndexes: bytecode.DynamicContextNameIndexes,
+		DynamicContextNamesReady:  bytecode.DynamicContextNamesReady,
+		LineNumbers:               bytecode.LineNumbers,
+		Properties:                bytecode.Properties,
+		PropertyCaches:            bytecode.PropertyCaches,
+		CallCaches:                bytecode.CallCaches,
+		NumLocals:                 bytecode.NumLocals,
 	}
 	mainClosure := &object.Closure{Fn: mainFn}
 	mainFrame := newFrame(mainClosure, 0, pooled)
@@ -50,19 +67,21 @@ func newWithContext(bytecode *compiler.Bytecode, ctx hctx.Context, pooled bool) 
 	globalSize := globalStoreSize(bytecode)
 
 	machine := &VM{
-		constants:   bytecode.Constants,
-		stack:       borrowStack(pooled),
-		sp:          mainFn.NumLocals,
-		stackMax:    mainFn.NumLocals,
-		globals:     borrowGlobals(globalSize, pooled),
-		globalNames: bytecode.GlobalNames,
-		frames:      frames,
-		framesIndex: 1,
-		ctx:         ctx,
-		holes:       holes,
-		pooled:      pooled,
-		ownGlobals:  pooled,
-		ownHoles:    pooled,
+		constants:          bytecode.Constants,
+		stack:              borrowStack(pooled),
+		sp:                 mainFn.NumLocals,
+		stackMax:           mainFn.NumLocals,
+		globals:            borrowGlobals(globalSize, pooled),
+		globalNames:        bytecode.GlobalNames,
+		frames:             frames,
+		framesIndex:        1,
+		ctx:                ctx,
+		vmHotspots:         vmHotspots,
+		vmHotspotsCaptured: vmHotspotsCaptured,
+		holes:              holes,
+		pooled:             pooled,
+		ownGlobals:         pooled,
+		ownHoles:           pooled,
 	}
 	return machine
 }
@@ -568,12 +587,20 @@ func renderBytecodeVMWithState(bytecode *compiler.Bytecode, ctx hctx.Context, fi
 	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, source, outputSizeOptions{})
 }
 
+func renderBytecodeVMWithStateDiagnostics(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (string, error) {
+	return renderBytecodeVMWithStateOptionsDiagnostics(bytecode, ctx, filename, forceCacheClear, source, outputSizeOptions{}, vmHotspots)
+}
+
 func renderBytecodeVMWithStateTopLevel(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string) (string, error) {
 	return renderBytecodeVMWithStateOptions(bytecode, ctx, filename, forceCacheClear, source, outputSizeOptions{topLevel: true})
 }
 
 func renderBytecodeVMWithStateOptions(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string, options outputSizeOptions) (string, error) {
-	machine := newPooledWithContext(bytecode, ctx)
+	return renderBytecodeVMWithStateOptionsDiagnostics(bytecode, ctx, filename, forceCacheClear, source, options, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func renderBytecodeVMWithStateOptionsDiagnostics(bytecode *compiler.Bytecode, ctx hctx.Context, filename string, forceCacheClear bool, source string, options outputSizeOptions, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (string, error) {
+	machine := newPooledWithContextDiagnostics(bytecode, ctx, vmHotspots)
 	observation := growVMRootOutput(machine, bytecode, ctx, options)
 	if err := machine.Run(); err != nil {
 		defer machine.Release()

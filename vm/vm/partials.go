@@ -74,13 +74,13 @@ func (vm *VM) tryWriteLiteralPartialNameCall(name string, raw interface{}, numAr
 	if frame == nil {
 		return false, nil
 	}
-	if frame.cl != nil && frame.cl.Fn != nil && frame.cl.Fn.NumLocals > 0 {
-		return false, nil
-	}
-
 	oldSP := vm.sp
 	vm.sp -= numArgs
-	handled, err := renderFastNoDataPartialInto(&frame.output, arg.Value, vm.ctx, vm.currentLineNumber())
+	callCtx := vm.contextWithFrameLocals()
+	handled, err := renderFastNoDataPartialIntoWithDiagnostics(&frame.output, arg.Value, callCtx, vm.currentLineNumber(), vm.renderVMHotspots())
+	if handled || err != nil {
+		vm.syncFrameBindingsFromContext(callCtx)
+	}
 	if err != nil {
 		return true, err
 	}
@@ -94,11 +94,13 @@ func (vm *VM) tryWriteLiteralPartialNameCall(name string, raw interface{}, numAr
 
 type partialOverlayContext struct {
 	parent     hctx.Context
+	vmHotspots plush.RenderVMHotspotDiagnosticsRecorder
 	inline     [8]partialOverlayValue
 	count      int
 	extra      map[string]interface{}
 	extraIDs   map[int]interface{}
 	idNames    map[int]string
+	nameIDs    map[string]int
 	idInterner *plush.InternTable
 }
 
@@ -109,9 +111,9 @@ type partialOverlayValue struct {
 }
 
 func newPartialOverlayContext(parent hctx.Context) *partialOverlayContext {
-	return &partialOverlayContext{
-		parent: parent,
-	}
+	ctx := &partialOverlayContext{}
+	ctx.reset(parent)
+	return ctx
 }
 
 func borrowPartialOverlayContext(parent hctx.Context) *partialOverlayContext {
@@ -145,20 +147,55 @@ func (c *partialOverlayContext) reset(parent hctx.Context) {
 	if c.idNames != nil {
 		clear(c.idNames)
 	}
+	if c.nameIDs != nil {
+		clear(c.nameIDs)
+	}
 	c.idInterner = nil
 	c.parent = parent
+	c.vmHotspots = plush.RenderVMHotspotDiagnosticsRecorder{}
+	if provider, ok := parent.(interface {
+		RenderVMHotspotDiagnosticsRecorder() plush.RenderVMHotspotDiagnosticsRecorder
+	}); ok {
+		c.vmHotspots = provider.RenderVMHotspotDiagnosticsRecorder()
+	}
 }
 
-func partialHelperChildContext(parent hctx.Context) (hctx.Context, func()) {
+func (c *partialOverlayContext) RenderVMHotspotDiagnosticsRecorder() plush.RenderVMHotspotDiagnosticsRecorder {
+	if c == nil {
+		return plush.RenderVMHotspotDiagnosticsRecorder{}
+	}
+	return c.vmHotspots
+}
+
+type partialChildContextScope struct {
+	child *partialOverlayContext
+}
+
+func (s *partialChildContextScope) release() {
+	if s == nil || s.child == nil {
+		return
+	}
+	child := s.child
+	s.child = nil
+	releasePartialOverlayContext(child)
+}
+
+func scopedPartialHelperChildContext(parent hctx.Context) (hctx.Context, partialChildContextScope) {
 	switch parent.(type) {
 	case *plush.Context, *partialOverlayContext:
 		child := borrowPartialOverlayContext(parent)
-		return child, func() {
-			releasePartialOverlayContext(child)
-		}
+		return child, partialChildContextScope{child: child}
 	default:
-		return parent.New(), nil
+		return parent.New(), partialChildContextScope{}
 	}
+}
+
+func partialHelperChildContext(parent hctx.Context) (hctx.Context, func()) {
+	child, scope := scopedPartialHelperChildContext(parent)
+	if scope.child == nil {
+		return child, nil
+	}
+	return child, scope.release
 }
 
 func (c *partialOverlayContext) stableBindingIDs() bool {
@@ -237,6 +274,9 @@ func (c *partialOverlayContext) Lookup(key string) (interface{}, bool) {
 func (c *partialOverlayContext) InternID(key string) int {
 	if c == nil {
 		return -1
+	}
+	if id, ok := c.idForName(key); ok {
+		return id
 	}
 	var id int
 	if lookup, ok := c.parent.(contextIDLookup); ok {
@@ -415,6 +455,9 @@ func (c *partialOverlayContext) setLocalWithID(key string, id int, value interfa
 		c.count++
 		return
 	}
+	if key != "" && id >= 0 {
+		c.rememberIDName(id, key)
+	}
 	if c.extra == nil {
 		c.extra = make(map[string]interface{}, 4)
 	}
@@ -431,15 +474,52 @@ func (c *partialOverlayContext) rememberIDName(id int, key string) {
 	if c == nil || id < 0 || key == "" {
 		return
 	}
+	if c.nameIDs != nil {
+		if existing, ok := c.nameIDs[key]; ok && existing == id {
+			if c.idNames != nil {
+				if existingName, ok := c.idNames[id]; ok && existingName == key {
+					return
+				}
+			}
+		}
+	} else {
+		c.nameIDs = make(map[string]int, 4)
+	}
+	c.nameIDs[key] = id
 	if c.idNames == nil {
 		c.idNames = make(map[int]string, 4)
 	}
+	if existingName, ok := c.idNames[id]; ok && existingName == key {
+		return
+	}
 	c.idNames[id] = key
+}
+
+func (c *partialOverlayContext) idForName(key string) (int, bool) {
+	if c == nil || key == "" {
+		return -1, false
+	}
+	for i := 0; i < c.count; i++ {
+		if c.inline[i].key == key {
+			return c.inline[i].id, true
+		}
+	}
+	if c.nameIDs != nil {
+		if id, ok := c.nameIDs[key]; ok {
+			return id, true
+		}
+	}
+	return -1, false
 }
 
 func (c *partialOverlayContext) nameForID(id int) (string, bool) {
 	if c == nil || id < 0 {
 		return "", false
+	}
+	for i := 0; i < c.count; i++ {
+		if c.inline[i].id == id && c.inline[i].key != "" {
+			return c.inline[i].key, true
+		}
 	}
 	if name, ok := c.idNames[id]; ok {
 		return name, true
@@ -460,10 +540,16 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 	if err := spendFastSubRender(ctx, partial.Line); err != nil {
 		return true, err
 	}
-	start := time.Now()
-	defer func() {
-		plush.AddRenderDiagnosticVMPartialTiming(ctx, partial.Name, time.Since(start))
-	}()
+	vmHotspots := bindings.vmHotspots
+	if bindings.ctx == nil {
+		vmHotspots = plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	}
+	if vmHotspots.Enabled() {
+		start := time.Now()
+		defer func() {
+			vmHotspots.AddPartialTiming(partial.Name, time.Since(start))
+		}()
+	}
 
 	if ok, err := renderFastDataPartialDirectInto(out, partial, ctx, bindings, dataPlan); ok || err != nil {
 		return ok, err
@@ -471,6 +557,7 @@ func renderFastDataPartialInto(out *strings.Builder, partial *compiler.FastParti
 
 	links := partialBytecodeLinks(ctx)
 	partialCtx := borrowPartialOverlayContext(ctx)
+	partialCtx.vmHotspots = vmHotspots
 	defer releasePartialOverlayContext(partialCtx)
 	metaIDs, useMetaIDs := links.partialMetaIDs(partialCtx)
 
@@ -575,7 +662,11 @@ func renderFastDataPartialDirectInto(out *strings.Builder, partial *compiler.Fas
 		observePartialOutput(bytecode, filename, ctx, out.Len()-start, observation)
 		return true, nil
 	}
-	bindings := newFastRenderBindingsWithPlan(bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx))
+	vmHotspots := parentBindings.vmHotspots
+	if parentBindings.ctx == nil {
+		vmHotspots = plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	}
+	bindings := newFastRenderBindingsWithPlanDiagnostics(bytecode.FastRenderPlan, ctx, link.fastBindingPlan(ctx), vmHotspots)
 	if err := attachFastPartialDataLocalsFromPlan(&bindings, dataPlan, ctx, parentBindings, &localStorage); err != nil {
 		return true, err
 	}
@@ -789,6 +880,224 @@ func applyFastPartialDataBindingPlan(partialCtx *partialOverlayContext, plan *fa
 }
 
 func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Context, line int) (bool, error) {
+	return renderFastNoDataPartialIntoWithDiagnostics(out, name, ctx, line, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+// WriteSourcePartial renders caller-provided Plush source as a named partial
+// directly into the active VM output. The partial inherits the current render
+// context; an optional data map adds values scoped to this partial render.
+func (w FastWriter) WriteSourcePartial(name, source string, data ...map[string]interface{}) error {
+	if w.out == nil || w.ctx == nil {
+		return ErrFastUnsupported
+	}
+	if name == "" {
+		return fmt.Errorf("source partial name must not be empty")
+	}
+	if len(data) > 1 {
+		return fmt.Errorf("WriteSourcePartial accepts at most one data map")
+	}
+	var locals map[string]interface{}
+	if len(data) == 1 {
+		locals = data[0]
+	}
+	return renderFastSourcePartialInto(w.out, name, source, locals, w.ctx, 0)
+}
+
+// RenderSourcePartial renders caller-provided Plush source as a named partial
+// value. It is the compatibility form for nested expressions where no active
+// FastWriter is available; direct output helpers should prefer WriteSourcePartial.
+func RenderSourcePartial(ctx hctx.Context, name, source string, data ...map[string]interface{}) (template.HTML, error) {
+	if ctx == nil {
+		return "", ErrFastUnsupported
+	}
+	if name == "" {
+		return "", fmt.Errorf("source partial name must not be empty")
+	}
+	if len(data) > 1 {
+		return "", fmt.Errorf("RenderSourcePartial accepts at most one data map")
+	}
+	var locals map[string]interface{}
+	if len(data) == 1 {
+		locals = data[0]
+	}
+	var out strings.Builder
+	if err := renderFastSourcePartialInto(&out, name, source, locals, ctx, 0); err != nil {
+		return "", err
+	}
+	return template.HTML(out.String()), nil
+}
+
+func renderFastSourcePartialInto(out *strings.Builder, name, source string, data map[string]interface{}, ctx hctx.Context, line int) error {
+	if out == nil || ctx == nil {
+		return ErrFastUnsupported
+	}
+	if err := spendFastSubRender(ctx, line); err != nil {
+		return err
+	}
+
+	vmHotspots := plush.CaptureRenderVMHotspotDiagnostics(ctx)
+	if vmHotspots.Enabled() {
+		start := time.Now()
+		defer func() {
+			vmHotspots.AddPartialTiming(name, time.Since(start))
+		}()
+	}
+
+	links := partialBytecodeLinks(ctx)
+	planKey := sourcePartialPlanKeyForContext(ctx, name, links)
+	rawSourceHash := hashString(source)
+	if !partialNeedsJSEscape(ctx, name) {
+		if plan, ok := links.sourcePartialPlan(planKey, rawSourceHash); ok {
+			rendered, err := renderFastSourcePartialPlanInto(out, plan, data, ctx, vmHotspots)
+			if err != nil {
+				return wrapVMPartialRenderError(ctx, line, nil, plan.childFile, err)
+			}
+			if rendered {
+				return nil
+			}
+		}
+	}
+
+	partialCtx := borrowPartialOverlayContext(ctx)
+	partialCtx.vmHotspots = vmHotspots
+	defer releasePartialOverlayContext(partialCtx)
+	for key, value := range data {
+		partialCtx.setLocal(key, value)
+	}
+	metaIDs, useMetaIDs := links.partialMetaIDs(partialCtx)
+	if useMetaIDs {
+		if err := setupFastPartialTemplateFile(partialCtx, name, metaIDs); err != nil {
+			return fastLineError(line, err)
+		}
+	} else if err := setupPartialTemplateFile(partialCtx, name); err != nil {
+		return fastLineError(line, err)
+	}
+	childFile := plush.TemplateFilenameForError(partialCtx)
+	if useMetaIDs {
+		setupFastPartialNesting(partialCtx, name, metaIDs)
+	} else {
+		setupPartialNesting(partialCtx, name)
+	}
+
+	needsJSEscape := partialNeedsJSEscape(partialCtx, name)
+	if useMetaIDs {
+		needsJSEscape = partialNeedsJSEscapeFast(partialCtx, name, metaIDs)
+	}
+	if !needsJSEscape {
+		if rendered, err := renderLinkedPartialInline(out, source, partialCtx); rendered || err != nil {
+			if err != nil {
+				return wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
+			}
+			rememberFastSourcePartialPlan(links, planKey, rawSourceHash, source, partialCtx, childFile)
+			return nil
+		}
+	}
+
+	rendered, err := renderLinkedPartial(source, partialCtx)
+	if err != nil {
+		return wrapVMPartialRenderError(ctx, line, partialCtx, childFile, err)
+	}
+	if needsJSEscape {
+		rendered = template.JSEscapeString(rendered)
+	}
+	out.WriteString(rendered)
+	return nil
+}
+
+func sourcePartialPlanKeyForContext(ctx hctx.Context, name string, links *partialBytecodeLinkCache) sourcePartialPlanKey {
+	key := sourcePartialPlanKey{name: name}
+	if ctx == nil {
+		return key
+	}
+	if ids, ok := links.partialMetaIDs(ctx); ok {
+		lookup := ctx.(contextIDLookup)
+		key.templateFile = sourcePartialPlanStringValueID(lookup, ids.templateFileID)
+		key.templateBase = sourcePartialPlanStringValueID(lookup, ids.templateBaseFileID)
+		key.templateExt = sourcePartialPlanStringValueID(lookup, ids.templateExtID)
+		key.parentPartial = sourcePartialPlanStringValueID(lookup, ids.alreadyPartialID)
+		return key
+	}
+	key.templateFile, _ = ctx.Value(meta.TemplateFileKey).(string)
+	key.templateBase, _ = ctx.Value(meta.TemplateBaseFileNameKey).(string)
+	key.templateExt, _ = ctx.Value(meta.TemplateExtensionKey).(string)
+	key.parentPartial, _ = ctx.Value(vmAlreadyInPartial).(string)
+	return key
+}
+
+func sourcePartialPlanStringValueID(ctx contextIDLookup, id int) string {
+	if ctx == nil || id < 0 {
+		return ""
+	}
+	value, ok := ctx.LookupID(id)
+	if !ok {
+		return ""
+	}
+	valueString, _ := value.(string)
+	return valueString
+}
+
+func rememberFastSourcePartialPlan(links *partialBytecodeLinkCache, key sourcePartialPlanKey, rawSourceHash uint64, source string, ctx hctx.Context, childFile string) {
+	if links == nil || ctx == nil {
+		return
+	}
+	input := preprocessTrimTags(source)
+	filename := plush.PunchHoleTemplateFilename(ctx)
+	compiledSourceHash := hashString(input)
+	linkKey := partialBytecodeLinkKey(filename, input, compiledSourceHash)
+	link, ok := links.GetLink(linkKey, compiledSourceHash)
+	if !ok || !directPartialBytecodeLinkCanRender(link.bytecode) {
+		return
+	}
+	links.setSourcePartialPlan(key, &sourcePartialPlan{
+		sourceHash: rawSourceHash,
+		childFile:  childFile,
+		filename:   filename,
+		link:       link,
+	})
+}
+
+func renderFastSourcePartialPlanInto(out *strings.Builder, plan *sourcePartialPlan, data map[string]interface{}, ctx hctx.Context, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (bool, error) {
+	if out == nil || plan == nil || plan.link == nil || !directPartialBytecodeLinkCanRender(plan.link.bytecode) {
+		return false, nil
+	}
+	bytecode := plan.link.bytecode
+	observation := beginPartialOutputObservation(bytecode, plan.filename, ctx)
+	growInlineOutputBuilder(out, observation.growHint, &observation)
+	start := out.Len()
+	if bytecode.Static {
+		out.WriteString(bytecode.StaticOutput)
+		observePartialOutput(bytecode, plan.filename, ctx, out.Len()-start, observation)
+		return true, nil
+	}
+
+	bindings := newFastRenderBindingsWithPlanDiagnostics(bytecode.FastRenderPlan, ctx, plan.link.fastBindingPlan(ctx), vmHotspots)
+	var localStorage fastPartialLocalStorage
+	attachFastSourcePartialDataLocals(&bindings, data, &localStorage)
+	ok, err := renderFastPlanInlineWithBindingsHint(out, bytecode.FastRenderPlan, ctx, bindings, observation.growHint)
+	if ok && err == nil {
+		observePartialOutput(bytecode, plan.filename, ctx, out.Len()-start, observation)
+	}
+	return ok, err
+}
+
+func attachFastSourcePartialDataLocals(bindings *fastRenderBindings, data map[string]interface{}, storage *fastPartialLocalStorage) {
+	if bindings == nil || len(data) == 0 || len(bindings.names) == 0 {
+		return
+	}
+	prepareFastPartialLocalStorage(bindings, storage)
+	for key, value := range data {
+		for index, name := range bindings.names {
+			if key != name {
+				continue
+			}
+			bindings.localOK[index] = true
+			bindings.localVals[index] = value
+			break
+		}
+	}
+}
+
+func renderFastNoDataPartialIntoWithDiagnostics(out *strings.Builder, name string, ctx hctx.Context, line int, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) (bool, error) {
 	if out == nil {
 		return false, nil
 	}
@@ -798,10 +1107,12 @@ func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Con
 	if err := spendFastSubRender(ctx, line); err != nil {
 		return true, err
 	}
-	start := time.Now()
-	defer func() {
-		plush.AddRenderDiagnosticVMPartialTiming(ctx, name, time.Since(start))
-	}()
+	if vmHotspots.Enabled() {
+		start := time.Now()
+		defer func() {
+			vmHotspots.AddPartialTiming(name, time.Since(start))
+		}()
+	}
 
 	if ok, err := renderFastNoDataPartialDirectInto(out, name, ctx, line); ok || err != nil {
 		return ok, err
@@ -809,6 +1120,7 @@ func renderFastNoDataPartialInto(out *strings.Builder, name string, ctx hctx.Con
 
 	links := partialBytecodeLinks(ctx)
 	partialCtx := borrowPartialOverlayContext(ctx)
+	partialCtx.vmHotspots = vmHotspots
 	defer releasePartialOverlayContext(partialCtx)
 	metaIDs, useMetaIDs := links.partialMetaIDs(partialCtx)
 	if useMetaIDs {

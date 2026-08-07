@@ -14,7 +14,7 @@ func Test_Make(t *testing.T) {
 	}{
 		{OpConstant, []int{65534}, []byte{byte(OpConstant), 255, 254}},
 		{OpAdd, []int{}, []byte{byte(OpAdd)}},
-		{OpGetLocal, []int{255}, []byte{byte(OpGetLocal), 255}},
+		{OpGetLocal, []int{256}, []byte{byte(OpGetLocal), 1, 0}},
 		{OpClosure, []int{65534, 255}, []byte{byte(OpClosure), 255, 254, 255}},
 		{OpFor, []int{65534, 65533, 65532, 255}, []byte{byte(OpFor), 255, 254, 255, 253, 255, 252, 255}},
 		{OpCallBlock, []int{7, 65534, 1}, []byte{byte(OpCallBlock), 7, 255, 254, 1}},
@@ -45,10 +45,10 @@ func Test_Instructions_String(t *testing.T) {
 
 	expected := `0000 OpAdd
 0001 OpGetLocal 1
-0003 OpConstant 2
-0006 OpConstant 65535
-0009 OpClosure 65535 255
-0013 OpFor 10 20 30 1
+0004 OpConstant 2
+0007 OpConstant 65535
+0010 OpClosure 65535 255
+0014 OpFor 10 20 30 1
 `
 
 	require.Equal(t, expected, concatted.String())
@@ -62,7 +62,7 @@ func Test_Read_Operands(t *testing.T) {
 		expectedWidth int
 	}{
 		{OpConstant, []int{65535}, 2, 2},
-		{OpGetLocal, []int{255}, 1, 1},
+		{OpGetLocal, []int{256}, 2, 2},
 		{OpClosure, []int{65535, 255}, 3, 3},
 		{OpFor, []int{1, 2, 3, 4}, 7, 7},
 		{OpCallBlock, []int{1, 65535, 2}, 4, 4},

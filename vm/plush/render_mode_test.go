@@ -15,7 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func enableDetailedEstimatorDiagnostics(t *testing.T) {
+	t.Helper()
+	previous := rootplush.SetOutputSizeEstimatorDiagnosticsMode(rootplush.OutputSizeEstimatorDiagnosticsDetailed)
+	t.Cleanup(func() {
+		rootplush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+	})
+}
+
 func Test_Buffalo_Render_Pass_File_Output_Tracks_Layout_Not_Nested_Renders(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -89,6 +98,7 @@ func Test_Buffalo_Render_Pass_File_Output_Tracks_Layout_Not_Nested_Renders(t *te
 }
 
 func Test_Buffalo_Render_Pass_File_Output_Isolates_Yield_Size_Bands(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
 	defer rootplush.ClearTemplateCache()
@@ -130,6 +140,195 @@ func Test_Buffalo_Render_Pass_File_Output_Isolates_Yield_Size_Bands(t *testing.T
 	require.Equal(t, "16k-32k", smallSecond.OutputSize.ProfileBand)
 	require.Equal(t, uint64(1), smallSecond.OutputSize.SamplesBefore)
 	require.Equal(t, smallSecond.OutputSize.Actual, smallSecond.OutputSize.EstimateBefore)
+}
+
+func Test_Buffalo_Render_Pass_File_Output_Refines_Unstable_Band(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+	previousEstimator := rootplush.SetOutputSizeEstimatorEnabled(true)
+	defer rootplush.SetOutputSizeEstimatorEnabled(previousEstimator)
+
+	const pageFile = "templates/pages/adaptive-layout.plush"
+	const pageSource = `<%= body %>`
+	const layoutFile = "templates/adaptive-layout.plush"
+	const layoutSource = `<html><%= chrome %><%= yield %></html>`
+
+	renderRequest := func(bodySize, chromeSize int) rootplush.RenderOutputSizeDiagnostics {
+		data := map[string]interface{}{
+			meta.TemplateFileKey: pageFile,
+			"body":               strings.Repeat("b", bodySize),
+			"chrome":             strings.Repeat("c", chromeSize),
+		}
+		body, err := rootplush.BuffaloRenderer(pageSource, data, nil)
+		require.NoError(t, err)
+		data["yield"] = template.HTML(body)
+		data[meta.TemplateFileKey] = layoutFile
+		_, err = rootplush.BuffaloRenderer(layoutSource, data, nil)
+		require.NoError(t, err)
+		diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
+		require.True(t, ok)
+		return diagnostics.OutputSize
+	}
+
+	for i := 0; i < 32; i++ {
+		bodySize, chromeSize := 20<<10, 8<<10
+		if i%2 == 1 {
+			bodySize, chromeSize = 28<<10, 64<<10
+		}
+		renderRequest(bodySize, chromeSize)
+	}
+
+	firstChild := renderRequest(20<<10, 8<<10)
+	require.Equal(t, "16k-32k", firstChild.ProfileBand)
+	require.Equal(t, "16k-24k", firstChild.RefinedProfileBand)
+	require.Equal(t, 1, firstChild.ProfileDepth)
+	require.Equal(t, 2, firstChild.ProfileChildren)
+	require.True(t, firstChild.ProfileFallback)
+	require.Positive(t, firstChild.ProfileFallbackMinimum)
+	require.Zero(t, firstChild.SamplesBefore)
+	require.True(t, firstChild.YieldConsumed)
+	require.True(t, firstChild.AccuracyValid)
+	require.Equal(t, firstChild.Actual, firstChild.GrowHint)
+
+	for i := 0; i < 3; i++ {
+		renderRequest(20<<10, 8<<10)
+	}
+	warmedChild := renderRequest(20<<10, 8<<10)
+	require.Equal(t, uint64(4), warmedChild.SamplesBefore)
+	require.False(t, warmedChild.ProfileFallback)
+	require.Equal(t, warmedChild.Actual, warmedChild.EstimateBefore)
+}
+
+func Test_Buffalo_Render_Pass_File_Output_Does_Not_Learn_Unconsumed_Yield(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+	previousEstimator := rootplush.SetOutputSizeEstimatorEnabled(true)
+	defer rootplush.SetOutputSizeEstimatorEnabled(previousEstimator)
+
+	const pageFile = "templates/pages/conditional-layout.plush"
+	data := map[string]interface{}{
+		meta.TemplateFileKey: pageFile,
+		"body":               strings.Repeat("b", 12<<10),
+	}
+	body, err := rootplush.BuffaloRenderer(`<%= body %>`, data, nil)
+	require.NoError(t, err)
+	data["yield"] = template.HTML(body)
+	data["showYield"] = false
+	data[meta.TemplateFileKey] = "templates/conditional-layout.plush"
+	rendered, err := rootplush.BuffaloRenderer(`<%= if (showYield) { %><%= yield %><% } %>x`, data, nil)
+	require.NoError(t, err)
+	require.Equal(t, "x", rendered)
+
+	diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
+	require.True(t, ok)
+	require.Equal(t, len(body), diagnostics.OutputSize.YieldSize)
+	require.False(t, diagnostics.OutputSize.YieldConsumed)
+	require.False(t, diagnostics.OutputSize.AccuracyValid)
+	require.Zero(t, diagnostics.OutputSize.SamplesAfter)
+
+	entry, ok := cache.Get(rootplush.GenerateASTKey(pageFile))
+	require.True(t, ok)
+	bytecode, ok := entry.VMBytecode.(*compiler.Bytecode)
+	require.True(t, ok)
+	stats, _, _ := bytecode.LayoutSizeProfile.Predict(len(body))
+	require.Zero(t, stats.Samples())
+}
+
+func Test_Buffalo_Render_Pass_File_Output_Selects_Proportional_Layout_Predictor(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+	previousEstimator := rootplush.SetOutputSizeEstimatorEnabled(true)
+	defer rootplush.SetOutputSizeEstimatorEnabled(previousEstimator)
+
+	const pageFile = "templates/pages/proportional.plush"
+	const pageSource = `<%= body %>`
+	const layoutFile = "templates/proportional-layout.plush"
+	const layoutSource = `<%= chrome %><%= yield %>`
+
+	renderRequest := func(size int) rootplush.RenderOutputSizeDiagnostics {
+		data := map[string]interface{}{
+			meta.TemplateFileKey: pageFile,
+			"body":               strings.Repeat("b", size),
+			"chrome":             strings.Repeat("c", size),
+		}
+		body, err := rootplush.BuffaloRenderer(pageSource, data, nil)
+		require.NoError(t, err)
+		data["yield"] = template.HTML(body)
+		data[meta.TemplateFileKey] = layoutFile
+		_, err = rootplush.BuffaloRenderer(layoutSource, data, nil)
+		require.NoError(t, err)
+		diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
+		require.True(t, ok)
+		return diagnostics.OutputSize
+	}
+
+	first := renderRequest(100)
+	require.Equal(t, compiler.LayoutOutputPredictorAbsolute, first.OverheadPredictor)
+	require.Equal(t, 100, first.OverheadActual)
+
+	second := renderRequest(200)
+	require.Equal(t, compiler.LayoutOutputPredictorAbsolute, second.OverheadPredictor)
+	require.Equal(t, 100, second.OverheadAbsolute)
+	require.Equal(t, 200, second.OverheadRatio)
+
+	third := renderRequest(300)
+	require.Equal(t, compiler.LayoutOutputPredictorRatio, third.OverheadPredictor)
+	require.Equal(t, 150, third.OverheadAbsolute)
+	require.Equal(t, 300, third.OverheadRatio)
+	require.Equal(t, 300, third.OverheadBefore)
+	require.Equal(t, third.Actual, third.EstimateBefore)
+	require.Equal(t, float64(25), third.OverheadAbsoluteErrorScore)
+	require.Zero(t, third.OverheadRatioErrorScore)
+}
+
+func Test_Buffalo_Render_Pass_File_Output_Does_Not_Learn_When_Estimator_Is_Disabled(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+	previousEstimator := rootplush.SetOutputSizeEstimatorEnabled(false)
+	defer rootplush.SetOutputSizeEstimatorEnabled(previousEstimator)
+
+	const pageFile = "templates/pages/disabled-estimator.plush"
+	data := map[string]interface{}{
+		meta.TemplateFileKey: pageFile,
+		"body":               strings.Repeat("b", 100),
+		"chrome":             strings.Repeat("c", 100),
+	}
+	body, err := rootplush.BuffaloRenderer(`<%= body %>`, data, nil)
+	require.NoError(t, err)
+	data["yield"] = template.HTML(body)
+	data[meta.TemplateFileKey] = "templates/disabled-layout.plush"
+	_, err = rootplush.BuffaloRenderer(`<%= chrome %><%= yield %>`, data, nil)
+	require.NoError(t, err)
+
+	diagnostics, ok := rootplush.RenderDiagnosticsFromData(data)
+	require.True(t, ok)
+	require.False(t, diagnostics.OutputSize.Available)
+	entry, ok := cache.Get(rootplush.GenerateASTKey(pageFile))
+	require.True(t, ok)
+	bytecode, ok := entry.VMBytecode.(*compiler.Bytecode)
+	require.True(t, ok)
+	stats, prediction, _ := bytecode.LayoutSizeProfile.Predict(len(body))
+	require.Zero(t, stats.Samples())
+	require.Zero(t, prediction.Ratio)
 }
 
 func Test_Buffalo_Render_Pass_Root_Layout_Overhead_Stats_Are_Concurrent(t *testing.T) {

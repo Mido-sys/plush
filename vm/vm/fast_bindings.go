@@ -9,13 +9,14 @@ import (
 )
 
 type fastRenderBindings struct {
-	ctx       hctx.Context
-	names     []string
-	lookup    contextIDLookup
-	ids       []int
-	inlineIDs [8]int
-	localOK   []bool
-	localVals []interface{}
+	ctx        hctx.Context
+	vmHotspots plush.RenderVMHotspotDiagnosticsRecorder
+	names      []string
+	lookup     contextIDLookup
+	ids        []int
+	inlineIDs  [8]int
+	localOK    []bool
+	localVals  []interface{}
 }
 
 type fastRenderBindingPlan struct {
@@ -25,7 +26,14 @@ type fastRenderBindingPlan struct {
 }
 
 func newFastRenderBindingsWithPlan(plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan) fastRenderBindings {
-	bindings := fastRenderBindings{ctx: ctx}
+	return newFastRenderBindingsWithPlanDiagnostics(plan, ctx, bindingPlan, plush.CaptureRenderVMHotspotDiagnostics(ctx))
+}
+
+func newFastRenderBindingsWithPlanDiagnostics(plan *compiler.FastRenderPlan, ctx hctx.Context, bindingPlan *fastRenderBindingPlan, vmHotspots plush.RenderVMHotspotDiagnosticsRecorder) fastRenderBindings {
+	bindings := fastRenderBindings{
+		ctx:        ctx,
+		vmHotspots: vmHotspots,
+	}
 	if plan != nil {
 		bindings.names = plan.Bindings
 	}
@@ -218,13 +226,16 @@ func (b *fastRenderBindings) ensureLocalCapacity() {
 	b.localVals = vals
 }
 
-func fastRenderScopedBindings(ctx hctx.Context, bindings fastRenderBindings) (hctx.Context, fastRenderBindings, func()) {
-	child, cleanup := partialHelperChildContext(ctx)
+func fastRenderScopedBindings(ctx hctx.Context, bindings fastRenderBindings) (hctx.Context, fastRenderBindings, partialChildContextScope) {
+	child, scope := scopedPartialHelperChildContext(ctx)
 	if child == nil {
-		return ctx, bindings, func() {}
+		return ctx, bindings, scope
 	}
 	scoped := bindings
 	scoped.ctx = child
+	if overlay, ok := child.(*partialOverlayContext); ok {
+		overlay.vmHotspots = bindings.vmHotspots
+	}
 	if lookup, ok := child.(contextIDLookup); ok {
 		scoped.lookup = lookup
 	} else {
@@ -232,10 +243,7 @@ func fastRenderScopedBindings(ctx hctx.Context, bindings fastRenderBindings) (hc
 		scoped.ids = nil
 		scoped.inlineIDs = [8]int{}
 	}
-	if cleanup == nil {
-		cleanup = func() {}
-	}
-	return child, scoped, cleanup
+	return child, scoped, scope
 }
 
 type fastPartialLocalStorage struct {

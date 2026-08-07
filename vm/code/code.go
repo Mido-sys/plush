@@ -181,8 +181,8 @@ var definitions = map[Opcode]*Definition{
 	OpReturnValue: {"OpReturnValue", []int{}},
 	OpReturn:      {"OpReturn", []int{}},
 
-	OpGetLocal: {"OpGetLocal", []int{1}},
-	OpSetLocal: {"OpSetLocal", []int{1}},
+	OpGetLocal: {"OpGetLocal", []int{2}},
+	OpSetLocal: {"OpSetLocal", []int{2}},
 
 	OpGetBuiltin: {"OpGetBuiltin", []int{1}},
 
@@ -212,11 +212,11 @@ var definitions = map[Opcode]*Definition{
 	OpWriteConstant:        {"OpWriteConstant", []int{2}},
 	OpWriteName:            {"OpWriteName", []int{2}},
 	OpWriteNameOrNull:      {"OpWriteNameOrNull", []int{2}},
-	OpWriteLocal:           {"OpWriteLocal", []int{1}},
+	OpWriteLocal:           {"OpWriteLocal", []int{2}},
 	OpWriteGlobal:          {"OpWriteGlobal", []int{2}},
 	OpWriteString:          {"OpWriteString", []int{2}},
 	OpWriteHTML:            {"OpWriteHTML", []int{2}},
-	OpWriteLocalProperty:   {"OpWriteLocalProperty", []int{1, 2}},
+	OpWriteLocalProperty:   {"OpWriteLocalProperty", []int{2, 2}},
 	OpWriteGlobalProperty:  {"OpWriteGlobalProperty", []int{2, 2}},
 	OpWriteNameProperty:    {"OpWriteNameProperty", []int{2, 2}},
 	OpWriteCall:            {"OpWriteCall", []int{1}},

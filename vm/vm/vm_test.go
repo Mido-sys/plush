@@ -1223,6 +1223,44 @@ func Test_VM_Helper_Call_Render_Fast_Plan(t *testing.T) {
 	}
 }
 
+func Test_VM_Helper_Call_Path_Diagnostics_Distinguish_Direct_And_Reflection(t *testing.T) {
+	type namedValue string
+
+	tmpl, err := Compile(`<%= direct("one") %><%= reflected("two") %>`)
+	require.NoError(t, err)
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"direct": func(value string) string {
+			return value
+		},
+		"reflected": func(value namedValue) string {
+			return string(value)
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "onetwo", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperReflectionCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperDirectDetailsDropped)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionDetailsDropped)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 2)
+
+	paths := map[string]plush.RenderVMHelperCallPathDiagnostics{}
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		paths[detail.Name] = detail
+	}
+	require.Equal(t, plush.RenderVMHelperCallDirect, paths["direct"].Path)
+	require.Equal(t, "func(string) string", paths["direct"].Signature)
+	require.Equal(t, plush.RenderVMHelperCallReflection, paths["reflected"].Path)
+	require.Contains(t, paths["reflected"].Signature, "namedValue")
+}
+
 func Test_VM_Helper_Call_Value_Argument_Can_Satisfy_Pointer_Parameter(t *testing.T) {
 	tmpl, err := Compile(`<%= render_section(section) %>`)
 	require.NoError(t, err)
@@ -1545,6 +1583,57 @@ func Test_VM_Partial_Render_Fast_Plan_Reuses_Linked_Bytecode(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1, links.Len())
 	require.True(t, links.hasFeederID)
+}
+
+func Test_VM_Generic_Partial_With_Local_Uses_Direct_Partial_Renderer(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "selection.plush", name)
+			return `<% selected = "after" %><%= selected %>`, nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	tmpl, err := Compile(`<% let selected = "before" %><%= partial("selection.plush") %>|<%= selected %>`)
+	require.NoError(t, err)
+	tmpl.bytecode.FastRenderPlan = nil
+	tmpl.bytecode.HasPartials = true
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "after|after", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.VMHotspots.PartialCalls)
+	for _, detail := range diagnostics.VMHotspots.HelperCallPaths {
+		require.NotEqual(t, "partial", detail.Name)
+	}
+}
+
+func Test_VM_Generic_Data_Partial_Uses_Direct_Typed_Invoker(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"partialFeeder": func(name string) (string, error) {
+			require.Equal(t, "card.plush", name)
+			return `<strong><%= label %></strong>`, nil
+		},
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	tmpl, err := Compile(`<%= partial("card.plush", {label: "Mido"}) %>`)
+	require.NoError(t, err)
+	tmpl.bytecode.FastRenderPlan = nil
+	tmpl.bytecode.HasPartials = true
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<strong>Mido</strong>", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Len(t, diagnostics.VMHotspots.HelperCallPaths, 1)
+	require.Equal(t, "partial", diagnostics.VMHotspots.HelperCallPaths[0].Name)
+	require.Equal(t, plush.RenderVMHelperCallDirect, diagnostics.VMHotspots.HelperCallPaths[0].Path)
 }
 
 func Test_VM_Partial_Render_Binding_Plan_Reuses_Linked_Binding_I_Ds(t *testing.T) {

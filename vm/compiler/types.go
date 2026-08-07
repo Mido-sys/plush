@@ -9,31 +9,33 @@ import (
 )
 
 type Bytecode struct {
-	Instructions      code.Instructions
-	CallNames         map[int]string
-	LocalNames        map[int]string
-	LineNumbers       map[int]int
-	Properties        map[int]object.PropertyAccess
-	PropertyCaches    []object.InlineCacheSlot
-	CallCaches        []object.InlineCacheSlot
-	NumLocals         int
-	NumGlobals        int
-	Constants         []object.Object
-	GlobalNames       map[int]string
-	Static            bool
-	StaticOutput      string
-	StaticSize        int
-	FastRenderPlan    *FastRenderPlan
-	FastRejectLine    int
-	FastReject        string
-	FastDiagnostics   atomic.Value
-	OutputSizeStats   *OutputSizeStats
-	LayoutSizeStats   *OutputSizeStats
-	LayoutSizeProfile LayoutOutputSizeProfile
-	PartialSizeStats  *OutputSizeStats
-	HasHoles          bool
-	HasPartials       bool
-	HasContextWrites  bool
+	Instructions              code.Instructions
+	CallNames                 map[int]string
+	LocalNames                map[int]string
+	DynamicContextNameIndexes []int
+	DynamicContextNamesReady  bool
+	LineNumbers               map[int]int
+	Properties                map[int]object.PropertyAccess
+	PropertyCaches            []object.InlineCacheSlot
+	CallCaches                []object.InlineCacheSlot
+	NumLocals                 int
+	NumGlobals                int
+	Constants                 []object.Object
+	GlobalNames               map[int]string
+	Static                    bool
+	StaticOutput              string
+	StaticSize                int
+	FastRenderPlan            *FastRenderPlan
+	FastRejectLine            int
+	FastReject                string
+	FastDiagnostics           atomic.Value
+	OutputSizeStats           *OutputSizeStats
+	LayoutSizeStats           *OutputSizeStats
+	LayoutSizeProfile         *LayoutOutputSizeProfile
+	PartialSizeStats          *OutputSizeStats
+	HasHoles                  bool
+	HasPartials               bool
+	HasContextWrites          bool
 }
 
 func (b *Bytecode) ContextWrites() bool {
@@ -47,6 +49,9 @@ type FastRenderReject struct {
 
 type FastRenderSegmentKind uint8
 
+// When adding a segment kind, classify its binding behavior in
+// fastRenderSegmentBindingEffect. The binding-sync plan is trusted by the VM
+// to restore lexical scopes without copying every local binding.
 const (
 	FastRenderSegmentStatic FastRenderSegmentKind = iota
 	FastRenderSegmentName
@@ -61,6 +66,7 @@ const (
 	FastRenderSegmentAssign
 	FastRenderSegmentReturn
 	FastRenderSegmentGeneric
+	fastRenderSegmentKindCount
 )
 
 type FastRenderSegment struct {
@@ -85,6 +91,18 @@ type FastRenderSegment struct {
 	OutputCache   object.InlineCacheSlot
 }
 
+// FastBindingSyncPlan lists outer binding slots that a lexical scope may
+// update and local slots that must be restored when the scope exits. Prepared
+// distinguishes a completed plan from one that is older, manually assembled,
+// unclassified, or deferred by the metadata budget and needs compatibility
+// handling in the VM.
+type FastBindingSyncPlan struct {
+	NameIndexes       []int
+	LocalNameIndexes  []int
+	ParentNameIndexes []int
+	Prepared          bool
+}
+
 type FastRenderPlan struct {
 	Bindings   []string
 	Segments   []FastRenderSegment
@@ -99,6 +117,9 @@ type FastRenderPlan struct {
 
 type FastLoopPartKind uint8
 
+// When adding a loop-part kind, classify its binding behavior in
+// fastLoopPartBindingEffect. Unclassified kinds must leave binding-sync plans
+// unprepared so the VM uses its compatibility path.
 const (
 	FastLoopPartStatic FastLoopPartKind = iota
 	FastLoopPartKey
@@ -115,6 +136,7 @@ const (
 	FastLoopPartLet
 	FastLoopPartAssign
 	FastLoopPartReturn
+	fastLoopPartKindCount
 )
 
 type FastLoopPart struct {
@@ -147,6 +169,7 @@ type FastLoopPlan struct {
 	HasLet            bool
 	HasAssign         bool
 	PartFlagsSet      bool
+	BindingSync       FastBindingSyncPlan
 	Line              int
 	SizeStats         *LoopSizeStats
 }
@@ -274,29 +297,33 @@ type FastGenericPlan struct {
 }
 
 type FastConditionalBranch struct {
-	Condition FastValuePlan
-	Segments  []FastRenderSegment
-	Line      int
+	Condition   FastValuePlan
+	Segments    []FastRenderSegment
+	BindingSync FastBindingSyncPlan
+	Line        int
 }
 
 type FastConditionalPlan struct {
-	Branches     []FastConditionalBranch
-	ElseSegments []FastRenderSegment
-	Line         int
-	Silent       bool
+	Branches        []FastConditionalBranch
+	ElseSegments    []FastRenderSegment
+	ElseBindingSync FastBindingSyncPlan
+	Line            int
+	Silent          bool
 }
 
 type FastLoopConditionalBranch struct {
-	Condition FastValuePlan
-	Parts     []FastLoopPart
-	Line      int
+	Condition   FastValuePlan
+	Parts       []FastLoopPart
+	BindingSync FastBindingSyncPlan
+	Line        int
 }
 
 type FastLoopConditionalPlan struct {
-	Branches  []FastLoopConditionalBranch
-	ElseParts []FastLoopPart
-	Line      int
-	Silent    bool
+	Branches        []FastLoopConditionalBranch
+	ElseParts       []FastLoopPart
+	ElseBindingSync FastBindingSyncPlan
+	Line            int
+	Silent          bool
 }
 
 type EmittedInstruction struct {

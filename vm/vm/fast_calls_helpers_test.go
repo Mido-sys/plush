@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
 	"github.com/stretchr/testify/require"
@@ -86,6 +87,99 @@ func Test_VM_Write_Fast_Direct_String_Call_Segment_Variants(t *testing.T) {
 	handled, err = writeFastDirectStringCallSegment(&strings.Builder{}, ctx, bindings, countArgCall, func(string) string { return "" })
 	require.NoError(t, err)
 	require.False(t, handled)
+}
+
+func Test_VM_Registered_Fast_Value_Helper_Direct_For_Fast_Render_Value_Calls(t *testing.T) {
+	tmpl, err := Compile(`<% let parts = split_string("a,b", ",") %><% let label = replace("a-b", "-", " ", 1) %><%= parts[1] %>|<%= label %>`)
+	require.NoError(t, err)
+	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
+
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"replace": func(s, oldValue, newValue string, count int, help plush.HelperContext) string {
+			return strings.Replace(s, oldValue, newValue, count)
+		},
+		"split_string": func(value, sep string) []string {
+			return strings.Split(value, sep)
+		},
+	})
+	SetFastValueHelper(ctx, "replace", func(ctx hctx.Context, args FastArgs) (interface{}, error) {
+		if args.Len() != 4 {
+			return nil, ErrFastUnsupported
+		}
+		value, ok := args.String(0)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		oldValue, ok := args.String(1)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		newValue, ok := args.String(2)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		count, ok := args.Int64(3)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		return strings.Replace(value, oldValue, newValue, int(count)), nil
+	})
+	SetFastValueHelper(ctx, "split_string", func(ctx hctx.Context, args FastArgs) (interface{}, error) {
+		if args.Len() != 2 {
+			return nil, ErrFastUnsupported
+		}
+		value, ok := args.String(0)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		sep, ok := args.String(1)
+		if !ok {
+			return nil, ErrFastUnsupported
+		}
+		return strings.Split(value, sep), nil
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	out, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "b|a b", out)
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 2, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionCalls)
+}
+
+func Test_VM_Registered_Fast_Value_Helper_Direct_For_Bytecode_Value_Calls(t *testing.T) {
+	type namedString string
+
+	ctx := plush.NewContext()
+	SetFastValueHelper(ctx, "decorate", func(ctx hctx.Context, args FastArgs) (interface{}, error) {
+		value, ok := args.String(0)
+		if !ok || args.Len() != 1 {
+			return nil, ErrFastUnsupported
+		}
+		return strings.ToUpper(value), nil
+	})
+	plush.EnableRenderVMHotspotDiagnostics(ctx)
+
+	raw := func(value namedString) string {
+		return string(value)
+	}
+	machine := newRuntimeHelperTestVM(ctx)
+	machine.stack[0] = object.Wrap(raw)
+	machine.stack[1] = &object.String{Value: "direct"}
+	machine.sp = 2
+
+	require.NoError(t, machine.callNativeValue("decorate", raw, 1, nil, nil))
+	require.Equal(t, "DIRECT", object.ToGo(machine.pop()))
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperCalls)
+	require.Equal(t, 1, diagnostics.VMHotspots.HelperDirectCalls)
+	require.Zero(t, diagnostics.VMHotspots.HelperReflectionCalls)
 }
 
 func Test_VM_Fast_Writer_Write_Go_Value_Edges(t *testing.T) {

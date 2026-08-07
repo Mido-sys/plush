@@ -19,8 +19,10 @@ type Symbol struct {
 type SymbolTable struct {
 	Outer *SymbolTable
 
-	store          map[string]Symbol
-	numDefinitions int
+	store            map[string]Symbol
+	numDefinitions   int
+	numInlineLocals  int
+	inlineLocalSlots map[string]int
 
 	FreeSymbols []Symbol
 
@@ -58,12 +60,14 @@ func (s *SymbolTable) Define(name string) Symbol {
 
 	if s.inlineBlock {
 		owner := s.localDefinitionOwner()
-		if owner != nil && owner.Outer != nil {
-			symbol.Index = owner.numDefinitions
-			owner.numDefinitions++
-		} else {
+		if owner == nil {
 			symbol.Index = s.numDefinitions
 			s.numDefinitions++
+		} else if owner.Outer == nil {
+			symbol.Index = s.defineRootInlineLocal(owner, name)
+		} else {
+			symbol.Index = owner.numDefinitions
+			owner.numDefinitions++
 		}
 		symbol.Scope = LocalScope
 		s.store[name] = symbol
@@ -75,6 +79,33 @@ func (s *SymbolTable) Define(name string) Symbol {
 	s.store[name] = symbol
 	s.numDefinitions++
 	return symbol
+}
+
+func (s *SymbolTable) defineRootInlineLocal(root *SymbolTable, name string) int {
+	if root.inlineLocalSlots == nil {
+		root.inlineLocalSlots = map[string]int{}
+	}
+	if _, active := s.resolveBefore(root, name); !active {
+		if index, ok := root.inlineLocalSlots[name]; ok {
+			return index
+		}
+	}
+
+	index := root.numInlineLocals
+	root.numInlineLocals++
+	if _, exists := root.inlineLocalSlots[name]; !exists {
+		root.inlineLocalSlots[name] = index
+	}
+	return index
+}
+
+func (s *SymbolTable) resolveBefore(stop *SymbolTable, name string) (Symbol, bool) {
+	for current := s; current != nil && current != stop; current = current.Outer {
+		if symbol, ok := current.store[name]; ok {
+			return symbol, true
+		}
+	}
+	return Symbol{}, false
 }
 
 func (s *SymbolTable) localDefinitionOwner() *SymbolTable {

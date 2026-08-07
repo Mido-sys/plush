@@ -37,23 +37,11 @@ func renderFastConditional(out *strings.Builder, ctx hctx.Context, bindings fast
 			value = nil
 		}
 		if isTruthyFastValue(value) {
-			outerBindings := bindings
-			branchCtx, branchBindings, cleanup := fastRenderSegmentScopeForLet(ctx, bindings, branch.Segments)
-			defer cleanup()
-			defer syncFastSegmentAssignmentBindings(branchCtx, &outerBindings, branch.Segments)
-			ctx = branchCtx
-			bindings = branchBindings
-			return renderFastSegments(out, ctx, bindings, branch.Segments)
+			return renderFastScopedSegments(out, ctx, bindings, branch.Segments, branch.BindingSync)
 		}
 	}
 	if len(conditional.ElseSegments) > 0 {
-		outerBindings := bindings
-		branchCtx, branchBindings, cleanup := fastRenderSegmentScopeForLet(ctx, bindings, conditional.ElseSegments)
-		defer cleanup()
-		defer syncFastSegmentAssignmentBindings(branchCtx, &outerBindings, conditional.ElseSegments)
-		ctx = branchCtx
-		bindings = branchBindings
-		return renderFastSegments(out, ctx, bindings, conditional.ElseSegments)
+		return renderFastScopedSegments(out, ctx, bindings, conditional.ElseSegments, conditional.ElseBindingSync)
 	}
 	return true, nil
 }
@@ -76,22 +64,25 @@ func renderFastConditionalSilently(ctx hctx.Context, bindings fastRenderBindings
 		}
 		if isTruthyFastValue(value) {
 			var discard strings.Builder
-			outerBindings := bindings
-			branchCtx, branchBindings, cleanup := fastRenderSegmentScopeForLet(ctx, bindings, branch.Segments)
-			defer cleanup()
-			defer syncFastSegmentAssignmentBindings(branchCtx, &outerBindings, branch.Segments)
-			return renderFastSegments(&discard, branchCtx, branchBindings, branch.Segments)
+			return renderFastScopedSegments(&discard, ctx, bindings, branch.Segments, branch.BindingSync)
 		}
 	}
 	if len(conditional.ElseSegments) > 0 {
 		var discard strings.Builder
-		outerBindings := bindings
-		branchCtx, branchBindings, cleanup := fastRenderSegmentScopeForLet(ctx, bindings, conditional.ElseSegments)
-		defer cleanup()
-		defer syncFastSegmentAssignmentBindings(branchCtx, &outerBindings, conditional.ElseSegments)
-		return renderFastSegments(&discard, branchCtx, branchBindings, conditional.ElseSegments)
+		return renderFastScopedSegments(&discard, ctx, bindings, conditional.ElseSegments, conditional.ElseBindingSync)
 	}
 	return true, nil
+}
+
+func renderFastScopedSegments(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, segments []compiler.FastRenderSegment, plan compiler.FastBindingSyncPlan) (bool, error) {
+	outerBindings := bindings
+	branchCtx, branchBindings, bindingUndo, scope := fastRenderSegmentScopeForLet(ctx, bindings, segments, plan)
+	defer scope.release()
+
+	handled, err := renderFastSegments(out, branchCtx, branchBindings, segments)
+	syncFastSegmentAssignmentBindingsPlan(branchCtx, &outerBindings, segments, plan)
+	bindingUndo.restorePlan(&branchBindings, &outerBindings, plan)
+	return handled, err
 }
 
 func renderFastPartialSegment(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, partial *compiler.FastPartialPlan) error {
@@ -114,7 +105,7 @@ func renderFastPartialSegmentWithDataPlan(out *strings.Builder, ctx hctx.Context
 			return nil
 		}
 	}
-	if ok, err := renderFastNoDataPartialInto(out, partial.Name, ctx, partial.Line); ok || err != nil {
+	if ok, err := renderFastNoDataPartialIntoWithDiagnostics(out, partial.Name, ctx, partial.Line, bindings.vmHotspots); ok || err != nil {
 		if err != nil {
 			return err
 		}
@@ -134,15 +125,21 @@ func renderFastLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderB
 	hasLet, hasAssign := fastLoopPartFlags(loop)
 	if hasLet {
 		outerBindings := bindings
-		scopedCtx, scopedBindings, cleanup := fastRenderScopedBindings(ctx, bindings)
-		defer cleanup()
+		scopedCtx, scopedBindings, scope := fastRenderScopedBindings(ctx, bindings)
+		defer scope.release()
+		var bindingUndo fastBindingUndo
+		if loop.BindingSync.Prepared {
+			bindingUndo.capturePlan(&scopedBindings, loop.BindingSync)
+			defer bindingUndo.restorePlan(&scopedBindings, &outerBindings, loop.BindingSync)
+		} else {
+			scopedBindings = fastRenderBindingsWithLocalCopy(scopedBindings)
+			scopedBindings.ensureLocalCapacity()
+		}
 		if hasAssign {
-			defer syncFastLoopAssignmentBindings(scopedCtx, &outerBindings, loop.Parts)
+			defer syncFastLoopAssignmentBindingsPlan(scopedCtx, &outerBindings, loop.Parts, loop.BindingSync)
 		}
 		ctx = scopedCtx
 		bindings = scopedBindings
-		bindings = fastRenderBindingsWithLocalCopy(bindings)
-		bindings.ensureLocalCapacity()
 	}
 
 	iter, ok, err := fastLoopIterableValue(loop, ctx, bindings)
@@ -373,9 +370,7 @@ func renderFastLoopParts(out *strings.Builder, ctx hctx.Context, bindings fastRe
 				return err
 			}
 		case compiler.FastLoopPartLoop:
-			nestedBindings := fastLoopBindingsWithCurrentLocals(bindings, loop, currentKey, currentValue)
-			ok, err := renderFastLoop(out, ctx, nestedBindings, part.Loop)
-			syncFastLoopAssignmentBindings(ctx, &bindings, part.Loop.Parts)
+			ok, err := renderFastNestedLoop(out, ctx, bindings, loop, part.Loop, currentKey, currentValue)
 			if err != nil {
 				return err
 			}
@@ -490,8 +485,10 @@ func renderFastLoopPartialPart(out *strings.Builder, ctx hctx.Context, bindings 
 	if partial == nil {
 		return nil
 	}
-	scopedCtx, scopedBindings, cleanup := fastRenderScopedBindings(ctx, fastLoopBindingsWithCurrentLocals(bindings, loop, key, value))
-	defer cleanup()
+	currentBindings, bindingUndo := fastLoopBindingsWithCurrentLocals(bindings, loop, key, value)
+	defer bindingUndo.restore(&currentBindings)
+	scopedCtx, scopedBindings, scope := fastRenderScopedBindings(ctx, currentBindings)
+	defer scope.release()
 	if loop != nil && scopedCtx != nil {
 		if fastLoopBindingName(loop.KeyName) {
 			scopedCtx.Set(loop.KeyName, key)
@@ -523,25 +520,24 @@ func renderFastLoopConditional(out *strings.Builder, ctx hctx.Context, bindings 
 			result = nil
 		}
 		if isTruthyFastValue(result) {
-			outerBindings := bindings
-			branchCtx, branchBindings, cleanup := fastRenderLoopPartScopeForLet(ctx, bindings, branch.Parts)
-			defer cleanup()
-			defer syncFastLoopAssignmentBindings(branchCtx, &outerBindings, branch.Parts)
-			ctx = branchCtx
-			bindings = branchBindings
-			return renderFastLoopParts(out, ctx, bindings, loop, branch.Parts, key, value)
+			return renderFastScopedLoopParts(out, ctx, bindings, loop, branch.Parts, branch.BindingSync, key, value)
 		}
 	}
 	if len(conditional.ElseParts) > 0 {
-		outerBindings := bindings
-		branchCtx, branchBindings, cleanup := fastRenderLoopPartScopeForLet(ctx, bindings, conditional.ElseParts)
-		defer cleanup()
-		defer syncFastLoopAssignmentBindings(branchCtx, &outerBindings, conditional.ElseParts)
-		ctx = branchCtx
-		bindings = branchBindings
-		return renderFastLoopParts(out, ctx, bindings, loop, conditional.ElseParts, key, value)
+		return renderFastScopedLoopParts(out, ctx, bindings, loop, conditional.ElseParts, conditional.ElseBindingSync, key, value)
 	}
 	return nil
+}
+
+func renderFastScopedLoopParts(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, loop *compiler.FastLoopPlan, parts []compiler.FastLoopPart, plan compiler.FastBindingSyncPlan, key, value interface{}) error {
+	outerBindings := bindings
+	branchCtx, branchBindings, bindingUndo, scope := fastRenderLoopPartScopeForLet(ctx, bindings, parts, plan)
+	defer scope.release()
+
+	err := renderFastLoopParts(out, branchCtx, branchBindings, loop, parts, key, value)
+	syncFastLoopAssignmentBindingsPlan(branchCtx, &outerBindings, parts, plan)
+	bindingUndo.restorePlan(&branchBindings, &outerBindings, plan)
+	return err
 }
 
 func renderFastLoopConditionalSilently(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, loop *compiler.FastLoopPlan, conditional *compiler.FastLoopConditionalPlan, key, value interface{}) error {
@@ -562,11 +558,7 @@ func renderFastLoopConditionalSilently(out *strings.Builder, ctx hctx.Context, b
 		}
 		if isTruthyFastValue(result) {
 			var rendered strings.Builder
-			outerBindings := bindings
-			branchCtx, branchBindings, cleanup := fastRenderLoopPartScopeForLet(ctx, bindings, branch.Parts)
-			defer cleanup()
-			defer syncFastLoopAssignmentBindings(branchCtx, &outerBindings, branch.Parts)
-			err := renderFastLoopParts(&rendered, branchCtx, branchBindings, loop, branch.Parts, key, value)
+			err := renderFastScopedLoopParts(&rendered, ctx, bindings, loop, branch.Parts, branch.BindingSync, key, value)
 			if err == errFastLoopBreak || err == errFastLoopContinue || err == errFastLoopReturn {
 				out.WriteString(rendered.String())
 			}
@@ -575,11 +567,7 @@ func renderFastLoopConditionalSilently(out *strings.Builder, ctx hctx.Context, b
 	}
 	if len(conditional.ElseParts) > 0 {
 		var rendered strings.Builder
-		outerBindings := bindings
-		branchCtx, branchBindings, cleanup := fastRenderLoopPartScopeForLet(ctx, bindings, conditional.ElseParts)
-		defer cleanup()
-		defer syncFastLoopAssignmentBindings(branchCtx, &outerBindings, conditional.ElseParts)
-		err := renderFastLoopParts(&rendered, branchCtx, branchBindings, loop, conditional.ElseParts, key, value)
+		err := renderFastScopedLoopParts(&rendered, ctx, bindings, loop, conditional.ElseParts, conditional.ElseBindingSync, key, value)
 		if err == errFastLoopBreak || err == errFastLoopContinue || err == errFastLoopReturn {
 			out.WriteString(rendered.String())
 		}
@@ -592,8 +580,38 @@ func syncFastLoopAssignmentBindings(ctx hctx.Context, bindings *fastRenderBindin
 	syncFastLoopAssignmentBindingsWithLets(ctx, bindings, parts, nil)
 }
 
+func syncFastLoopAssignmentBindingsPlan(ctx hctx.Context, bindings *fastRenderBindings, parts []compiler.FastLoopPart, plan compiler.FastBindingSyncPlan) {
+	if !plan.Prepared {
+		syncFastLoopAssignmentBindings(ctx, bindings, parts)
+		return
+	}
+	syncPreparedFastAssignmentBindings(ctx, bindings, plan.NameIndexes)
+}
+
 func syncFastSegmentAssignmentBindings(ctx hctx.Context, bindings *fastRenderBindings, segments []compiler.FastRenderSegment) {
 	syncFastSegmentAssignmentBindingsWithLets(ctx, bindings, segments, nil)
+}
+
+func syncFastSegmentAssignmentBindingsPlan(ctx hctx.Context, bindings *fastRenderBindings, segments []compiler.FastRenderSegment, plan compiler.FastBindingSyncPlan) {
+	if !plan.Prepared {
+		syncFastSegmentAssignmentBindings(ctx, bindings, segments)
+		return
+	}
+	syncPreparedFastAssignmentBindings(ctx, bindings, plan.NameIndexes)
+}
+
+func syncPreparedFastAssignmentBindings(ctx hctx.Context, bindings *fastRenderBindings, nameIndexes []int) {
+	if ctx == nil || bindings == nil {
+		return
+	}
+	for _, index := range nameIndexes {
+		if index < 0 || index >= len(bindings.names) {
+			continue
+		}
+		if value, ok := fastContextValue(ctx, bindings.names[index]); ok {
+			bindings.setLocal(index, value)
+		}
+	}
 }
 
 func syncFastSegmentAssignmentBindingsWithLets(ctx hctx.Context, bindings *fastRenderBindings, segments []compiler.FastRenderSegment, localLets map[string]struct{}) {
@@ -680,21 +698,43 @@ func cloneFastLoopSyncNames(names map[string]struct{}) map[string]struct{} {
 	return clone
 }
 
-func fastLoopBindingsWithCurrentLocals(bindings fastRenderBindings, loop *compiler.FastLoopPlan, key, value interface{}) fastRenderBindings {
+func fastLoopBindingsWithCurrentLocals(bindings fastRenderBindings, loop *compiler.FastLoopPlan, key, value interface{}) (fastRenderBindings, fastBindingUndo) {
+	var undo fastBindingUndo
 	if loop == nil || len(bindings.names) == 0 {
-		return bindings
+		return bindings, undo
 	}
 	scoped := bindings
-	if fastLoopBindingName(loop.KeyName) || fastLoopBindingName(loop.ValueName) {
-		scoped = fastRenderBindingsWithLocalCopy(scoped)
-	}
 	if fastLoopBindingName(loop.KeyName) {
-		scoped.setLocalByName(loop.KeyName, key)
+		setFastTemporaryLocal(&scoped, &undo, loop.KeyName, key)
 	}
 	if fastLoopBindingName(loop.ValueName) {
-		scoped.setLocalByName(loop.ValueName, value)
+		setFastTemporaryLocal(&scoped, &undo, loop.ValueName, value)
 	}
-	return scoped
+	return scoped, undo
+}
+
+func setFastTemporaryLocal(bindings *fastRenderBindings, undo *fastBindingUndo, name string, value interface{}) {
+	if bindings == nil {
+		return
+	}
+	index := fastBindingNameIndex(bindings.names, name)
+	if index < 0 {
+		return
+	}
+	if len(bindings.localOK) > 0 {
+		undo.capture(bindings, index)
+	}
+	bindings.setLocal(index, value)
+}
+
+func renderFastNestedLoop(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, parent, nested *compiler.FastLoopPlan, key, value interface{}) (bool, error) {
+	nestedBindings, bindingUndo := fastLoopBindingsWithCurrentLocals(bindings, parent, key, value)
+	defer bindingUndo.restore(&nestedBindings)
+	handled, err := renderFastLoop(out, ctx, nestedBindings, nested)
+	if nested != nil {
+		syncFastLoopAssignmentBindingsPlan(ctx, &bindings, nested.Parts, nested.BindingSync)
+	}
+	return handled, err
 }
 
 func fastRenderBindingsWithLocalCopy(bindings fastRenderBindings) fastRenderBindings {
@@ -793,37 +833,55 @@ func fastRenderSegmentsHaveLet(segments []compiler.FastRenderSegment) bool {
 	return false
 }
 
-func fastRenderSegmentScopeForLet(ctx hctx.Context, bindings fastRenderBindings, segments []compiler.FastRenderSegment) (hctx.Context, fastRenderBindings, func()) {
+func fastRenderSegmentScopeForLet(ctx hctx.Context, bindings fastRenderBindings, segments []compiler.FastRenderSegment, plan compiler.FastBindingSyncPlan) (hctx.Context, fastRenderBindings, fastBindingUndo, partialChildContextScope) {
+	var undo fastBindingUndo
 	if !fastRenderSegmentsHaveLet(segments) {
-		return ctx, bindings, func() {}
+		return ctx, bindings, undo, partialChildContextScope{}
 	}
-	childCtx, scopedBindings, cleanup := fastRenderScopedBindings(ctx, bindings)
-	scopedBindings = fastRenderBindingsWithLocalCopy(scopedBindings)
-	scopedBindings.ensureLocalCapacity()
-	return childCtx, scopedBindings, cleanup
+	childCtx, scopedBindings, scope := fastRenderScopedBindings(ctx, bindings)
+	if plan.Prepared {
+		undo.capturePlan(&scopedBindings, plan)
+	} else {
+		scopedBindings = fastRenderBindingsWithLocalCopy(scopedBindings)
+		scopedBindings.ensureLocalCapacity()
+	}
+	return childCtx, scopedBindings, undo, scope
 }
 
-func fastRenderLoopPartScopeForLet(ctx hctx.Context, bindings fastRenderBindings, parts []compiler.FastLoopPart) (hctx.Context, fastRenderBindings, func()) {
+func fastRenderLoopPartScopeForLet(ctx hctx.Context, bindings fastRenderBindings, parts []compiler.FastLoopPart, plan compiler.FastBindingSyncPlan) (hctx.Context, fastRenderBindings, fastBindingUndo, partialChildContextScope) {
+	var undo fastBindingUndo
 	if !fastLoopPartsHaveLet(parts) {
-		return ctx, bindings, func() {}
+		return ctx, bindings, undo, partialChildContextScope{}
 	}
-	childCtx, scopedBindings, cleanup := fastRenderScopedBindings(ctx, bindings)
-	scopedBindings = fastRenderBindingsWithLocalCopy(scopedBindings)
-	scopedBindings.ensureLocalCapacity()
-	return childCtx, scopedBindings, cleanup
+	childCtx, scopedBindings, scope := fastRenderScopedBindings(ctx, bindings)
+	if plan.Prepared {
+		undo.capturePlan(&scopedBindings, plan)
+	} else {
+		scopedBindings = fastRenderBindingsWithLocalCopy(scopedBindings)
+		scopedBindings.ensureLocalCapacity()
+	}
+	return childCtx, scopedBindings, undo, scope
 }
 
 func (b *fastRenderBindings) setLocalByName(name string, value interface{}) bool {
 	if b == nil || !fastLoopBindingName(name) {
 		return false
 	}
-	for i := range b.names {
-		if b.names[i] == name {
-			b.setLocal(i, value)
-			return true
+	index := fastBindingNameIndex(b.names, name)
+	if index < 0 {
+		return false
+	}
+	b.setLocal(index, value)
+	return true
+}
+
+func fastBindingNameIndex(names []string, name string) int {
+	for i := range names {
+		if names[i] == name {
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 func fastLoopBindingName(name string) bool {
@@ -855,7 +913,7 @@ func writeFastLoopCallPart(out *strings.Builder, ctx hctx.Context, bindings fast
 		if err != nil {
 			return err
 		}
-		if handled, err := writeRegisteredFastHelperNamed(writeOut, callCtx, call.Name, helper, args); handled || err != nil {
+		if handled, err := writeRegisteredFastHelperNamed(writeOut, callCtx, call.Name, helper, args, bindings.vmHotspots); handled || err != nil {
 			if err != nil {
 				return fastLineError(call.Line, err)
 			}
@@ -868,7 +926,7 @@ func writeFastLoopCallPart(out *strings.Builder, ctx hctx.Context, bindings fast
 			return err
 		}
 	}
-	if err := writeFastCallValue(writeOut, callCtx, call.Name, raw, args, &call.Cache); err != nil {
+	if err := writeFastCallValueWithDiagnostics(writeOut, callCtx, call.Name, raw, args, &call.Cache, bindings.vmHotspots); err != nil {
 		return fastLineError(call.Line, err)
 	}
 	return nil

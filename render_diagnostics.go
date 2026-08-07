@@ -34,6 +34,17 @@ const (
 
 	renderPartialOutputDetailLimit = 8
 	renderLoopOutputDetailLimit    = 8
+	renderVMHelperPathDetailLimit  = 8
+)
+
+// RenderVMHelperCallPath identifies how the VM invoked a Go helper.
+type RenderVMHelperCallPath string
+
+const (
+	// RenderVMHelperCallDirect is a statically typed Go invocation.
+	RenderVMHelperCallDirect RenderVMHelperCallPath = "direct"
+	// RenderVMHelperCallReflection is a reflect.Value.Call compatibility invocation.
+	RenderVMHelperCallReflection RenderVMHelperCallPath = "reflection"
 )
 
 var renderDiagnosticsKey = "__plush_internal_render_diagnostics_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
@@ -62,33 +73,47 @@ type RenderDiagnostics struct {
 }
 
 type RenderOutputSizeDiagnostics struct {
-	Available      bool
-	Scope          string
-	Contextual     bool
-	YieldSize      int
-	OverheadBefore int
-	OverheadActual int
-	OverheadAfter  int
-	StaticSize     int
-	FallbackHint   int
-	GrowHint       int
-	EstimateBefore int
-	Actual         int
-	EstimateAfter  int
-	SamplesBefore  uint64
-	SamplesAfter   uint64
-	Observed       bool
-	ProfileBand    string
-	Minimum        int
-	Maximum        int
-	Unstable       bool
-	Limited        bool
-	GrowCalled     bool
-	CapacityBefore int
-	CapacityGrow   int
-	CapacityFinal  int
-	UnusedCapacity int
-	GrowAllocated  int
+	Available                  bool
+	Scope                      string
+	Contextual                 bool
+	YieldSize                  int
+	OverheadBefore             int
+	OverheadActual             int
+	OverheadAfter              int
+	OverheadPredictor          string
+	OverheadPredictorAfter     string
+	OverheadAbsolute           int
+	OverheadRatio              int
+	OverheadAbsoluteErrorScore float64
+	OverheadRatioErrorScore    float64
+	StaticSize                 int
+	FallbackHint               int
+	GrowHint                   int
+	Headroom                   int
+	EstimateBefore             int
+	Actual                     int
+	EstimateAfter              int
+	SamplesBefore              uint64
+	SamplesAfter               uint64
+	Observed                   bool
+	ProfileBand                string
+	RefinedProfileBand         string
+	ProfileDepth               int
+	ProfileChildren            int
+	ProfileFallback            bool
+	ProfileFallbackMinimum     int
+	YieldConsumed              bool
+	AccuracyValid              bool
+	Minimum                    int
+	Maximum                    int
+	Unstable                   bool
+	Limited                    bool
+	GrowCalled                 bool
+	CapacityBefore             int
+	CapacityGrow               int
+	CapacityFinal              int
+	UnusedCapacity             int
+	GrowAllocated              int
 }
 
 type RenderLoopOutputSizeDiagnostics struct {
@@ -185,18 +210,43 @@ type RenderFastPlanDiagnostics struct {
 }
 
 type RenderVMHotspotDiagnostics struct {
-	HelperCalls     int
-	HelperDuration  time.Duration
-	PartialCalls    int
-	PartialDuration time.Duration
-	Helpers         []RenderVMHotspot
-	Partials        []RenderVMHotspot
+	HelperCalls                    int
+	HelperDuration                 time.Duration
+	HelperDirectCalls              int
+	HelperDirectDuration           time.Duration
+	HelperReflectionCalls          int
+	HelperReflectionDuration       time.Duration
+	HelperDirectDetailsDropped     int
+	HelperReflectionDetailsDropped int
+	PartialCalls                   int
+	PartialDuration                time.Duration
+	Helpers                        []RenderVMHotspot
+	Partials                       []RenderVMHotspot
+	HelperCallPaths                []RenderVMHelperCallPathDiagnostics
 }
 
 type RenderVMHotspot struct {
 	Name     string
 	Calls    int
 	Duration time.Duration
+}
+
+// RenderVMHelperCallPathDiagnostics aggregates one retained helper name,
+// signature, and invocation-path combination.
+type RenderVMHelperCallPathDiagnostics struct {
+	Name      string
+	Signature string
+	Path      RenderVMHelperCallPath
+	Calls     int
+	Duration  time.Duration
+}
+
+// RenderVMHotspotDiagnosticsRecorder is a render-scoped snapshot of VM
+// hotspot diagnostics. VM renderers capture it once and reuse it so disabled
+// diagnostics do not require a context lookup for every helper or partial.
+type RenderVMHotspotDiagnosticsRecorder struct {
+	state    *renderDiagnosticsState
+	captured bool
 }
 
 func (d RenderDiagnostics) EngineDurationMilliseconds() float64 {
@@ -209,6 +259,21 @@ func (d RenderDiagnostics) VMHelperDurationMilliseconds() float64 {
 
 func (d RenderDiagnostics) VMPartialDurationMilliseconds() float64 {
 	return float64(d.VMHotspots.PartialDuration) / float64(time.Millisecond)
+}
+
+func (d RenderDiagnostics) VMHelperDirectDurationMilliseconds() float64 {
+	return float64(d.VMHotspots.HelperDirectDuration) / float64(time.Millisecond)
+}
+
+func (d RenderDiagnostics) VMHelperReflectionDurationMilliseconds() float64 {
+	return float64(d.VMHotspots.HelperReflectionDuration) / float64(time.Millisecond)
+}
+
+func (d RenderDiagnostics) VMHelperReflectionPercent() float64 {
+	if d.VMHotspots.HelperCalls == 0 {
+		return 0
+	}
+	return float64(d.VMHotspots.HelperReflectionCalls) * 100 / float64(d.VMHotspots.HelperCalls)
 }
 
 func (d RenderDiagnostics) FastPlanHelperNamesHeader() string {
@@ -229,13 +294,17 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 	}
 	observed := 0
 	withinTen := 0
+	accuracyValid := d.OutputSize.Observed
+	if d.OutputSize.Contextual {
+		accuracyValid = accuracyValid && d.OutputSize.AccuracyValid
+	}
 	if d.OutputSize.Observed {
 		observed = 1
 		errorSize := d.OutputSize.EstimateBefore - d.OutputSize.Actual
 		if errorSize < 0 {
 			errorSize = -errorSize
 		}
-		if outputSizeErrorPercent(errorSize, d.OutputSize.Actual) < 10 {
+		if accuracyValid && outputSizeErrorPercent(errorSize, d.OutputSize.Actual) < 10 {
 			withinTen = 1
 		}
 	}
@@ -244,11 +313,12 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		errorSize = -errorSize
 	}
 	header := fmt.Sprintf(
-		"scope=%s;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;accuracy-valid=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		d.OutputSize.StaticSize,
 		d.OutputSize.FallbackHint,
 		d.OutputSize.GrowHint,
+		d.OutputSize.Headroom,
 		d.OutputSize.EstimateBefore,
 		d.OutputSize.Actual,
 		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
@@ -256,6 +326,7 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		d.OutputSize.EstimateAfter,
 		d.OutputSize.SamplesAfter,
 		observed,
+		boolHeaderValue(accuracyValid),
 		d.OutputSize.Minimum,
 		d.OutputSize.Maximum,
 		boolHeaderValue(d.OutputSize.Unstable),
@@ -271,16 +342,30 @@ func (d RenderDiagnostics) OutputSizeHeader() string {
 		return header
 	}
 	return fmt.Sprintf(
-		"scope=%s;profile=%s;yield=%d;overhead=%d;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
+		"scope=%s;profile=%s;refined-profile=%s;profile-depth=%d;profile-children=%d;profile-fallback=%d;profile-fallback-min=%d;yield=%d;yield-consumed=%d;accuracy-valid=%d;predictor=%s;predictor-after=%s;overhead=%d;overhead-absolute=%d;overhead-ratio=%d;absolute-error-score=%.2f;ratio-error-score=%.2f;overhead-actual=%d;overhead-estimate=%d;static=%d;fallback=%d;hint=%d;headroom=%d;learned=%d;actual=%d;error=%.2f;within-10=%d;estimate=%d;samples=%d;observed=%d;min=%d;max=%d;unstable=%d;limited=%d;grow-called=%d;grow-allocated=%d;cap-before=%d;cap-after-grow=%d;cap-final=%d;unused-cap=%d",
 		scope,
 		outputSizeProfileBand(d.OutputSize.ProfileBand),
+		outputSizeProfileBand(d.OutputSize.RefinedProfileBand),
+		d.OutputSize.ProfileDepth,
+		d.OutputSize.ProfileChildren,
+		boolHeaderValue(d.OutputSize.ProfileFallback),
+		d.OutputSize.ProfileFallbackMinimum,
 		d.OutputSize.YieldSize,
+		boolHeaderValue(d.OutputSize.YieldConsumed),
+		boolHeaderValue(accuracyValid),
+		d.OutputSize.OverheadPredictor,
+		d.OutputSize.OverheadPredictorAfter,
 		d.OutputSize.OverheadBefore,
+		d.OutputSize.OverheadAbsolute,
+		d.OutputSize.OverheadRatio,
+		d.OutputSize.OverheadAbsoluteErrorScore,
+		d.OutputSize.OverheadRatioErrorScore,
 		d.OutputSize.OverheadActual,
 		d.OutputSize.OverheadAfter,
 		d.OutputSize.StaticSize,
 		d.OutputSize.FallbackHint,
 		d.OutputSize.GrowHint,
+		d.OutputSize.Headroom,
 		d.OutputSize.EstimateBefore,
 		d.OutputSize.Actual,
 		outputSizeErrorPercent(errorSize, d.OutputSize.Actual),
@@ -357,6 +442,10 @@ func AddRenderDiagnosticLoopOutput(ctx hctx.Context, name string, line, items, l
 	if ctx == nil || items <= 0 || actual < 0 {
 		return
 	}
+	mode := GetOutputSizeEstimatorDiagnosticsMode()
+	if mode == OutputSizeEstimatorDiagnosticsOff {
+		return
+	}
 	if name == "" {
 		name = "<expression>"
 	}
@@ -389,6 +478,9 @@ func AddRenderDiagnosticLoopOutput(ctx hctx.Context, name string, line, items, l
 			loop.GrowCalls++
 		}
 		loop.GrowAllocated += growAllocated
+		if mode != OutputSizeEstimatorDiagnosticsDetailed {
+			return
+		}
 
 		for i := range loop.Details {
 			if loop.Details[i].Name == name && loop.Details[i].Line == line {
@@ -436,6 +528,10 @@ func AddRenderDiagnosticPartialOutputAllocation(ctx hctx.Context, name string, l
 	if ctx == nil || actual < 0 {
 		return
 	}
+	mode := GetOutputSizeEstimatorDiagnosticsMode()
+	if mode == OutputSizeEstimatorDiagnosticsOff {
+		return
+	}
 	if name == "" {
 		name = "<anonymous>"
 	}
@@ -464,6 +560,9 @@ func AddRenderDiagnosticPartialOutputAllocation(ctx hctx.Context, name string, l
 			partial.GrowCalls++
 		}
 		partial.GrowAllocated += allocation.SpeculativeAllocated
+		if mode != OutputSizeEstimatorDiagnosticsDetailed {
+			return
+		}
 
 		for i := range partial.Details {
 			if partial.Details[i].Name == name {
@@ -572,12 +671,158 @@ func (d RenderDiagnostics) VMPartialHotspotsHeader() string {
 	return renderVMHotspotsHeader(d.VMHotspots.Partials)
 }
 
+func (d RenderDiagnostics) VMHelperCallPathsHeader() string {
+	stats := d.VMHotspots
+	if stats.HelperCalls == 0 {
+		return ""
+	}
+	unclassified := stats.HelperCalls - stats.HelperDirectCalls - stats.HelperReflectionCalls
+	if unclassified < 0 {
+		unclassified = 0
+	}
+	return fmt.Sprintf(
+		"direct-calls=%d;reflection-calls=%d;unclassified-calls=%d;reflection-percent=%.2f;direct-time-ms=%.3f;reflection-time-ms=%.3f;direct-details-dropped=%d;reflection-details-dropped=%d",
+		stats.HelperDirectCalls,
+		stats.HelperReflectionCalls,
+		unclassified,
+		d.VMHelperReflectionPercent(),
+		d.VMHelperDirectDurationMilliseconds(),
+		d.VMHelperReflectionDurationMilliseconds(),
+		stats.HelperDirectDetailsDropped,
+		stats.HelperReflectionDetailsDropped,
+	)
+}
+
+func (d RenderDiagnostics) VMHelperCallPathDetailsHeader() string {
+	if len(d.VMHotspots.HelperCallPaths) == 0 {
+		return ""
+	}
+	details := append([]RenderVMHelperCallPathDiagnostics(nil), d.VMHotspots.HelperCallPaths...)
+	sort.Slice(details, func(i, j int) bool {
+		if details[i].Path != details[j].Path {
+			return details[i].Path == RenderVMHelperCallReflection
+		}
+		if details[i].Duration != details[j].Duration {
+			return details[i].Duration > details[j].Duration
+		}
+		if details[i].Calls != details[j].Calls {
+			return details[i].Calls > details[j].Calls
+		}
+		if details[i].Name != details[j].Name {
+			return details[i].Name < details[j].Name
+		}
+		return details[i].Signature < details[j].Signature
+	})
+	if len(details) > renderVMHelperPathDetailLimit {
+		details = details[:renderVMHelperPathDetailLimit]
+	}
+	parts := make([]string, 0, len(details))
+	for _, detail := range details {
+		parts = append(parts, fmt.Sprintf(
+			"path=%s,name=%s,signature=%s,calls=%d,time-ms=%.3f",
+			detail.Path,
+			renderVMHelperPathHeaderValue(detail.Name),
+			renderVMHelperPathHeaderValue(detail.Signature),
+			detail.Calls,
+			float64(detail.Duration)/float64(time.Millisecond),
+		))
+	}
+	return strings.Join(parts, "|")
+}
+
 func AddRenderDiagnosticVMHelperTiming(ctx hctx.Context, name string, duration time.Duration) {
 	addRenderDiagnosticVMHotspot(ctx, name, duration, true)
 }
 
+// AddRenderDiagnosticVMHelperCall records a classified helper invocation when
+// VM hotspot diagnostics are enabled on ctx.
+func AddRenderDiagnosticVMHelperCall(ctx hctx.Context, name, signature string, path RenderVMHelperCallPath, duration time.Duration) {
+	if ctx == nil || duration < 0 || !RenderVMHotspotDiagnosticsEnabled(ctx) {
+		return
+	}
+	RenderVMHotspotDiagnosticsRecorder{state: renderDiagnosticsStateFromContext(ctx, true), captured: true}.AddHelperCall(name, signature, path, duration)
+}
+
 func AddRenderDiagnosticVMPartialTiming(ctx hctx.Context, name string, duration time.Duration) {
 	addRenderDiagnosticVMHotspot(ctx, name, duration, false)
+}
+
+// CaptureRenderVMHotspotDiagnostics snapshots the diagnostics setting for one
+// render. Changes made afterward apply when the next render captures its
+// recorder.
+func CaptureRenderVMHotspotDiagnostics(ctx hctx.Context) RenderVMHotspotDiagnosticsRecorder {
+	if ctx == nil {
+		return RenderVMHotspotDiagnosticsRecorder{}
+	}
+	if provider, ok := ctx.(interface {
+		RenderVMHotspotDiagnosticsRecorder() RenderVMHotspotDiagnosticsRecorder
+	}); ok {
+		if recorder := provider.RenderVMHotspotDiagnosticsRecorder(); recorder.captured {
+			return recorder
+		}
+	}
+	if !RenderVMHotspotDiagnosticsEnabled(ctx) {
+		return RenderVMHotspotDiagnosticsRecorder{captured: true}
+	}
+	return RenderVMHotspotDiagnosticsRecorder{state: renderDiagnosticsStateFromContext(ctx, true), captured: true}
+}
+
+// Enabled reports whether VM hotspot timing was enabled when this recorder was
+// captured.
+func (r RenderVMHotspotDiagnosticsRecorder) Enabled() bool {
+	return r.state != nil
+}
+
+// AddHelperTiming records a helper duration without re-reading the diagnostics
+// setting from the render context.
+func (r RenderVMHotspotDiagnosticsRecorder) AddHelperTiming(name string, duration time.Duration) {
+	r.add(name, duration, true)
+}
+
+// AddHelperCall records the invocation path and Go signature of one VM helper
+// call without re-reading the diagnostics setting from the render context.
+func (r RenderVMHotspotDiagnosticsRecorder) AddHelperCall(name, signature string, path RenderVMHelperCallPath, duration time.Duration) {
+	if r.state == nil || duration < 0 {
+		return
+	}
+	if name == "" {
+		name = "<anonymous>"
+	}
+	if signature == "" {
+		signature = "<unknown>"
+	}
+	updateRenderDiagnosticsState(r.state, func(d *RenderDiagnostics) {
+		d.VMHotspots.HelperCalls++
+		d.VMHotspots.HelperDuration += duration
+		addRenderVMHotspot(&d.VMHotspots.Helpers, name, duration)
+		addRenderVMHelperCallPath(&d.VMHotspots, name, signature, path, duration)
+	})
+}
+
+// AddPartialTiming records a partial duration without re-reading the
+// diagnostics setting from the render context.
+func (r RenderVMHotspotDiagnosticsRecorder) AddPartialTiming(name string, duration time.Duration) {
+	r.add(name, duration, false)
+}
+
+func (r RenderVMHotspotDiagnosticsRecorder) add(name string, duration time.Duration, helper bool) {
+	if r.state == nil || duration < 0 {
+		return
+	}
+	if name == "" {
+		name = "<anonymous>"
+	}
+	updateRenderDiagnosticsState(r.state, func(d *RenderDiagnostics) {
+		if helper {
+			d.VMHotspots.HelperCalls++
+			d.VMHotspots.HelperDuration += duration
+			addRenderVMHotspot(&d.VMHotspots.Helpers, name, duration)
+			return
+		}
+		d.VMHotspots.PartialCalls++
+		d.VMHotspots.PartialDuration += duration
+		addRenderVMHotspot(&d.VMHotspots.Partials, name, duration)
+	})
 }
 
 func EnableRenderVMHotspotDiagnostics(ctx hctx.Context) {
@@ -636,7 +881,11 @@ func UpdateRenderDiagnostics(ctx hctx.Context, update func(*RenderDiagnostics)) 
 		return
 	}
 	state := renderDiagnosticsStateFromContext(ctx, true)
-	if state == nil {
+	updateRenderDiagnosticsState(state, update)
+}
+
+func updateRenderDiagnosticsState(state *renderDiagnosticsState, update func(*RenderDiagnostics)) {
+	if state == nil || update == nil {
 		return
 	}
 	state.mu.Lock()
@@ -738,20 +987,7 @@ func addRenderDiagnosticVMHotspot(ctx hctx.Context, name string, duration time.D
 	if ctx == nil || duration < 0 || !RenderVMHotspotDiagnosticsEnabled(ctx) {
 		return
 	}
-	if name == "" {
-		name = "<anonymous>"
-	}
-	UpdateRenderDiagnostics(ctx, func(d *RenderDiagnostics) {
-		if helper {
-			d.VMHotspots.HelperCalls++
-			d.VMHotspots.HelperDuration += duration
-			addRenderVMHotspot(&d.VMHotspots.Helpers, name, duration)
-			return
-		}
-		d.VMHotspots.PartialCalls++
-		d.VMHotspots.PartialDuration += duration
-		addRenderVMHotspot(&d.VMHotspots.Partials, name, duration)
-	})
+	RenderVMHotspotDiagnosticsRecorder{state: renderDiagnosticsStateFromContext(ctx, true), captured: true}.add(name, duration, helper)
 }
 
 func addRenderVMHotspot(stats *[]RenderVMHotspot, name string, duration time.Duration) {
@@ -763,6 +999,48 @@ func addRenderVMHotspot(stats *[]RenderVMHotspot, name string, duration time.Dur
 		}
 	}
 	*stats = append(*stats, RenderVMHotspot{Name: name, Calls: 1, Duration: duration})
+}
+
+func addRenderVMHelperCallPath(stats *RenderVMHotspotDiagnostics, name, signature string, path RenderVMHelperCallPath, duration time.Duration) {
+	if stats == nil || (path != RenderVMHelperCallDirect && path != RenderVMHelperCallReflection) {
+		return
+	}
+	if path == RenderVMHelperCallDirect {
+		stats.HelperDirectCalls++
+		stats.HelperDirectDuration += duration
+	} else {
+		stats.HelperReflectionCalls++
+		stats.HelperReflectionDuration += duration
+	}
+
+	pathDetails := 0
+	for i := range stats.HelperCallPaths {
+		detail := &stats.HelperCallPaths[i]
+		if detail.Path != path {
+			continue
+		}
+		pathDetails++
+		if detail.Name == name && detail.Signature == signature {
+			detail.Calls++
+			detail.Duration += duration
+			return
+		}
+	}
+	if pathDetails >= renderVMHelperPathDetailLimit {
+		if path == RenderVMHelperCallDirect {
+			stats.HelperDirectDetailsDropped++
+		} else {
+			stats.HelperReflectionDetailsDropped++
+		}
+		return
+	}
+	stats.HelperCallPaths = append(stats.HelperCallPaths, RenderVMHelperCallPathDiagnostics{
+		Name:      name,
+		Signature: signature,
+		Path:      path,
+		Calls:     1,
+		Duration:  duration,
+	})
 }
 
 func renderVMHotspotsHeader(stats []RenderVMHotspot) string {
@@ -795,4 +1073,23 @@ func renderVMHotspotHeaderName(name string) string {
 		return "<anonymous>"
 	}
 	return name
+}
+
+func renderVMHelperPathHeaderValue(value string) string {
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case ',', ';', '|', '=', '\r', '\n':
+			return '_'
+		default:
+			return r
+		}
+	}, strings.TrimSpace(value))
+	if value == "" {
+		return "<unknown>"
+	}
+	runes := []rune(value)
+	if len(runes) > 160 {
+		return string(runes[:160])
+	}
+	return value
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/gobuffalo/plush/v5/helpers/meta"
 	"github.com/gobuffalo/plush/v5/parser"
 	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
+	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,59 @@ func newRuntimeHelperTestVM(ctx hctx.Context) *VM {
 		ctx:         ctx,
 		holes:       &[]plush.HoleMarker{},
 	}
+}
+
+func Test_VM_Sync_Dynamic_Context_Bindings_Uses_Prepared_Name_Indexes(t *testing.T) {
+	target := newIDLookupTestContext(map[string]interface{}{})
+	source := plush.NewContextWith(map[string]interface{}{"name": "updated"})
+	machine := newRuntimeHelperTestVM(target)
+	frame := machine.currentFrame()
+	frame.cl.Fn.DynamicContextNamesReady = true
+	frame.cl.Fn.DynamicContextNameIndexes = []int{0}
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "updated", target.values["name"])
+	require.Equal(t, 1, target.internID)
+
+	source.Set("name", "again")
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "again", target.values["name"])
+	require.Equal(t, 1, target.internID)
+}
+
+func Test_VM_Sync_Dynamic_Context_Bindings_Does_Not_Reuse_IDs_For_Different_Target(t *testing.T) {
+	vmCtx := newIDLookupTestContext(map[string]interface{}{})
+	vmCtx.InternID("name")
+	machine := newRuntimeHelperTestVM(vmCtx)
+	require.Equal(t, 0, machine.contextNameID(vmCtx, 0))
+
+	target := newIDLookupTestContext(map[string]interface{}{})
+	target.InternID("other")
+	target.InternID("name")
+	target.values["other"] = "keep"
+	target.values["name"] = "before"
+	target.internID = 0
+
+	frame := machine.currentFrame()
+	frame.cl.Fn.DynamicContextNamesReady = true
+	frame.cl.Fn.DynamicContextNameIndexes = []int{0}
+	source := plush.NewContextWith(map[string]interface{}{"name": "updated"})
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "updated", target.values["name"])
+	require.Equal(t, "keep", target.values["other"])
+	require.Equal(t, 1, target.internID)
+}
+
+func Test_VM_Sync_Dynamic_Context_Bindings_Falls_Back_For_Manual_Functions(t *testing.T) {
+	target := newIDLookupTestContext(map[string]interface{}{})
+	source := plush.NewContextWith(map[string]interface{}{"name": "fallback"})
+	machine := newRuntimeHelperTestVM(target)
+	frame := machine.currentFrame()
+	frame.cl.Fn.Instructions = code.Make(code.OpWriteName, 0)
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "fallback", target.values["name"])
 }
 
 func Test_VM_Runtime_Line_Context_And_Write_Helpers(t *testing.T) {
@@ -1184,6 +1238,7 @@ func Test_VM_Output_Size_Stats_Source_Cache_Is_Per_Bytecode(t *testing.T) {
 }
 
 func Test_VM_Output_Size_Stats_Nested_Partial_Learns_Without_Changing_Template_Stats(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	partial, err := Compile(`<span><%= name %></span>`)
 	require.NoError(t, err)
 	ctx := plush.NewContextWith(map[string]interface{}{"name": "Fry"})
@@ -1222,6 +1277,47 @@ func Test_VM_Output_Size_GrowHint_Uses_Fallback_Only_Until_Learned(t *testing.T)
 	require.Equal(t, 10, outputGrowHint(bytecode, 64, ctx, options))
 }
 
+func Test_VM_Output_Size_Headroom_Prevents_Repeated_Small_Underestimate_Growth(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
+	const learned = 212_907
+	const actual = 214_285
+	const expectedHeadroom = actual - learned
+
+	bytecode := &compiler.Bytecode{OutputSizeStats: &compiler.OutputSizeStats{}}
+	bytecode.OutputSizeStats.Observe(learned)
+	options := outputSizeOptions{topLevel: true}
+
+	firstCtx := plush.NewContext()
+	firstObservation := beginOutputSizeObservation(bytecode, 0, firstCtx, options)
+	require.Zero(t, firstObservation.headroom)
+	require.Equal(t, learned, firstObservation.growHint)
+
+	var firstOutput strings.Builder
+	growEmptyOutputBuilder(&firstOutput, firstObservation.growHint, &firstObservation)
+	firstOutput.WriteString(strings.Repeat("x", actual))
+	observeOutputBuilderSize(bytecode, firstCtx, options, &firstOutput, firstObservation)
+
+	firstDiagnostics, ok := plush.RenderDiagnosticsFromContext(firstCtx)
+	require.True(t, ok)
+	require.Less(t, firstDiagnostics.OutputSize.GrowHint, firstDiagnostics.OutputSize.Actual)
+
+	secondCtx := plush.NewContext()
+	secondObservation := beginOutputSizeObservation(bytecode, 0, secondCtx, options)
+	require.Equal(t, 213_596, secondObservation.estimateBefore)
+	require.Equal(t, expectedHeadroom, secondObservation.headroom)
+	require.Equal(t, 214_974, secondObservation.growHint)
+
+	var secondOutput strings.Builder
+	growEmptyOutputBuilder(&secondOutput, secondObservation.growHint, &secondObservation)
+	secondOutput.WriteString(strings.Repeat("x", actual))
+	observeOutputBuilderSize(bytecode, secondCtx, options, &secondOutput, secondObservation)
+
+	secondDiagnostics, ok := plush.RenderDiagnosticsFromContext(secondCtx)
+	require.True(t, ok)
+	require.Equal(t, expectedHeadroom, secondDiagnostics.OutputSize.Headroom)
+	require.Equal(t, secondDiagnostics.OutputSize.CapacityGrow, secondDiagnostics.OutputSize.CapacityFinal)
+}
+
 func Test_VM_Output_Size_Estimator_Disabled_Skips_All_Adaptive_Learning(t *testing.T) {
 	previous := plush.SetOutputSizeEstimatorEnabled(false)
 	defer plush.SetOutputSizeEstimatorEnabled(previous)
@@ -1249,6 +1345,30 @@ func Test_VM_Output_Size_Estimator_Disabled_Skips_All_Adaptive_Learning(t *testi
 	require.Equal(t, uint64(1), loop.SizeStats.Samples())
 }
 
+func Test_VM_Output_Size_Estimator_Learns_With_Diagnostics_Off(t *testing.T) {
+	previousEstimator := plush.SetOutputSizeEstimatorEnabled(true)
+	defer plush.SetOutputSizeEstimatorEnabled(previousEstimator)
+	previousDiagnostics := plush.SetOutputSizeEstimatorDiagnosticsMode(plush.OutputSizeEstimatorDiagnosticsOff)
+	defer plush.SetOutputSizeEstimatorDiagnosticsMode(previousDiagnostics)
+
+	tmpl, err := Compile(`<%= for (_, item) in items { %><span><%= item %></span><% } %>`)
+	require.NoError(t, err)
+	loop := tmpl.bytecode.FastRenderPlan.Segments[0].Loop
+	require.NotNil(t, loop)
+
+	ctx := plush.NewContextWith(map[string]interface{}{"items": []string{"one", "two"}})
+	rendered, err := tmpl.Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "<span>one</span><span>two</span>", rendered)
+	require.Equal(t, uint64(1), tmpl.bytecode.OutputSizeStats.Samples())
+	require.Equal(t, uint64(1), loop.SizeStats.Samples())
+
+	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+	require.True(t, ok)
+	require.False(t, diagnostics.OutputSize.Available)
+	require.Zero(t, diagnostics.LoopOutput.Calls)
+}
+
 func Test_VM_Contextual_Output_Grow_Uses_Exact_Yield_And_Caps_Only_Overhead(t *testing.T) {
 	const yieldSize = 22 << 20
 
@@ -1257,6 +1377,7 @@ func Test_VM_Contextual_Output_Grow_Uses_Exact_Yield_And_Caps_Only_Overhead(t *t
 }
 
 func Test_VM_Partial_Output_Size_Caps_Unstable_Speculative_Grow(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	bytecode := &compiler.Bytecode{
 		StaticSize:       32,
 		PartialSizeStats: &compiler.OutputSizeStats{},
@@ -1295,13 +1416,14 @@ func Test_VM_Template_Output_Size_Uses_Observed_Minimum_When_Unstable(t *testing
 		OutputSizeStats: &compiler.OutputSizeStats{},
 	}
 	bytecode.OutputSizeStats.Observe(4 << 10)
-	bytecode.OutputSizeStats.Observe(1 << 20)
+	bytecode.OutputSizeStats.ObserveWithHeadroom(1<<20, 4<<10)
 
 	observation := beginOutputSizeObservation(bytecode, 0, plush.NewContext(), outputSizeOptions{topLevel: true})
 	require.True(t, observation.unstable)
 	require.True(t, observation.limited)
 	require.Greater(t, observation.estimateBefore, 4<<10)
 	require.Equal(t, 4<<10, observation.growHint)
+	require.Zero(t, observation.headroom)
 }
 
 func Test_VM_Partial_Output_Size_Does_Not_Double_Large_Parent_Builder(t *testing.T) {
@@ -1320,6 +1442,7 @@ func Test_VM_Partial_Output_Size_Does_Not_Double_Large_Parent_Builder(t *testing
 }
 
 func Test_VM_Output_Size_Diagnostics_Do_Not_Mix_Nested_Render_Snapshots(t *testing.T) {
+	enableDetailedEstimatorDiagnostics(t)
 	outer := &compiler.Bytecode{
 		StaticSize:      4,
 		OutputSizeStats: &compiler.OutputSizeStats{},

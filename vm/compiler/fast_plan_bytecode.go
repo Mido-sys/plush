@@ -156,6 +156,53 @@ func instructionAt(instructions code.Instructions, pos int) (code.Opcode, []int,
 	return op, operands, read, true
 }
 
+func dynamicContextNameIndexesFromInstructions(instructions code.Instructions, constants []object.Object) ([]int, bool) {
+	var indexes []int
+	var seenNames map[string]struct{}
+	var seenIndexes map[int]struct{}
+	for i := 0; i < len(instructions); {
+		op, operands, read, ok := instructionAt(instructions, i)
+		if !ok {
+			return nil, false
+		}
+		if len(operands) > 0 && dynamicContextNameOpcode(op) {
+			nameIndex := operands[0]
+			if name, ok := stringConstantValue(constants, nameIndex); ok {
+				if seenNames == nil {
+					seenNames = map[string]struct{}{}
+				}
+				if _, ok := seenNames[name]; ok {
+					i += 1 + read
+					continue
+				}
+				seenNames[name] = struct{}{}
+			} else {
+				if seenIndexes == nil {
+					seenIndexes = map[int]struct{}{}
+				}
+				if _, ok := seenIndexes[nameIndex]; ok {
+					i += 1 + read
+					continue
+				}
+				seenIndexes[nameIndex] = struct{}{}
+			}
+			indexes = append(indexes, nameIndex)
+		}
+		i += 1 + read
+	}
+	return indexes, true
+}
+
+func dynamicContextNameOpcode(op code.Opcode) bool {
+	switch op {
+	case code.OpGetName, code.OpGetNameOrNull, code.OpGetNameOrJumpMissing, code.OpSetName, code.OpAssignName,
+		code.OpWriteName, code.OpWriteNameOrNull, code.OpWriteNameProperty, code.OpWriteNameCall:
+		return true
+	default:
+		return false
+	}
+}
+
 func compiledFunctionConstant(constants []object.Object, index int) (*object.CompiledFunction, bool) {
 	if index < 0 || index >= len(constants) {
 		return nil, false

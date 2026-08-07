@@ -924,21 +924,24 @@ func (c *Compiler) compileFunctionLiteral(node *ast.FunctionLiteral, name string
 	properties := c.currentProperties()
 	instructions := c.leaveScope()
 	instructions, callNames, lineNumbers, properties = optimizeScope(instructions, callNames, lineNumbers, properties, c.constants)
+	dynamicContextNameIndexes, dynamicContextNamesReady := dynamicContextNameIndexesFromInstructions(instructions, c.constants)
 
 	for _, s := range freeSymbols {
 		c.loadSymbol(s)
 	}
 
 	compiledFn := &object.CompiledFunction{
-		Instructions:   instructions,
-		CallNames:      callNames,
-		LocalNames:     localNames,
-		LineNumbers:    lineNumbers,
-		Properties:     properties,
-		PropertyCaches: object.NewInlineCacheSlots(len(instructions)),
-		CallCaches:     object.NewInlineCacheSlots(len(instructions)),
-		NumLocals:      numLocals,
-		NumParameters:  len(node.Parameters),
+		Instructions:              instructions,
+		CallNames:                 callNames,
+		LocalNames:                localNames,
+		DynamicContextNameIndexes: dynamicContextNameIndexes,
+		DynamicContextNamesReady:  dynamicContextNamesReady,
+		LineNumbers:               lineNumbers,
+		Properties:                properties,
+		PropertyCaches:            object.NewInlineCacheSlots(len(instructions)),
+		CallCaches:                object.NewInlineCacheSlots(len(instructions)),
+		NumLocals:                 numLocals,
+		NumParameters:             len(node.Parameters),
 	}
 
 	fnIndex := c.addConstant(compiledFn)
@@ -1074,24 +1077,46 @@ func (c *Compiler) compileBlockConstant(block *ast.BlockStatement, params []stri
 	properties := c.currentProperties()
 	instructions := c.leaveScope()
 	instructions, callNames, lineNumbers, properties = optimizeScope(instructions, callNames, lineNumbers, properties, c.constants)
+	dynamicContextNameIndexes, dynamicContextNamesReady := dynamicContextNameIndexesFromInstructions(instructions, c.constants)
 
 	for _, s := range freeSymbols {
 		c.loadSymbol(s)
 	}
 
 	compiledFn := &object.CompiledFunction{
-		Instructions:   instructions,
-		CallNames:      callNames,
-		LocalNames:     localNames,
-		LineNumbers:    lineNumbers,
-		Properties:     properties,
-		PropertyCaches: object.NewInlineCacheSlots(len(instructions)),
-		CallCaches:     object.NewInlineCacheSlots(len(instructions)),
-		NumLocals:      numLocals,
-		NumParameters:  len(params),
+		Instructions:              instructions,
+		CallNames:                 callNames,
+		LocalNames:                localNames,
+		DynamicContextNameIndexes: dynamicContextNameIndexes,
+		DynamicContextNamesReady:  dynamicContextNamesReady,
+		CapturedBindings:          capturedBindings(freeSymbols),
+		LineNumbers:               lineNumbers,
+		Properties:                properties,
+		PropertyCaches:            object.NewInlineCacheSlots(len(instructions)),
+		CallCaches:                object.NewInlineCacheSlots(len(instructions)),
+		NumLocals:                 numLocals,
+		NumParameters:             len(params),
 	}
 
 	return c.addConstant(compiledFn), len(freeSymbols), nil
+}
+
+func capturedBindings(symbols []Symbol) []object.CapturedBinding {
+	if len(symbols) == 0 {
+		return nil
+	}
+	bindings := make([]object.CapturedBinding, len(symbols))
+	for index, symbol := range symbols {
+		binding := object.CapturedBinding{Name: symbol.Name, Index: symbol.Index}
+		switch symbol.Scope {
+		case LocalScope:
+			binding.Scope = object.CapturedBindingLocal
+		case FreeScope:
+			binding.Scope = object.CapturedBindingFree
+		}
+		bindings[index] = binding
+	}
+	return bindings
 }
 
 func (c *Compiler) compileOutputBlockConstant(block *ast.BlockStatement, params []string) (int, int, error) {
@@ -1134,32 +1159,37 @@ func (c *Compiler) Bytecode() *Bytecode {
 		fastRenderPlan = genericVMFastRenderPlan(fastReject)
 		fastReject = FastRenderReject{}
 	}
+	prepareFastBindingSyncPlans(fastRenderPlan)
 	staticSize := bytecodeStaticSize(staticOutput, static, fastRenderPlan, instructions, c.constants)
+	dynamicContextNameIndexes, dynamicContextNamesReady := dynamicContextNameIndexesFromInstructions(instructions, c.constants)
 
 	return &Bytecode{
-		Instructions:     instructions,
-		CallNames:        callNames,
-		LocalNames:       c.currentLocalNames(),
-		LineNumbers:      lineNumbers,
-		Properties:       properties,
-		PropertyCaches:   object.NewInlineCacheSlots(len(instructions)),
-		CallCaches:       object.NewInlineCacheSlots(len(instructions)),
-		NumLocals:        c.currentLocalCount(),
-		NumGlobals:       c.globalCount(),
-		Constants:        c.constants,
-		GlobalNames:      names,
-		Static:           static,
-		StaticOutput:     staticOutput,
-		StaticSize:       staticSize,
-		FastRenderPlan:   fastRenderPlan,
-		FastRejectLine:   fastReject.Line,
-		FastReject:       fastReject.Reason,
-		HasHoles:         features.HasHoles,
-		HasPartials:      features.HasPartials,
-		HasContextWrites: features.HasContextWrites,
-		OutputSizeStats:  &OutputSizeStats{},
-		LayoutSizeStats:  &OutputSizeStats{},
-		PartialSizeStats: &OutputSizeStats{},
+		Instructions:              instructions,
+		CallNames:                 callNames,
+		LocalNames:                c.currentLocalNames(),
+		DynamicContextNameIndexes: dynamicContextNameIndexes,
+		DynamicContextNamesReady:  dynamicContextNamesReady,
+		LineNumbers:               lineNumbers,
+		Properties:                properties,
+		PropertyCaches:            object.NewInlineCacheSlots(len(instructions)),
+		CallCaches:                object.NewInlineCacheSlots(len(instructions)),
+		NumLocals:                 c.currentLocalCount(),
+		NumGlobals:                c.globalCount(),
+		Constants:                 c.constants,
+		GlobalNames:               names,
+		Static:                    static,
+		StaticOutput:              staticOutput,
+		StaticSize:                staticSize,
+		FastRenderPlan:            fastRenderPlan,
+		FastRejectLine:            fastReject.Line,
+		FastReject:                fastReject.Reason,
+		HasHoles:                  features.HasHoles,
+		HasPartials:               features.HasPartials,
+		HasContextWrites:          features.HasContextWrites,
+		OutputSizeStats:           &OutputSizeStats{},
+		LayoutSizeStats:           &OutputSizeStats{},
+		LayoutSizeProfile:         &LayoutOutputSizeProfile{},
+		PartialSizeStats:          &OutputSizeStats{},
 	}
 }
 
