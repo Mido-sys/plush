@@ -215,8 +215,8 @@ Complex `if` statements can be built in Plush using "common" operators:
 Numeric equality and ordering are safe across common Go numeric types. This lets backend values such as `int32`, `uint32`, `uint64`, `float32`, and `float64` compare against template integer or float literals without type errors:
 
 ```erb
-<%= product.Count == 0 %>
-<%= order.Total > 0.0 %>
+<%= item.Count == 0 %>
+<%= totalValue > 0.0 %>
 <%= uintValue == 3.0 %>
 <%= floatValue == 3 %>
 ```
@@ -269,7 +269,7 @@ ctx.Set("counts", map[string]uint32{"active": 7})
 <%= counts["active"] %>
 ```
 
-When using the compiled VM renderer, static string-key map access is optimized automatically for typed maps such as `map[string]string`, `map[string]uint32`, and nested chains such as `robots["bender"].Name`. The VM caches the access plan and typed map key, not the map value itself.
+When using the compiled VM renderer, static string-key map access is optimized automatically for typed maps such as `map[string]string`, `map[string]uint32`, and nested chains such as `records["primary"].Name`. The VM caches the access plan and typed map key, not the map value itself.
 
 Using maps as options to functions in Plush is useful for passing named options into helpers.
 
@@ -450,7 +450,7 @@ fmt.Print(s)
 Partials can receive a data map as their second argument:
 
 ```erb
-<%= partial("row.plush", {name: product.Name, title: "Robot"}) %>
+<%= partial("row.plush", {name: record.Name, title: "Example"}) %>
 ```
 
 The keys in the map become local values inside the partial. The values are evaluated from the current render context each time the partial runs.
@@ -458,8 +458,8 @@ The keys in the map become local values inside the partial. The values are evalu
 Parent template:
 
 ```erb
-<%= partial("row.plush", {name: product.Name, title: product.Category.Label}) %>
-<%= product.Name %>
+<%= partial("row.plush", {name: record.Name, title: record.Meta.Label}) %>
+<%= record.Name %>
 ```
 
 Partial source for `row.plush`:
@@ -471,19 +471,19 @@ Partial source for `row.plush`:
 Go setup:
 
 ```go
-type Product struct {
-  Name     string
-  Category Category
+type Record struct {
+  Name string
+  Meta Metadata
 }
 
-type Category struct {
+type Metadata struct {
   Label string
 }
 
 ctx := plush.NewContextWith(map[string]interface{}{
-  "product": Product{
-    Name:     "Bender",
-    Category: Category{Label: "Robot"},
+  "record": Record{
+    Name: "Alpha",
+    Meta: Metadata{Label: "Example"},
   },
   "partialFeeder": func(name string) (string, error) {
     if name == "row.plush" {
@@ -493,8 +493,8 @@ ctx := plush.NewContextWith(map[string]interface{}{
   },
 })
 
-input := `<%= partial("row.plush", {name: product.Name, title: product.Category.Label}) %>
-<%= product.Name %>`
+input := `<%= partial("row.plush", {name: record.Name, title: record.Meta.Label}) %>
+<%= record.Name %>`
 
 html, err := plush.Render(input, ctx)
 ```
@@ -502,27 +502,27 @@ html, err := plush.Render(input, ctx)
 This renders the partial with `name` and `title` available as local values:
 
 ```html
-<span>Robot: Bender</span>
-Bender
+<span>Example: Alpha</span>
+Alpha
 ```
 
-Partial data is scoped to that partial render. Passing `{name: product.Name}` does not replace `product.Name` or `name` in the parent context after the partial finishes.
+Partial data is scoped to that partial render. Passing `{name: record.Name}` does not replace `record.Name` or `name` in the parent context after the partial finishes.
 
 You can pass literals, variables, struct fields, indexed values, and nested property chains:
 
 ```erb
-<%= partial("user.plush", {name: user.Name, role: "admin"}) %>
-<%= partial("robot.plush", {name: robots[0].Name, echo: robots[0].Name.Echo()}) %>
-<%= partial("row.plush", {label: label(product.Name, prefix)}) %>
+<%= partial("item.plush", {name: item.Name, kind: "example"}) %>
+<%= partial("row.plush", {name: records[0].Name, echo: records[0].Name.Echo()}) %>
+<%= partial("row.plush", {label: label(record.Name, prefix)}) %>
 ```
 
 Layouts still use the existing Plush partial behavior:
 
 ```erb
-<%= partial("card.plush", {name: product.Name, layout: "shell.plush"}) %>
+<%= partial("card.plush", {name: record.Name, layout: "shell.plush"}) %>
 ```
 
-When using the compiled VM renderer, simple static-key partial data maps are optimized automatically. The VM reuses the compiled partial bytecode, prepares a small key/value binding plan, and writes the evaluated data values into a scoped partial context. Data-map values may also be helper calls such as `label(product.Name, prefix)`; the VM compiles those calls into the data binding plan and uses direct no-reflect invokers for common helper signatures. It does not cache request data, struct values, helper results, or rendered partial output.
+When using the compiled VM renderer, simple static-key partial data maps are optimized automatically. The VM reuses the compiled partial bytecode, prepares a small key/value binding plan, and writes the evaluated data values into a scoped partial context. Data-map values may also be helper calls such as `label(record.Name, prefix)`; the VM compiles those calls into the data binding plan and uses direct no-reflect invokers for common helper signatures. It does not cache request data, struct values, helper results, or rendered partial output.
 
 ## Performance Recommendations
 
@@ -540,7 +540,7 @@ For one-off template strings, the interpreter is still a good default because th
 | Hot template string reused many times | `vmplush.Compile` once, then `tmpl.Render(ctx)` | Avoids parse and compile on every render |
 | File-backed app templates | `plush.SetRenderMode(plush.RenderModeVM)` plus `PlushCacheSetup` | Reuses cached VM bytecode by filename |
 | One-off/dynamic template strings | Default `plush.Render` interpreter | Avoids compile overhead when reuse is unlikely |
-| App-specific hot helpers | Optional `vmplush.SetFastHelper` | Skips generic reflection for helper hot paths |
+| App-specific hot helpers | Optional `vmplush.SetFastHelper` and `vmplush.SetFastValueHelper` | Skips generic reflection for helper hot paths |
 
 ### Compiled Template API
 
@@ -667,7 +667,7 @@ Useful fields:
 | `PunchHoleCache` | Punch-hole cache state, such as `disabled`, `hit`, or `miss`. |
 | `EngineDuration` | Time spent inside Plush rendering. Use `EngineDurationMilliseconds()` for reporting. |
 | `FastPlan` | Static complexity counters for the compiled fast plan: bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names. |
-| `VMHotspots` | Optional helper and partial call counts/timings when VM hotspot diagnostics are enabled. |
+| `VMHotspots` | Optional helper and partial call counts/timings when VM hotspot diagnostics are enabled. Helper diagnostics also separate direct invocations from reflective compatibility calls and retain bounded helper/signature details. |
 
 #### VM Execution Paths
 
@@ -726,14 +726,85 @@ diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 if ok {
   fmt.Printf("helper calls: %d\n", diagnostics.VMHotspots.HelperCalls)
   fmt.Printf("helper time: %.3fms\n", diagnostics.VMHelperDurationMilliseconds())
+  fmt.Printf("direct helper calls: %d in %.3fms\n",
+    diagnostics.VMHotspots.HelperDirectCalls,
+    diagnostics.VMHelperDirectDurationMilliseconds())
+  fmt.Printf("reflection helper calls: %d in %.3fms (%.2f%%)\n",
+    diagnostics.VMHotspots.HelperReflectionCalls,
+    diagnostics.VMHelperReflectionDurationMilliseconds(),
+    diagnostics.VMHelperReflectionPercent())
   fmt.Printf("partial calls: %d\n", diagnostics.VMHotspots.PartialCalls)
   fmt.Printf("partial time: %.3fms\n", diagnostics.VMPartialDurationMilliseconds())
   fmt.Println("helper hotspots:", diagnostics.VMHelperHotspotsHeader())
+  fmt.Println("helper call paths:", diagnostics.VMHelperCallPathsHeader())
+  fmt.Println("helper call details:", diagnostics.VMHelperCallPathDetailsHeader())
   fmt.Println("partial hotspots:", diagnostics.VMPartialHotspotsHeader())
 }
 ```
 
 `VMHelperHotspotsHeader()` and `VMPartialHotspotsHeader()` return a compact `name:calls:time_ms` list sorted by total time, for example `formatValue:7:34.660;layout.plush:1:26.120`. The list is meant for diagnostics and A/B testing; it is not a stable application data format.
+
+Helper invocation-path diagnostics answer a separate question: whether VM helper calls used ordinary statically typed Go calls or `reflect.Value.Call`:
+
+- `direct` includes generated direct invokers, specialized direct writers, and explicitly registered `FastHelperFunc` or `FastValueHelperFunc` handlers.
+- `reflection` is the general compatibility path for signatures that Plush cannot call through one of its compiled invokers. Its duration includes reflective argument preparation and the call.
+- `unclassified` covers calls recorded through the older public `AddRenderDiagnosticVMHelperTiming` API. VM call sites use `direct` or `reflection`.
+
+`VMHelperCallPathsHeader()` reports exact aggregate counts, time, and the percentage of all recorded helper calls that used reflection. `VMHelperCallPathDetailsHeader()` reports retained `path`, helper `name`, Go `signature`, call count, and time. For example:
+
+```text
+direct-calls=148;reflection-calls=12;unclassified-calls=0;reflection-percent=7.50;direct-time-ms=1.420;reflection-time-ms=3.810;direct-details-dropped=0;reflection-details-dropped=0
+
+path=reflection,name=formatValue,signature=func(example.Value) string,calls=12,time-ms=3.810|path=direct,name=capitalize,signature=func(string) string,calls=148,time-ms=1.420
+```
+
+#### Detecting Helper Fast-Path Escapes
+
+A helper fast-path escape occurs when the VM cannot use a typed direct invoker
+and uses the reflection compatibility path instead. This does not change helper
+behavior or rendered output. It identifies a call that may benefit from a direct
+invoker when it is frequent or expensive.
+
+To detect escapes:
+
+1. Enable `EnableRenderVMHotspotDiagnostics` on the render context.
+2. Render a representative set of templates and input shapes.
+3. Check `HelperReflectionCalls` and `VMHelperReflectionPercent()`.
+4. Inspect `HelperCallPaths` or `VMHelperCallPathDetailsHeader()` to find the
+   helper name, Go function signature, call count, and elapsed time.
+5. Add a generated direct invoker for a generally useful signature, or register
+   an application-specific `FastHelperFunc` or `FastValueHelperFunc`.
+6. Repeat the same renders and confirm that the helper reports `path=direct`.
+
+```go
+diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+if ok && diagnostics.VMHotspots.HelperReflectionCalls > 0 {
+  fmt.Printf("reflection calls: %d (%.2f%%)\n",
+    diagnostics.VMHotspots.HelperReflectionCalls,
+    diagnostics.VMHelperReflectionPercent())
+
+  for _, call := range diagnostics.VMHotspots.HelperCallPaths {
+    if call.Path != plush.RenderVMHelperCallReflection {
+      continue
+    }
+    fmt.Printf("name=%s signature=%s calls=%d time=%s\n",
+      call.Name, call.Signature, call.Calls, call.Duration)
+  }
+}
+```
+
+The render-level `FastPath` field and helper call paths describe different
+layers. A render can report `fast` while one helper inside it reports
+`reflection`. Likewise, `generic` still means VM bytecode execution and does not
+by itself identify a helper reflection escape.
+
+Prioritize reflected helpers by total time and call count. A nonzero reflection
+count is diagnostic information, not a rendering failure. Disable hotspot
+diagnostics after the investigation because timing every call adds work.
+
+The aggregate counters remain exact. To bound diagnostic memory, one diagnostics state retains at most eight unique direct and eight unique reflection `name + signature` pairs. Calls for additional pairs still update the totals and increment the matching `DetailsDropped` field. The compact details header returns at most eight retained records and orders reflection entries first, then the most expensive entries. Inspect `diagnostics.VMHotspots.HelperCallPaths` directly when all retained direct and reflection details are needed.
+
+This diagnostic does not record helper arguments, return values, context data, or rendered output. Signatures and helper names can still reveal application structure, so keep these logs and headers internal. Plush caches the calling strategy associated with a function type; it does not cache a request's helper closure or its result.
 
 If your renderer creates a Plush context internally and then copies local values back into a data map, use `RenderDiagnosticsFromData` after rendering. `BuffaloRendererWithContext` is useful when you also need to set `meta.TemplateFileKey` or enable hotspot diagnostics:
 
@@ -821,6 +892,12 @@ if ok {
     fmt.Sprintf("%.3f", diagnostics.VMPartialDurationMilliseconds()))
   w.Header().Set("X-Plush-VM-Helper-Hotspots",
     diagnostics.VMHelperHotspotsHeader())
+  if helperPaths := diagnostics.VMHelperCallPathsHeader(); helperPaths != "" {
+    w.Header().Set("X-Plush-VM-Helper-Call-Paths", helperPaths)
+  }
+  if helperPathDetails := diagnostics.VMHelperCallPathDetailsHeader(); helperPathDetails != "" {
+    w.Header().Set("X-Plush-VM-Helper-Call-Details", helperPathDetails)
+  }
   w.Header().Set("X-Plush-VM-Partial-Hotspots",
     diagnostics.VMPartialHotspotsHeader())
   w.Header().Set("Server-Timing",
@@ -833,7 +910,7 @@ if ok {
 }
 ```
 
-These `X-Plush-*` and `Server-Timing` headers are not emitted by Plush automatically. Plush records the diagnostics; the HTTP application decides which values to expose. In production, put these headers behind a debug, benchmark, or internal-only flag because filenames, helper names, and partial names may reveal application structure.
+These `X-Plush-*` and `Server-Timing` headers are not emitted by Plush automatically. Plush records the diagnostics; the HTTP application decides which values to expose. In production, put these headers behind a debug or internal-only flag because filenames, helper names, and partial names may reveal application structure.
 
 Common header meanings:
 
@@ -852,12 +929,18 @@ Common header meanings:
 | `X-Plush-Fast-Plan-Helper-Names` | Helper names the fast plan found while compiling. Useful for spotting expensive helper-heavy templates. |
 | `X-Plush-Fast-Plan-Partial-Names` | Partial names the fast plan found while compiling. Useful for spotting partial-heavy templates. |
 | `X-Plush-VM-Helper-*` | Optional helper-call count and timing fields. They are zero unless `EnableRenderVMHotspotDiagnostics` was enabled for that context. |
+| `X-Plush-VM-Helper-Call-Paths` | Exact direct, reflection, and unclassified helper-call totals; direct/reflection time; reflection percentage; and bounded-detail drop counts. |
+| `X-Plush-VM-Helper-Call-Details` | Up to eight retained helper/signature records, with reflection records ordered first. Use this to identify signatures worth adding to the generated direct invokers or registering through `SetFastHelper` or `SetFastValueHelper`. |
 | `X-Plush-VM-Partial-*` | Optional partial-call count and timing fields. They are zero unless `EnableRenderVMHotspotDiagnostics` was enabled for that context. |
 | `Server-Timing` | Browser/devtools-friendly timing summary. The example maps Plush engine time plus optional VM helper and partial hotspot time into server timing metrics. |
 
 ### Adaptive Output-Size Estimator
 
-The estimator is implemented across the VM's whole-template, loop, composed-layout, and partial render paths, with bounded state, diagnostics, a runtime off switch, race coverage, benchmarks, and CPU/allocation profiles.
+For a fundamentals-first explanation, implementation details, the formal state
+model, and validation evidence, see
+[Adaptive Output-Size Estimator](OUTPUT_SIZE_ESTIMATOR.md).
+
+The estimator is implemented across the VM's whole-template, loop, composed-layout, and partial render paths, with bounded state, diagnostics, a runtime off switch, and race coverage.
 
 #### How it works
 
@@ -914,15 +997,55 @@ These limits affect only explicit preallocation. Rendering can always grow beyon
 
 `SetOutputSizeEstimatorEnabled(false)` atomically disables learned template, layout, partial, and loop hints process-wide. Disabled mode records no new samples, but preserves the pre-existing static fast-plan hint. Re-enabling resumes from the statistics already attached to the cached bytecode.
 
-For enabled top-level renders, diagnostics report the estimate used before rendering (`learned`), actual bytes, the updated estimate, sample count, minimum/maximum, instability and limiting decisions, requested hint, real capacity allocated by `Grow`, and final unused capacity. `error` is the absolute difference between the pre-render estimate and actual output as a percentage of actual output; `within-10=1` means that value is strictly below 10%. Loop diagnostics provide request totals plus bounded per-loop bytes-per-item details, and partial diagnostics provide both totals and bounded per-file details.
+When diagnostics are enabled for a top-level render, they report the estimate used before rendering (`learned`), actual bytes, the updated estimate, sample count, minimum/maximum, instability and limiting decisions, requested hint, real capacity allocated by `Grow`, and final unused capacity. `error` is the absolute difference between the pre-render estimate and actual output as a percentage of actual output; `within-10=1` means that value is strictly below 10%. Loop diagnostics provide request totals plus bounded per-loop bytes-per-item details, and partial diagnostics provide both totals and bounded per-file details.
+
+Diagnostic collection is independent from estimator learning. Use `SetOutputSizeEstimatorDiagnosticsMode` to choose the required observability level:
+
+| Mode | Learning and growth | Root diagnostics | Loop/partial aggregates | Per-loop/partial details |
+| --- | --- | --- | --- | --- |
+| `OutputSizeEstimatorDiagnosticsOff` | Enabled | No | No | No |
+| `OutputSizeEstimatorDiagnosticsSummary` | Enabled | Yes | Yes | No |
+| `OutputSizeEstimatorDiagnosticsDetailed` | Enabled | Yes | Yes | Yes |
+
+**Estimator diagnostics and VM hotspot timing are both off by default.** This keeps estimator learning and builder growth enabled without paying the instrumentation cost. Applications must explicitly select summary or detailed estimator diagnostics, and explicitly enable VM hotspot timing, when they need that observability:
+
+```go
+previous := plush.SetOutputSizeEstimatorDiagnosticsMode(
+    plush.OutputSizeEstimatorDiagnosticsSummary, // opt in temporarily
+)
+defer plush.SetOutputSizeEstimatorDiagnosticsMode(previous)
+```
+
+### Diagnostic Cost
+
+Estimator learning and builder growth remain synchronous so the next render can
+use the latest successful observation. Diagnostic collection is separate from
+that learning path.
+
+Estimator diagnostics and VM hotspot timing are instrumentation and are not
+free. Both default to off. Enable summary mode only when aggregate observability
+is required, and enable detailed diagnostics or hotspot timing only during a
+bounded investigation. Formatting or exporting detailed records outside the
+response path can reduce request latency, but that work still consumes process
+CPU, memory, and I/O capacity.
+
+Recommended production configuration:
+
+```text
+output-size estimator:             enabled
+output-size estimator diagnostics: off (default)
+VM hotspot timing:                 disabled
+```
+
+Choose summary or detailed diagnostics explicitly when investigating estimator behavior, then return the setting to off. Disabling diagnostics does not disable estimation, learning, or builder growth.
 
 **Stage 7: Verification**
 
-Generic tests exercise first-sample learning, asymmetric updates, cache ownership, changed source, loops, nested loops, layouts, partials, instability limits, disabled mode, and concurrent access. The stable benchmark measures the intended reusable-template case; the alternating benchmark deliberately stresses variable output. CPU and allocation profiles then verify that lower `B/op` comes from replacing repeated builder copying with one planned grow, rather than from skipping rendering work.
+Generic tests exercise first-sample learning, asymmetric updates, cache ownership, changed source, loops, nested loops, layouts, partials, instability limits, disabled mode, and concurrent access. Tests also verify that capacity planning never changes rendered output and that failed renders do not train the estimator.
 
 Each compiled template owns its own statistics. The cache stores estimates beside bytecode, never rendered values or context data. Replacing a cache entry after a source change creates fresh statistics automatically. Layout profiles are fixed at eight entries per root bytecode, so state cannot grow with request paths or input identities.
 
-The estimator is enabled by default. Disable it process-wide at startup, in a benchmark, or around a controlled test:
+The estimator is enabled by default. Disable it process-wide at startup or around a controlled test:
 
 ```go
 previous := plush.SetOutputSizeEstimatorEnabled(false)
@@ -931,37 +1054,9 @@ defer plush.SetOutputSizeEstimatorEnabled(previous)
 
 Disabled mode performs no adaptive learning, layout/partial estimation, or learned loop growth. It preserves the VM's static fast-plan hint, providing a direct pre-estimator baseline without changing rendering semantics.
 
+To measure estimator cost without diagnostic collection, leave the estimator enabled and select `OutputSizeEstimatorDiagnosticsOff`. This differs from `SetOutputSizeEstimatorEnabled(false)`: diagnostics-off mode continues learning and applying capacity hints.
+
 For fair VM measurements, warm file-backed templates until `VMBytecodeCache` reports `hit` and `FastPath` reports `fast`. A first render may report `miss-store` because the VM is parsing, compiling, storing bytecode, and then rendering. Fast-plan counters describe template shape, not elapsed time; use `EngineDurationMilliseconds`, `VMHelperDurationMilliseconds`, and `VMPartialDurationMilliseconds` for timings.
-
-### Measured Gains
-
-Latest local benchmark checkpoint, VM bytecode cache compared with interpreter AST cache:
-
-| Benchmark set | Time | B/op | allocs/op |
-| --- | ---: | ---: | ---: |
-| Full render-mode matrix, 26 scenarios | 61.2% faster | 59.6% less | 71.8% fewer |
-| Realistic mixed template | 59.6% faster | 73.3% less | 81.3% fewer |
-| Simple conditional access output | 45.0% faster | 32.8% less | 65.6% fewer |
-| Nested access/simple access output | 55.4% faster | 56.7% less | 61.8% fewer |
-| Partial simple access bodies | 52.5% faster | 49.6% less | 70.6% fewer |
-| Partial rendering with data maps | 53.6% faster | 55.6% less | 68.9% fewer |
-| Partial data maps with helper-call values | 63.4% faster | 53.5% less | 68.0% fewer |
-| Typed map access | 35.6% faster | 24.8% less | 56.8% fewer |
-| Loop helper direct string calls | 69.6% faster | 50.6% less | 74.5% fewer |
-| Loop helper direct int calls | 58.9% faster | 51.1% less | 70.3% fewer |
-| Mixed numeric operator output | 46.4% faster | 28.3% less | 61.5% fewer |
-
-The full matrix includes static output, variable interpolation, helpers, loops, struct fields, nested access, conditionals, regex, partials, whitespace trim, and mixed numeric comparisons. These numbers come from the latest local post-profile checkpoint using medians from `count=3` / `500ms`. The exact percentage will move with hardware and template shape, but repeated cached VM renders should usually be materially faster than interpreter AST-cache renders.
-
-This checkpoint includes the partial no-overlay fast path, stack-backed partial data locals, helper-call partial data value plans, cleaner cache-key/punch-hole lookup, and lower-allocation request context construction. Some percentages moved because those context changes speed up the interpreter too; the VM partial rows still improved sharply in absolute `ns/op`, `B/op`, and `allocs/op`.
-
-Important caveat: one-shot VM rendering is not the headline number because it includes parse and compile work. Use cached VM render or compiled-template reuse for the real compiled-performance path.
-
-Run the benchmark matrix locally:
-
-```sh
-go test ./vm/vm -run '^$' -bench '^BenchmarkRenderModeMatrix/.*/(interpreter_ast_cache|vm_bytecode_cache)$' -benchmem -count=3 -benchtime=500ms
-```
 
 ### Automatic VM Fast Paths
 
@@ -972,7 +1067,7 @@ Most VM optimizations need no template changes. The VM automatically specializes
 - repeated name lookups
 - safe mixed numeric comparisons such as `uint32 == 0` and `float32 == 3`
 - struct fields, nested property chains, indexed property chains, and no-arg method tails
-- typed Go map access with static string keys, such as `labels["status"]` and `robots["bender"].Name`
+- typed Go map access with static string keys, such as `labels["status"]` and `records["primary"].Name`
 - loops over `nil`, strings, slices, structs, and pointers to structs
 - simple top-level conditionals whose branches contain static/name/property/access/infix output
 - conditionals and infix conditions inside loops
@@ -985,15 +1080,15 @@ Most VM optimizations need no template changes. The VM automatically specializes
 - unary negation with `-`
 - arrays, hashes, non-string literal hash keys, and dynamic index reads as supported fast values
 - partials with no data, including direct linked rendering when the partial body is simple and does not need partial metadata
-- partials with simple static-key data maps, such as `partial("row", {name: product.Name})`; the VM prepares the keys and value lookup plan, then reads fresh values each render
-- partial data maps with helper-call values, such as `partial("row", {label: label(product.Name, prefix)})`; the VM compiles the call arguments and uses direct value invokers for common helper signatures
+- partials with simple static-key data maps, such as `partial("row", {name: record.Name})`; the VM prepares the keys and value lookup plan, then reads fresh values each render
+- partial data maps with helper-call values, such as `partial("row", {label: label(record.Name, prefix)})`; the VM compiles the call arguments and uses direct value invokers for common helper signatures
 - dynamic partial names and `layout` data values through the regular VM partial helper-call path
-- linked partial bodies that contain simple property/access/infix output, such as `<%= robot.Name %>` or `<%= labels["status"] %>`
+- linked partial bodies that contain simple property/access/infix output, such as `<%= record.Name %>` or `<%= labels["status"] %>`
 - clean filename cache keys and punch-hole filename checks for file-backed cached renders
 
-The VM caches plans and bytecode, not request values. It does not cache the current product, helper return values, rendered HTML, partial output, or branch decisions.
+The VM caches plans and bytecode, not request values. It does not cache the current record, helper return values, rendered HTML, partial output, or branch decisions.
 
-Helpers whose Go function signature uses an application-defined scalar parameter, such as `func(ProductName, string) string`, still use the safe reflective call path unless an app registers a custom fast helper. Go does not safely convert `func(ProductName, string) string` into `func(string, string) string` even when `ProductName` is backed by `string`.
+Helpers whose Go function signature uses an application-defined scalar parameter, such as `func(CustomName, string) string`, still use the safe reflective call path unless an app registers a custom fast helper. Go does not safely convert `func(CustomName, string) string` into `func(string, string) string` even when `CustomName` is backed by `string`.
 
 ### Advanced Fast Helpers
 
@@ -1011,87 +1106,140 @@ ctx.Set("greet", func(name string) string {
 
 For app-specific hot helpers that use broad types like `interface{}` or complex domain values, you can optionally register a custom fast helper. Keep the normal helper in the context for correctness and fallback.
 
+`vmplush.SetFastHelper` optimizes calls whose result is written directly to the render output:
+
+```erb
+<%= label(value) %>
+```
+
+When the same helper result is needed as a Go value, register `vmplush.SetFastValueHelper` too. Value-position calls include assignments, conditions, arguments to other helpers, loops, and partial data-map values:
+
+```erb
+<% let text = label(value) %>
+<%= wrap(text) %>
+```
+
+The value-helper examples below use `hctx.Context` from `github.com/gobuffalo/plush/v5/helpers/hctx`.
+
 ```go
-ctx.Set("money", func(value interface{}) string {
-  return formatMoney(value)
+ctx.Set("label", func(value interface{}) string {
+  text, ok := value.(string)
+  if !ok {
+    return ""
+  }
+  return "[" + text + "]"
 })
 
-vmplush.SetFastHelper(ctx, "money", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
-  amount, ok := args.Float64(0)
+vmplush.SetFastHelper(ctx, "label", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
+  text, ok := args.String(0)
   if !ok {
     return vmplush.ErrFastUnsupported // fall back to the normal helper
   }
 
-  w.WriteEscapedString(formatMoneyFloat(amount))
+  w.WriteEscapedString("[" + text + "]")
   return nil
+})
+
+vmplush.SetFastValueHelper(ctx, "label", func(_ hctx.Context, args vmplush.FastArgs) (interface{}, error) {
+  text, ok := args.String(0)
+  if !ok {
+    return nil, vmplush.ErrFastUnsupported
+  }
+
+  return "[" + text + "]", nil
 })
 ```
 
 The template stays normal:
 
 ```erb
-<%= money(amount) %>
+<%= label(value) %>
 ```
 
-Fast helpers should only optimize the hot path. They must not cache request values or rendered output. Use `WriteEscapedString` for normal text and `WriteHTML` only for trusted `template.HTML`. If a fast helper cannot safely handle the current arguments, return `vmplush.ErrFastUnsupported` so the VM can call the regular helper.
+Fast helpers should only optimize the hot path. They must not cache request values or rendered output. Use `WriteEscapedString` for normal text and `WriteHTML` only for trusted `template.HTML`. Value helpers should return the same Go value as the normal helper. If either fast helper cannot safely handle the current arguments, return `vmplush.ErrFastUnsupported` so the VM can call the regular helper.
 
 For regular Go structs, use `args.Raw(i)` and type assert to the concrete type. Register the normal helper first:
 
 ```go
-type Product struct {
-  Name     string
-  Category Category
+type Record struct {
+  Name string
+  Meta Metadata
 }
 
-type Category struct {
+type Metadata struct {
   Label string
 }
 
-ctx.Set("productLabel", func(value interface{}) string {
-  product, ok := value.(Product)
+ctx.Set("recordLabel", func(value interface{}) string {
+  record, ok := value.(Record)
   if !ok {
     return ""
   }
-  return product.Category.Label + ":" + product.Name
+  return record.Meta.Label + ":" + record.Name
 })
 ```
 
 Then add an optional fast helper for the hot path:
 
 ```go
-vmplush.SetFastHelper(ctx, "productLabel", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
+vmplush.SetFastHelper(ctx, "recordLabel", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
   raw, ok := args.Raw(0)
   if !ok {
     return vmplush.ErrFastUnsupported
   }
 
-  product, ok := raw.(Product)
+  record, ok := raw.(Record)
   if !ok {
     return vmplush.ErrFastUnsupported
   }
 
-  w.WriteEscapedString(product.Category.Label + ":" + product.Name)
+  w.WriteEscapedString(record.Meta.Label + ":" + record.Name)
   return nil
+})
+
+vmplush.SetFastValueHelper(ctx, "recordLabel", func(_ hctx.Context, args vmplush.FastArgs) (interface{}, error) {
+  raw, ok := args.Raw(0)
+  if !ok {
+    return nil, vmplush.ErrFastUnsupported
+  }
+
+  record, ok := raw.(Record)
+  if !ok {
+    return nil, vmplush.ErrFastUnsupported
+  }
+
+  return record.Meta.Label + ":" + record.Name, nil
 })
 ```
 
 If the context stores pointers, assert the pointer type and nil-check it:
 
 ```go
-product, ok := raw.(*Product)
-if !ok || product == nil {
+record, ok := raw.(*Record)
+if !ok || record == nil {
   return vmplush.ErrFastUnsupported
 }
 
-w.WriteEscapedString(product.Category.Label + ":" + product.Name)
+w.WriteEscapedString(record.Meta.Label + ":" + record.Name)
 ```
 
 This avoids reflection and generic property access for the hot helper body while still keeping the normal helper as a safe fallback.
 
+For helpers that return trusted HTML, use the writer helper to write trusted output and the value helper to return the same `template.HTML` value. A trusted-markup helper can be fast when written directly and when assigned before later use:
+
+```erb
+<%= trustedMarkup(value) %>
+
+<% let markup = trustedMarkup(value) %>
+<%= markup %>
+```
+
+The first call can use `SetFastHelper`; the second also needs `SetFastValueHelper` because Plush must put the helper result on the VM stack before writing it later.
+
 Normal templates can still use regular Plush access without a fast helper:
 
 ```erb
-<%= product.Category.Label %>
+<%= record.Meta.Label %>
 ```
 
 Partial calls with simple data maps are also optimized automatically by the VM.
@@ -1107,7 +1255,7 @@ A **nil budget = unlimited**, so all existing code is completely unaffected.
 ```go
 b := plush.NewBudget(10_000)
 ctx := plush.NewContext()
-ctx.Set("products", products)
+ctx.Set("records", records)
 ctx.WithBudget(b)
 
 html, err := plush.Render(tmpl, ctx)
