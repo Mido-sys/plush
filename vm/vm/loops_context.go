@@ -680,7 +680,7 @@ func (vm *VM) syncContextBindingByNameIndex(target hctx.Context, source hctx.Con
 		return
 	}
 	if lookup, ok := target.(contextIDLookup); ok {
-		id := vm.contextNameID(lookup, nameIndex)
+		id := vm.contextBindingID(target, lookup, name)
 		if lookup.UpdateID(id, value) {
 			return
 		}
@@ -702,12 +702,7 @@ func (vm *VM) syncContextBinding(target hctx.Context, source hctx.Context, name 
 		return
 	}
 	if lookup, ok := target.(contextIDLookup); ok {
-		var id int
-		if vm == nil {
-			id = lookup.InternID(name)
-		} else {
-			id = vm.contextStringID(lookup, name)
-		}
+		id := vm.contextBindingID(target, lookup, name)
 		if lookup.UpdateID(id, value) {
 			return
 		}
@@ -718,6 +713,13 @@ func (vm *VM) syncContextBinding(target hctx.Context, source hctx.Context, name 
 		return
 	}
 	target.Set(name, value)
+}
+
+func (vm *VM) contextBindingID(target hctx.Context, lookup contextIDLookup, name string) int {
+	if vm != nil && target == vm.ctx {
+		return vm.contextStringID(lookup, name)
+	}
+	return lookup.InternID(name)
 }
 
 func (vm *VM) updateNamedGlobal(globalIndex int, value object.Object) {

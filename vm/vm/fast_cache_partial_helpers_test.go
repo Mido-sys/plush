@@ -289,6 +289,28 @@ func Test_VM_Partial_Overlay_InternID_Caches_Name_ID(t *testing.T) {
 	require.Equal(t, 1, parent.internID)
 }
 
+func Test_VM_Partial_Overlay_Inline_Name_ID_Does_Not_Allocate_Maps(t *testing.T) {
+	parent := newIDLookupTestContext(map[string]interface{}{})
+	local := newPartialOverlayContext(parent)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		local.reset(parent)
+		local.setLocalWithID("section", 7, "value")
+	})
+
+	require.Zero(t, allocs)
+	require.Nil(t, local.nameIDs)
+	require.Nil(t, local.idNames)
+	id, ok := local.idForName("section")
+	require.True(t, ok)
+	require.Equal(t, 7, id)
+	name, ok := local.nameForID(7)
+	require.True(t, ok)
+	require.Equal(t, "section", name)
+	require.Equal(t, 7, local.InternID("section"))
+	require.Zero(t, parent.internID)
+}
+
 func Test_VM_Partial_Overlay_Render_Assigns_Missing_Map_Value_To_Existing_Local(t *testing.T) {
 	type record struct {
 		Fields map[string]string

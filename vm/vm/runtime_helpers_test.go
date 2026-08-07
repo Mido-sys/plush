@@ -103,6 +103,30 @@ func Test_VM_Sync_Dynamic_Context_Bindings_Uses_Prepared_Name_Indexes(t *testing
 	require.Equal(t, 1, target.internID)
 }
 
+func Test_VM_Sync_Dynamic_Context_Bindings_Does_Not_Reuse_IDs_For_Different_Target(t *testing.T) {
+	vmCtx := newIDLookupTestContext(map[string]interface{}{})
+	vmCtx.InternID("name")
+	machine := newRuntimeHelperTestVM(vmCtx)
+	require.Equal(t, 0, machine.contextNameID(vmCtx, 0))
+
+	target := newIDLookupTestContext(map[string]interface{}{})
+	target.InternID("other")
+	target.InternID("name")
+	target.values["other"] = "keep"
+	target.values["name"] = "before"
+	target.internID = 0
+
+	frame := machine.currentFrame()
+	frame.cl.Fn.DynamicContextNamesReady = true
+	frame.cl.Fn.DynamicContextNameIndexes = []int{0}
+	source := plush.NewContextWith(map[string]interface{}{"name": "updated"})
+
+	machine.syncDynamicContextBindingsFromContext(target, source, frame)
+	require.Equal(t, "updated", target.values["name"])
+	require.Equal(t, "keep", target.values["other"])
+	require.Equal(t, 1, target.internID)
+}
+
 func Test_VM_Sync_Dynamic_Context_Bindings_Falls_Back_For_Manual_Functions(t *testing.T) {
 	target := newIDLookupTestContext(map[string]interface{}{})
 	source := plush.NewContextWith(map[string]interface{}{"name": "fallback"})

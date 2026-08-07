@@ -443,9 +443,6 @@ func (c *partialOverlayContext) setLocal(key string, value interface{}) {
 }
 
 func (c *partialOverlayContext) setLocalWithID(key string, id int, value interface{}) {
-	if key != "" && id >= 0 {
-		c.rememberIDName(id, key)
-	}
 	if key != "" && c.setLocalExisting(key, value) {
 		c.setLocalIDExisting(id, value)
 		return
@@ -457,6 +454,9 @@ func (c *partialOverlayContext) setLocalWithID(key string, id int, value interfa
 		c.inline[c.count] = partialOverlayValue{key: key, id: id, value: value}
 		c.count++
 		return
+	}
+	if key != "" && id >= 0 {
+		c.rememberIDName(id, key)
 	}
 	if c.extra == nil {
 		c.extra = make(map[string]interface{}, 4)
@@ -499,14 +499,14 @@ func (c *partialOverlayContext) idForName(key string) (int, bool) {
 	if c == nil || key == "" {
 		return -1, false
 	}
-	if c.nameIDs != nil {
-		if id, ok := c.nameIDs[key]; ok {
-			return id, true
-		}
-	}
 	for i := 0; i < c.count; i++ {
 		if c.inline[i].key == key {
 			return c.inline[i].id, true
+		}
+	}
+	if c.nameIDs != nil {
+		if id, ok := c.nameIDs[key]; ok {
+			return id, true
 		}
 	}
 	return -1, false
@@ -515,6 +515,11 @@ func (c *partialOverlayContext) idForName(key string) (int, bool) {
 func (c *partialOverlayContext) nameForID(id int) (string, bool) {
 	if c == nil || id < 0 {
 		return "", false
+	}
+	for i := 0; i < c.count; i++ {
+		if c.inline[i].id == id && c.inline[i].key != "" {
+			return c.inline[i].key, true
+		}
 	}
 	if name, ok := c.idNames[id]; ok {
 		return name, true
