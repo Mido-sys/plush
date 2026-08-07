@@ -2,6 +2,7 @@ package plush
 
 import (
 	"fmt"
+	"html/template"
 
 	rootplush "github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
@@ -67,4 +68,11 @@ func SetFastValueHelper(ctx hctx.Context, name string, helper FastValueHelperFun
 
 func ClearFastValueHelper(ctx hctx.Context, name string) {
 	vm.ClearFastValueHelper(ctx, name)
+}
+
+// RenderSourcePartial renders runtime Plush source as a named partial value.
+// Use FastWriter.WriteSourcePartial for direct output; this form supports
+// assignments and nested helper arguments that require a value first.
+func RenderSourcePartial(ctx hctx.Context, name, source string, data ...map[string]interface{}) (template.HTML, error) {
+	return vm.RenderSourcePartial(ctx, name, source, data...)
 }

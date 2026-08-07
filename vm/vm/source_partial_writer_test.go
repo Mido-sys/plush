@@ -174,3 +174,32 @@ func Test_VM_Fast_Writer_Write_Source_Partial_Reports_Named_Errors(t *testing.T)
 	require.ErrorContains(t, w.WriteSourcePartial("runtime/data.plush", "source", nil, nil), "at most one data map")
 	require.ErrorIs(t, (FastWriter{}).WriteSourcePartial("runtime/nil.plush", "source"), ErrFastUnsupported)
 }
+
+func Test_VM_Render_Source_Partial_Value_Inherits_Context_And_Scopes_Data(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"parent": "outer",
+		"local":  "parent-local",
+	})
+
+	rendered, err := RenderSourcePartial(
+		ctx,
+		"runtime/value.plush",
+		`<strong><%= parent %>:<%= local %></strong>`,
+		map[string]interface{}{"local": "child-local"},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, template.HTML("<strong>outer:child-local</strong>"), rendered)
+	require.Equal(t, "parent-local", ctx.Value("local"))
+}
+
+func Test_VM_Render_Source_Partial_Value_Discards_Output_On_Error(t *testing.T) {
+	rendered, err := RenderSourcePartial(
+		plush.NewContext(),
+		"runtime/value-error.plush",
+		`written first<%= missing %>`,
+	)
+
+	require.Error(t, err)
+	require.Empty(t, rendered)
+}

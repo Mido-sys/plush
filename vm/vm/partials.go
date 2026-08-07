@@ -856,6 +856,30 @@ func (w FastWriter) WriteSourcePartial(name, source string, data ...map[string]i
 	return renderFastSourcePartialInto(w.out, name, source, locals, w.ctx, 0)
 }
 
+// RenderSourcePartial renders caller-provided Plush source as a named partial
+// value. It is the compatibility form for nested expressions where no active
+// FastWriter is available; direct output helpers should prefer WriteSourcePartial.
+func RenderSourcePartial(ctx hctx.Context, name, source string, data ...map[string]interface{}) (template.HTML, error) {
+	if ctx == nil {
+		return "", ErrFastUnsupported
+	}
+	if name == "" {
+		return "", fmt.Errorf("source partial name must not be empty")
+	}
+	if len(data) > 1 {
+		return "", fmt.Errorf("RenderSourcePartial accepts at most one data map")
+	}
+	var locals map[string]interface{}
+	if len(data) == 1 {
+		locals = data[0]
+	}
+	var out strings.Builder
+	if err := renderFastSourcePartialInto(&out, name, source, locals, ctx, 0); err != nil {
+		return "", err
+	}
+	return template.HTML(out.String()), nil
+}
+
 func renderFastSourcePartialInto(out *strings.Builder, name, source string, data map[string]interface{}, ctx hctx.Context, line int) error {
 	if out == nil || ctx == nil {
 		return ErrFastUnsupported
