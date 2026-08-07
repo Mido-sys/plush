@@ -1198,6 +1198,29 @@ err := w.WriteSourcePartial(name, source, map[string]interface{}{
 })
 ```
 
+When the helper is nested inside another expression, such as
+`<%= raw(runtimeBanner()) %>`, the VM must produce its value before the outer
+helper runs and therefore cannot provide an active `FastWriter`. Register a
+`FastValueHelperFunc` and use `RenderSourcePartial` for that compatibility
+case:
+
+```go
+vmplush.SetFastValueHelper(ctx, "runtimeBanner", func(ctx hctx.Context, args vmplush.FastArgs) (interface{}, error) {
+  if args.Len() != 0 {
+    return nil, vmplush.ErrFastUnsupported
+  }
+  return vmplush.RenderSourcePartial(ctx, "runtime/banner.plush", source)
+})
+```
+
+`RenderSourcePartial` returns trusted `template.HTML` and intentionally uses a
+temporary builder because the caller requested a value. It still uses the same
+named bytecode, warm plan, source-hash invalidation, estimator, render budget,
+context inheritance, and partial diagnostics as `WriteSourcePartial`. Prefer
+the direct `<%= runtimeBanner() %>` form with `WriteSourcePartial` when template
+syntax permits it, because that writes into the parent builder without the
+temporary value allocation.
+
 The optional data map does not modify same-named values in the parent context. Values held only in VM lexical slots should be read from `FastArgs` and passed in this map; `WriteSourcePartial` automatically inherits values available through the active `hctx.Context`, including helpers, render-budget state, diagnostics, cancellation, and the regular `partialFeeder` used by any nested `partial()` calls.
 
 The name is an identity, not a source lookup. Use a stable name that is unique to the logical template fragment. Plush compares the source hash under that name, so changing the source recompiles the bytecode while repeated unchanged source reuses it. Avoid request identifiers in names because they prevent useful estimator and bytecode reuse. Plush caches bytecode and numeric output-size statistics, never the rendered output or data-map values.
