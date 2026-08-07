@@ -10,6 +10,23 @@ func newPartialBytecodeLinkCache() *partialBytecodeLinkCache {
 	return &partialBytecodeLinkCache{entries: map[string]*partialBytecodeLink{}}
 }
 
+const maxSourcePartialPlans = 256
+
+type sourcePartialPlanKey struct {
+	name          string
+	templateFile  string
+	templateBase  string
+	templateExt   string
+	parentPartial string
+}
+
+type sourcePartialPlan struct {
+	sourceHash uint64
+	childFile  string
+	filename   string
+	link       *partialBytecodeLink
+}
+
 type partialMetaIDs struct {
 	templateFileID     int
 	templateBaseFileID int
@@ -61,6 +78,44 @@ func (c *partialBytecodeLinkCache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)
+}
+
+func (c *partialBytecodeLinkCache) sourcePartialPlan(key sourcePartialPlanKey, sourceHash uint64) (*sourcePartialPlan, bool) {
+	if c == nil || key.name == "" {
+		return nil, false
+	}
+	c.mu.RLock()
+	plan, ok := c.sourcePartialPlans[key]
+	c.mu.RUnlock()
+	if !ok || plan == nil || plan.sourceHash != sourceHash || plan.link == nil || plan.link.bytecode == nil {
+		return nil, false
+	}
+	return plan, true
+}
+
+func (c *partialBytecodeLinkCache) setSourcePartialPlan(key sourcePartialPlanKey, plan *sourcePartialPlan) bool {
+	if c == nil || key.name == "" || plan == nil || plan.link == nil || plan.link.bytecode == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sourcePartialPlans == nil {
+		c.sourcePartialPlans = make(map[sourcePartialPlanKey]*sourcePartialPlan)
+	}
+	if _, exists := c.sourcePartialPlans[key]; !exists && len(c.sourcePartialPlans) >= maxSourcePartialPlans {
+		return false
+	}
+	c.sourcePartialPlans[key] = plan
+	return true
+}
+
+func (c *partialBytecodeLinkCache) sourcePartialPlanLen() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.sourcePartialPlans)
 }
 
 func (c *partialBytecodeLinkCache) partialFeeder(ctx hctx.Context) (func(string) (string, error), bool) {

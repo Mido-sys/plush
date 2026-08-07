@@ -404,10 +404,11 @@ type partialBytecodeLink struct {
 }
 
 type partialBytecodeLinkCache struct {
-	mu          sync.RWMutex
-	entries     map[string]*partialBytecodeLink
-	feederID    int
-	hasFeederID bool
-	metaIDs     partialMetaIDs
-	hasMetaIDs  bool
+	mu                 sync.RWMutex
+	entries            map[string]*partialBytecodeLink
+	sourcePartialPlans map[sourcePartialPlanKey]*sourcePartialPlan
+	feederID           int
+	hasFeederID        bool
+	metaIDs            partialMetaIDs
+	hasMetaIDs         bool
 }

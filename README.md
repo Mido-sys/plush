@@ -1158,6 +1158,56 @@ The template stays normal:
 
 Fast helpers should only optimize the hot path. They must not cache request values or rendered output. Use `WriteEscapedString` for normal text and `WriteHTML` only for trusted `template.HTML`. Value helpers should return the same Go value as the normal helper. If either fast helper cannot safely handle the current arguments, return `vmplush.ErrFastUnsupported` so the VM can call the regular helper.
 
+#### Runtime source partials
+
+Regular partials remain the preferred option when a template can name source supplied by `partialFeeder`:
+
+```erb
+<%= partial("components/banner.plush", {title: title}) %>
+```
+
+A custom `FastHelperFunc` can instead use `WriteSourcePartial` when the application already holds the partial source as a string. This renders the source as a named partial through the active VM output without registering it with `partialFeeder`. Eligible compiled partials write directly into the parent builder; unsupported source shapes retain the normal compatibility fallback:
+
+```go
+source := `<strong><%= pageTitle %></strong>`
+
+ctx.Set("runtimeBanner", func(help plush.HelperContext) (template.HTML, error) {
+  rendered, err := plush.Render(source, help.Context)
+  return template.HTML(rendered), err
+})
+
+vmplush.SetFastHelper(ctx, "runtimeBanner", func(w vmplush.FastWriter, args vmplush.FastArgs) error {
+  if args.Len() != 0 {
+    return vmplush.ErrFastUnsupported
+  }
+
+  return w.WriteSourcePartial("runtime/banner.plush", source)
+})
+```
+
+The two supported forms are:
+
+```go
+// Inherit values and helpers from the active render context.
+err := w.WriteSourcePartial(name, source)
+
+// Also add values scoped to this source-partial render.
+err := w.WriteSourcePartial(name, source, map[string]interface{}{
+  "record": record,
+  "label":  label,
+})
+```
+
+The optional data map does not modify same-named values in the parent context. Values held only in VM lexical slots should be read from `FastArgs` and passed in this map; `WriteSourcePartial` automatically inherits values available through the active `hctx.Context`, including helpers, render-budget state, diagnostics, cancellation, and the regular `partialFeeder` used by any nested `partial()` calls.
+
+The name is an identity, not a source lookup. Use a stable name that is unique to the logical template fragment. Plush compares the source hash under that name, so changing the source recompiles the bytecode while repeated unchanged source reuses it. Avoid request identifiers in names because they prevent useful estimator and bytecode reuse. Plush caches bytecode and numeric output-size statistics, never the rendered output or data-map values.
+
+After an eligible source partial renders once, Plush retains a warm plan containing its resolved template identity, source hash, linked bytecode, and binding plan. Later calls with the same parent identity, name, and source hash can apply current context/data values directly to that plan without rebuilding partial metadata or repeating bytecode-cache discovery. Fast loops use the learned partial estimate to size their transactional scratch output before execution. Source that needs special partial metadata, nested partial calls, JavaScript escaping, punch holes, or compatibility fallback continues through the regular partial path.
+
+Warm plans are bounded to 256 distinct runtime-source identities in each active partial-link cache. Changing source under an existing identity replaces that plan rather than consuming another slot. If the cache reaches its boundary, additional identities still render correctly through the normal path; they simply do not receive the warm-plan shortcut. The parent template identity is part of the key, so the same partial name used by separate template roots does not alias within a shared render context.
+
+`WriteSourcePartial` charges the normal partial/sub-render budget and records the call in partial diagnostics. It executes the supplied source as a Plush template, so applications must apply the same trust and validation rules used for any other runtime template source. It is available only while a `FastHelperFunc` owns a valid `FastWriter`; normal template code should continue using `partial()`.
+
 For regular Go structs, use `args.Raw(i)` and type assert to the concrete type. Register the normal helper first:
 
 ```go

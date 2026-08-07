@@ -187,6 +187,10 @@ func renderFastPlanInlineSafe(out *strings.Builder, plan *compiler.FastRenderPla
 }
 
 func renderFastPlanInlineWithBindings(out *strings.Builder, plan *compiler.FastRenderPlan, ctx hctx.Context, bindings fastRenderBindings) (bool, error) {
+	return renderFastPlanInlineWithBindingsHint(out, plan, ctx, bindings, 0)
+}
+
+func renderFastPlanInlineWithBindingsHint(out *strings.Builder, plan *compiler.FastRenderPlan, ctx hctx.Context, bindings fastRenderBindings, growHint int) (bool, error) {
 	if out == nil || plan == nil {
 		return false, nil
 	}
@@ -201,7 +205,10 @@ func renderFastPlanInlineWithBindings(out *strings.Builder, plan *compiler.FastR
 		return renderFastSimplePlanInlineSafe(out, ctx, bindings, mixed.simple)
 	}
 	var scratch strings.Builder
-	if grow := fastOutputGrowSize(mixed, bindings); grow > 0 {
+	if grow := fastOutputGrowSize(mixed, bindings); grow > 0 || growHint > 0 {
+		if growHint > grow {
+			grow = growHint
+		}
 		scratch.Grow(grow)
 	}
 	ok, err := renderFastMixedPlan(&scratch, ctx, bindings, mixed, nil)
