@@ -96,9 +96,8 @@ type partialOverlayContext struct {
 	parent     hctx.Context
 	vmHotspots plush.RenderVMHotspotDiagnosticsRecorder
 	inline     [8]partialOverlayValue
+	overflow   []partialOverlayValue
 	count      int
-	extra      map[string]interface{}
-	extraIDs   map[int]interface{}
 	idNames    map[int]string
 	nameIDs    map[string]int
 	idInterner *plush.InternTable
@@ -138,11 +137,9 @@ func (c *partialOverlayContext) reset(parent hctx.Context) {
 		c.inline[i] = partialOverlayValue{}
 	}
 	c.count = 0
-	if c.extra != nil {
-		clear(c.extra)
-	}
-	if c.extraIDs != nil {
-		clear(c.extraIDs)
+	if c.overflow != nil {
+		clear(c.overflow)
+		c.overflow = c.overflow[:0]
 	}
 	if c.idNames != nil {
 		clear(c.idNames)
@@ -390,9 +387,12 @@ func (c *partialOverlayContext) localValue(key string) (interface{}, bool) {
 			return c.inline[i].value, true
 		}
 	}
-	if c.extra != nil {
-		value, ok := c.extra[key]
-		return value, ok
+	if key != "" {
+		for i := range c.overflow {
+			if c.overflow[i].key == key {
+				return c.overflow[i].value, true
+			}
+		}
 	}
 	return nil, false
 }
@@ -403,9 +403,10 @@ func (c *partialOverlayContext) localValueID(id int) (interface{}, bool) {
 			return c.inline[i].value, true
 		}
 	}
-	if c.extraIDs != nil {
-		value, ok := c.extraIDs[id]
-		return value, ok
+	for i := range c.overflow {
+		if c.overflow[i].id == id {
+			return c.overflow[i].value, true
+		}
 	}
 	return nil, false
 }
@@ -417,10 +418,12 @@ func (c *partialOverlayContext) setLocalExisting(key string, value interface{}) 
 			return true
 		}
 	}
-	if c.extra != nil {
-		if _, ok := c.extra[key]; ok {
-			c.extra[key] = value
-			return true
+	if key != "" {
+		for i := range c.overflow {
+			if c.overflow[i].key == key {
+				c.overflow[i].value = value
+				return true
+			}
 		}
 	}
 	return false
@@ -433,9 +436,9 @@ func (c *partialOverlayContext) setLocalIDExisting(id int, value interface{}) bo
 			return true
 		}
 	}
-	if c.extraIDs != nil {
-		if _, ok := c.extraIDs[id]; ok {
-			c.extraIDs[id] = value
+	for i := range c.overflow {
+		if c.overflow[i].id == id {
+			c.overflow[i].value = value
 			return true
 		}
 	}
@@ -466,19 +469,10 @@ func (c *partialOverlayContext) setLocalWithID(key string, id int, value interfa
 		c.count++
 		return
 	}
-	if key != "" && id >= 0 {
-		c.rememberIDName(id, key)
+	if c.overflow == nil {
+		c.overflow = make([]partialOverlayValue, 0, 4)
 	}
-	if c.extra == nil {
-		c.extra = make(map[string]interface{}, 4)
-	}
-	if key != "" {
-		c.extra[key] = value
-	}
-	if c.extraIDs == nil {
-		c.extraIDs = make(map[int]interface{}, 4)
-	}
-	c.extraIDs[id] = value
+	c.overflow = append(c.overflow, partialOverlayValue{key: key, id: id, value: value})
 }
 
 func (c *partialOverlayContext) rememberIDName(id int, key string) {
@@ -515,6 +509,11 @@ func (c *partialOverlayContext) idForName(key string) (int, bool) {
 			return c.inline[i].id, true
 		}
 	}
+	for i := range c.overflow {
+		if c.overflow[i].key == key {
+			return c.overflow[i].id, true
+		}
+	}
 	if c.nameIDs != nil {
 		if id, ok := c.nameIDs[key]; ok {
 			return id, true
@@ -530,6 +529,11 @@ func (c *partialOverlayContext) nameForID(id int) (string, bool) {
 	for i := 0; i < c.count; i++ {
 		if c.inline[i].id == id && c.inline[i].key != "" {
 			return c.inline[i].key, true
+		}
+	}
+	for i := range c.overflow {
+		if c.overflow[i].id == id && c.overflow[i].key != "" {
+			return c.overflow[i].key, true
 		}
 	}
 	if name, ok := c.idNames[id]; ok {

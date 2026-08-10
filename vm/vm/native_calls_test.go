@@ -599,25 +599,26 @@ func Test_VM_Context_With_Frame_Locals(t *testing.T) {
 }
 
 func Benchmark_VM_Context_With_Frame_Locals_Partial_Overlay(b *testing.B) {
-	root := plush.NewContext()
-	parent := newPartialOverlayContext(root)
-	machine := newRuntimeHelperTestVM(parent)
-	frame := machine.currentFrame()
-	frame.cl.Fn.LocalNames = map[int]string{
-		0: "local0",
-		1: "local1",
-		2: "local2",
-		3: "local3",
-	}
-	for index, name := range frame.cl.Fn.LocalNames {
-		machine.stack[index] = &object.String{Value: name + "-value"}
-		parent.InternID(name)
-	}
+	for _, localCount := range []int{4, 8, 9, 12, 16, 32} {
+		b.Run(fmt.Sprintf("locals_%d", localCount), func(b *testing.B) {
+			root := plush.NewContext()
+			parent := newPartialOverlayContext(root)
+			machine := newRuntimeHelperTestVM(parent)
+			frame := machine.currentFrame()
+			frame.cl.Fn.LocalNames = make(map[int]string, localCount)
+			for index := 0; index < localCount; index++ {
+				name := fmt.Sprintf("local%d", index)
+				frame.cl.Fn.LocalNames[index] = name
+				machine.stack[index] = &object.String{Value: name + "-value"}
+				parent.InternID(name)
+			}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		benchmarkFrameLocalsContextSink = machine.contextWithFrameLocals()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				benchmarkFrameLocalsContextSink = machine.contextWithFrameLocals()
+			}
+		})
 	}
 }
 
