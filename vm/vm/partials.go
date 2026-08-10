@@ -278,6 +278,12 @@ func (c *partialOverlayContext) InternID(key string) int {
 	if id, ok := c.idForName(key); ok {
 		return id
 	}
+	id := c.resolveUncachedID(key)
+	c.rememberIDName(id, key)
+	return id
+}
+
+func (c *partialOverlayContext) resolveUncachedID(key string) int {
 	var id int
 	if lookup, ok := c.parent.(contextIDLookup); ok {
 		id = lookup.InternID(key)
@@ -287,7 +293,6 @@ func (c *partialOverlayContext) InternID(key string) int {
 		}
 		id = c.idInterner.Intern(key)
 	}
-	c.rememberIDName(id, key)
 	return id
 }
 
@@ -438,7 +443,13 @@ func (c *partialOverlayContext) setLocalIDExisting(id int, value interface{}) bo
 }
 
 func (c *partialOverlayContext) setLocal(key string, value interface{}) {
-	id := c.InternID(key)
+	if c == nil {
+		return
+	}
+	id, ok := c.idForName(key)
+	if !ok {
+		id = c.resolveUncachedID(key)
+	}
 	c.setLocalWithID(key, id, value)
 }
 
