@@ -297,6 +297,10 @@ func Render(input string, ctx hctx.Context) (string, error) {
 	start := time.Now()
 	cacheSource := preprocessTrimTags(input)
 	filename := plush.PunchHoleTemplateFilename(ctx)
+	if trustedFilename := plush.TrustedTopLevelBytecodeCacheFilename(ctx); trustedFilename != "" {
+		filename = trustedFilename
+		plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, "")
+	}
 	initialCacheState := plush.VMBytecodeCacheMiss
 	if filename == "" || !plush.IsVMBytecodeCacheableTemplateFile(filename) {
 		initialCacheState = plush.VMBytecodeCacheDisabled
@@ -455,6 +459,83 @@ func Render(input string, ctx hctx.Context) (string, error) {
 		defer restorePartial()
 	}
 	return renderBytecodeWithState(bytecode, ctx, filename, forceCacheClear, cacheSource)
+}
+
+// RenderTrustedBytecodeCache renders a filename-keyed bytecode entry without
+// source validation. File-backed callers must invalidate that filename when
+// its source changes.
+func RenderTrustedBytecodeCache(filename string, ctx hctx.Context) (string, bool, error) {
+	if ctx == nil || filename == "" || !plush.TrustedPartialBytecodeCacheEnabled(ctx) {
+		return "", false, nil
+	}
+	trustedFilename := plush.TrustedTopLevelBytecodeCacheFilename(ctx)
+	if trustedFilename == "" {
+		plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, filename)
+		trustedFilename = plush.TrustedTopLevelBytecodeCacheFilename(ctx)
+		if trustedFilename == "" {
+			return "", false, nil
+		}
+	}
+	plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, "")
+	filename = trustedFilename
+	cached, ok := plush.CachedVMBytecodeForCleanFilename(filename)
+	if !ok {
+		return "", false, nil
+	}
+	bytecode, ok := cached.(*compiler.Bytecode)
+	if !ok || bytecode == nil || shouldFallbackGenericBytecode(bytecode) {
+		return "", false, nil
+	}
+
+	start := time.Now()
+	plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
+		d.Mode = plush.RenderModeNameVM
+		d.TemplateFilename = filename
+		d.VMBytecodeCache = plush.VMBytecodeCacheHit
+		d.FastPath = plush.RenderFastPathGeneric
+		d.PunchHoleCache = plush.PunchHoleCacheDisabled
+	})
+	defer func() {
+		plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
+			d.EngineDuration += time.Since(start)
+		})
+	}()
+
+	updateBytecodeDiagnostics(ctx, bytecode)
+	if bytecode.Static {
+		plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
+			d.VMBytecodeCache = plush.VMBytecodeCacheHitStatic
+			d.FastPath = plush.RenderFastPathStatic
+		})
+		return renderStaticOutput(bytecode, ctx, outputSizeOptions{topLevel: true}), true, nil
+	}
+	if rendered, handled, err := tryRenderFastBytecodeTopLevel(bytecode, ctx); handled || err != nil {
+		if handled {
+			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
+				d.FastPath = renderFastPathForPlan(bytecode.FastRenderPlan)
+			})
+		}
+		return rendered, true, err
+	}
+	if restorePartial := installVMPartialHelperForBytecode(bytecode, ctx); restorePartial != nil {
+		defer restorePartial()
+	}
+
+	forceCacheClear := false
+	if bytecode.HasHoles && bytecodeCanUsePunchHoleCache(bytecode) {
+		var rendered string
+		var hit bool
+		filename, forceCacheClear, rendered, hit = punchHoleCacheStateForFilename(filename, ctx, "")
+		if hit {
+			plush.UpdateRenderDiagnosticsForTemplate(ctx, filename, func(d *plush.RenderDiagnostics) {
+				d.PunchHoleCache = plush.PunchHoleCacheHit
+			})
+			return rendered, true, nil
+		}
+	}
+
+	rendered, err := renderBytecodeVMWithStateTopLevel(bytecode, ctx, filename, forceCacheClear, "")
+	return rendered, true, err
 }
 
 func renderSourceCachedBytecode(source string, ctx hctx.Context, bytecode *compiler.Bytecode) (string, error) {

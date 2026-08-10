@@ -19,6 +19,7 @@ var ErrFastUnsupported = vm.ErrFastUnsupported
 
 func init() {
 	rootplush.RegisterVMRenderer(Render)
+	rootplush.RegisterTrustedVMCacheRenderer(RenderTrustedBytecodeCache)
 }
 
 func Compile(input string) (*Template, error) {
@@ -31,6 +32,12 @@ func Compile(input string) (*Template, error) {
 // interpreter-backed by default. This package is the opt-in compiled renderer.
 func Render(input string, ctx hctx.Context) (string, error) {
 	return vm.Render(input, ctx)
+}
+
+// RenderTrustedBytecodeCache executes cached top-level bytecode by filename
+// and reports a miss when source is required.
+func RenderTrustedBytecodeCache(filename string, ctx hctx.Context) (string, bool, error) {
+	return vm.RenderTrustedBytecodeCache(filename, ctx)
 }
 
 // RunScript executes a pure Plush script through the compiled VM path.

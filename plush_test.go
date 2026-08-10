@@ -45,10 +45,16 @@ func Test_Trusted_Partial_Bytecode_Cache_Setting_Inherits_To_Child_Contexts(t *t
 
 	plush.DisableTrustedPartialBytecodeCache(ctx)
 	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.Empty(t, plush.TrustedTopLevelBytecodeCacheFilename(ctx))
+
+	plush.EnableTrustedPartialBytecodeCache(ctx)
+	plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, "templates/page.plush")
+	require.Equal(t, "templates/page.plush", plush.TrustedTopLevelBytecodeCacheFilename(ctx))
 
 	plush.SetTrustedPartialBytecodeCache(nil, true)
 	plush.EnableTrustedPartialBytecodeCache(nil)
 	plush.DisableTrustedPartialBytecodeCache(nil)
+	plush.SetTrustedTopLevelBytecodeCacheFilename(nil, "templates/page.plush")
 }
 
 func Test_Render_HTML_Injected_String(t *testing.T) {

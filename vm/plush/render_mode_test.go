@@ -431,6 +431,114 @@ func Test_Root_Render_Mode_VM_Uses_Bytecode_Only_Cache(t *testing.T) {
 	require.Empty(t, entry.Input)
 }
 
+func Test_Buffalo_Renderer_From_Trusted_Bytecode_Cache(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+
+	const logicalFilename = "templates/page.plush"
+	const physicalFilename = "/templates/client-7/page.plush.html"
+	configure := func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+		rootplush.SetTrustedTopLevelBytecodeCacheFilename(ctx, physicalFilename)
+	}
+	helpers := map[string]interface{}{
+		"currentTemplate": func(help rootplush.HelperContext) string {
+			filename, _ := help.Value(meta.TemplateFileKey).(string)
+			return filename
+		},
+	}
+
+	firstData := map[string]interface{}{
+		meta.TemplateFileKey: logicalFilename,
+		"name":               "Mido",
+	}
+	first, err := rootplush.BuffaloRendererWithContext(`<%= currentTemplate() %>|<%= name %>`, firstData, helpers, configure)
+	require.NoError(t, err)
+	require.Equal(t, logicalFilename+"|Mido", first)
+	_, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache(physicalFilename, firstData, helpers, nil)
+	require.NoError(t, err)
+	require.False(t, hit)
+
+	secondData := map[string]interface{}{
+		meta.TemplateFileKey: logicalFilename,
+		"name":               "Leela",
+	}
+	second, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache(physicalFilename, secondData, helpers, func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+	})
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, logicalFilename+"|Leela", second)
+
+	cache.Delete(rootplush.GenerateASTKey(physicalFilename))
+	_, hit, err = rootplush.BuffaloRendererFromTrustedBytecodeCache(physicalFilename, secondData, helpers, func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+	})
+	require.NoError(t, err)
+	require.False(t, hit)
+}
+
+func Test_Buffalo_Renderer_From_Trusted_Bytecode_Cache_Stays_Off_In_Interpreter_Mode(t *testing.T) {
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeInterpreter)
+	defer rootplush.SetRenderMode(previousMode)
+
+	rendered, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache("templates/page.plush", map[string]interface{}{}, nil, func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+	})
+	require.NoError(t, err)
+	require.False(t, hit)
+	require.Empty(t, rendered)
+}
+
+func Test_Buffalo_Renderer_From_Trusted_Bytecode_Cache_Does_Not_Leak_Filename_Into_Holes(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	defer rootplush.SetRenderMode(previousMode)
+
+	const filename = "/templates/client-7/hole-page.plush.html"
+	configure := func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+		rootplush.SetTrustedTopLevelBytecodeCacheFilename(ctx, filename)
+	}
+
+	first, err := rootplush.BuffaloRendererWithContext(`A<%H name %>B`, map[string]interface{}{
+		meta.TemplateFileKey: "templates/hole-page.plush",
+		"name":               "Mido",
+	}, nil, configure)
+	require.NoError(t, err)
+	require.Equal(t, "AMidoB", first)
+
+	second, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache(filename, map[string]interface{}{
+		meta.TemplateFileKey: "templates/hole-page.plush",
+		"name":               "Leela",
+	}, nil, func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+	})
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "ALeelaB", second)
+
+	third, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache(filename, map[string]interface{}{
+		meta.TemplateFileKey: "templates/hole-page.plush",
+		"name":               "Fry",
+	}, nil, func(ctx *rootplush.Context) {
+		rootplush.EnableTrustedPartialBytecodeCache(ctx)
+	})
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "AFryB", third)
+
+	_, ok := cache.Get(rootplush.GenerateASTKey(filename))
+	require.True(t, ok)
+}
+
 func Test_Root_Render_Mode_VM_Bytecode_Cache_Invalidates_When_Source_Changes(t *testing.T) {
 	cache := inmemory.NewMemoryCache()
 	rootplush.PlushCacheSetup(cache)
