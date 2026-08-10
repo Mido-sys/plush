@@ -599,7 +599,7 @@ func Test_VM_Context_With_Frame_Locals(t *testing.T) {
 }
 
 func Benchmark_VM_Context_With_Frame_Locals_Partial_Overlay(b *testing.B) {
-	for _, localCount := range []int{4, 8, 9, 12, 16, 32} {
+	for _, localCount := range []int{4, 8, 9, 12, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("locals_%d", localCount), func(b *testing.B) {
 			root := plush.NewContext()
 			parent := newPartialOverlayContext(root)
