@@ -37,6 +37,8 @@ type FastWriter struct {
 	ctx hctx.Context
 }
 
+// FastArgs is valid only for the duration of its helper call. Helpers that need
+// an argument afterward must retain the value returned by Raw, not FastArgs.
 type FastArgs struct {
 	args *fastCallArgs
 }

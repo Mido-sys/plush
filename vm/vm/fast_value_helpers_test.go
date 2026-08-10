@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
@@ -34,6 +35,77 @@ type vmFastOutputStringer string
 
 func (s vmFastOutputStringer) String() string {
 	return "stringer:" + string(s)
+}
+
+var fastLoopCallValueBenchmarkSink interface{}
+
+func Benchmark_VM_Eval_Fast_Loop_Call_Value(b *testing.B) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"format": func(value string) string { return value },
+	})
+	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"format"}}, ctx)
+	call := &compiler.FastCallPlan{
+		Name:      "format",
+		NameIndex: 0,
+		Args: []compiler.FastValuePlan{
+			{Kind: compiler.FastValuePath, NameIndex: -1},
+		},
+	}
+
+	value, handled, err := evalFastLoopCallValuePlan(call, ctx, bindings, 0, "value")
+	require.NoError(b, err)
+	require.True(b, handled)
+	require.Equal(b, "value", value)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		value, handled, err = evalFastLoopCallValuePlan(call, ctx, bindings, i, "value")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !handled {
+			b.Fatal("fast loop call was not handled")
+		}
+	}
+	fastLoopCallValueBenchmarkSink = value
+}
+
+func Test_VM_Eval_Fast_Loop_Call_Value_Keeps_Nested_Args_Isolated(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"outer": func(string) string { return "fallback" },
+		"inner": func(string) string { return "inner" },
+	})
+	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"outer", "inner"}}, ctx)
+	innerCall := &compiler.FastCallPlan{
+		Name:      "inner",
+		NameIndex: 1,
+		Args:      []compiler.FastValuePlan{{Kind: compiler.FastValueString, Value: "nested"}},
+	}
+	SetFastValueHelper(ctx, "outer", func(_ hctx.Context, args FastArgs) (interface{}, error) {
+		before, ok := args.String(0)
+		require.True(t, ok)
+
+		value, handled, err := evalFastLoopCallValuePlan(innerCall, ctx, bindings, 0, "value")
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Equal(t, "inner", value)
+
+		after, ok := args.String(0)
+		require.True(t, ok)
+		require.Equal(t, before, after)
+		return after, nil
+	})
+
+	outerCall := &compiler.FastCallPlan{
+		Name:      "outer",
+		NameIndex: 0,
+		Args:      []compiler.FastValuePlan{{Kind: compiler.FastValueString, Value: "outer"}},
+	}
+	value, handled, err := evalFastLoopCallValuePlan(outerCall, ctx, bindings, 0, "value")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "outer", value)
 }
 
 type vmFastValueHiddenChild struct {

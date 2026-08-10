@@ -1205,12 +1205,13 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 		start = time.Now()
 	}
 	var scratch [1]reflect.Value
-	vm.lastHelperContext = nil
+	vm.discardLastHelperContext()
 	args, err := vm.reflectArgs(name, plan, numArgs, block, scratch[:0])
 	if err != nil {
+		vm.discardLastHelperContext()
 		return err
 	}
-	helperCtx := vm.lastHelperContext
+	helperCtx, helperCtxScope := vm.takeLastHelperContext()
 
 	res := rv.Call(args)
 	if name != "partial" && vmHotspots.Enabled() {
@@ -1221,8 +1222,8 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
 		}
 		vm.syncFrameBindingsFromContext(helperCtx)
-		vm.lastHelperContext = nil
 	}
+	helperCtxScope.release()
 	vm.sp = vm.sp - numArgs - 1
 
 	if len(res) == 0 {
@@ -1270,12 +1271,13 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 		start = time.Now()
 	}
 	var scratch [1]reflect.Value
-	vm.lastHelperContext = nil
+	vm.discardLastHelperContext()
 	args, err := vm.reflectArgs(name, plan, numArgs, nil, scratch[:0])
 	if err != nil {
+		vm.discardLastHelperContext()
 		return err
 	}
-	helperCtx := vm.lastHelperContext
+	helperCtx, helperCtxScope := vm.takeLastHelperContext()
 
 	res := rv.Call(args)
 	if name != "partial" && vmHotspots.Enabled() {
@@ -1286,8 +1288,8 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
 		}
 		vm.syncFrameBindingsFromContext(helperCtx)
-		vm.lastHelperContext = nil
 	}
+	helperCtxScope.release()
 	vm.sp = vm.sp - numArgs
 	if calleeOnStack {
 		vm.sp--

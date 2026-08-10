@@ -76,11 +76,12 @@ func (vm *VM) tryWriteLiteralPartialNameCall(name string, raw interface{}, numAr
 	}
 	oldSP := vm.sp
 	vm.sp -= numArgs
-	callCtx := vm.contextWithFrameLocals()
+	callCtx, callCtxScope := vm.scopedContextWithFrameLocals()
 	handled, err := renderFastNoDataPartialIntoWithDiagnostics(&frame.output, arg.Value, callCtx, vm.currentLineNumber(), vm.renderVMHotspots())
 	if handled || err != nil {
 		vm.syncFrameBindingsFromContext(callCtx)
 	}
+	callCtxScope.release()
 	if err != nil {
 		return true, err
 	}

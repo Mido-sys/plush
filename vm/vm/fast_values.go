@@ -310,12 +310,19 @@ func evalFastLoopCallValuePlan(call *compiler.FastCallPlan, ctx hctx.Context, bi
 	if err := spendFastFunctionCall(ctx, call.Name, call.Line); err != nil {
 		return nil, true, err
 	}
-	var argStore fastCallArgs
-	args, err := evalFastLoopCallArgsInto(call.Args, ctx, bindings, loopKey, loopValue, &argStore)
-	if err != nil {
-		return nil, true, err
+	var args *fastCallArgs
+	var argStore *fastCallArgs
+	if len(call.Args) > 0 {
+		argStore = borrowFastCallArgs()
+		var err error
+		args, err = evalFastLoopCallArgsInto(call.Args, ctx, bindings, loopKey, loopValue, argStore)
+		if err != nil {
+			releaseFastCallArgs(argStore)
+			return nil, true, err
+		}
 	}
 	result, err := fastCallValueWithDiagnostics(call.Name, raw, args, ctx, &call.Cache, bindings.vmHotspots)
+	releaseFastCallArgs(argStore)
 	if err != nil {
 		return nil, true, fastLineError(call.Line, err)
 	}

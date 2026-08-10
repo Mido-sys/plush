@@ -268,7 +268,11 @@ func clearObjectSlice(objects []object.Object) {
 }
 
 func (vm *VM) Release() {
-	if vm == nil || !vm.pooled {
+	if vm == nil {
+		return
+	}
+	vm.discardLastHelperContext()
+	if !vm.pooled {
 		return
 	}
 	if vm.frames != nil {

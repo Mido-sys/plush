@@ -598,6 +598,44 @@ func Test_VM_Context_With_Frame_Locals(t *testing.T) {
 	require.Same(t, base, machine.contextWithFrameLocals())
 }
 
+func Test_VM_Scoped_Context_With_Frame_Locals_Releases_Overlay(t *testing.T) {
+	root := plush.NewContextWith(map[string]interface{}{"outer": "value"})
+	parent := newPartialOverlayContext(root)
+	machine := newRuntimeHelperTestVM(parent)
+	frame := machine.currentFrame()
+	frame.cl.Fn.LocalNames = map[int]string{0: "local"}
+	machine.stack[0] = &object.String{Value: "local-value"}
+	parent.InternID("local")
+
+	scoped, scope := machine.scopedContextWithFrameLocals()
+	child, ok := scoped.(*partialOverlayContext)
+	require.True(t, ok)
+	require.Same(t, child, scope.child)
+	require.Equal(t, "local-value", child.Value("local"))
+	require.Equal(t, "value", child.Value("outer"))
+
+	scope.release()
+	require.Nil(t, scope.child)
+	require.Nil(t, child.parent)
+	require.Zero(t, child.count)
+	require.Empty(t, child.overflow)
+}
+
+func Test_VM_Scoped_Context_With_Frame_Locals_Preserves_Custom_Context_New(t *testing.T) {
+	base := plush.NewContextWith(map[string]interface{}{"outer": "value"})
+	custom := &trackingNewContext{Context: base}
+	machine := newRuntimeHelperTestVM(custom)
+	frame := machine.currentFrame()
+	frame.cl.Fn.LocalNames = map[int]string{0: "local"}
+	machine.stack[0] = &object.String{Value: "local-value"}
+
+	scoped, scope := machine.scopedContextWithFrameLocals()
+	require.Equal(t, 1, custom.newCalls)
+	require.Nil(t, scope.child)
+	require.Equal(t, "local-value", scoped.Value("local"))
+	require.Equal(t, "value", scoped.Value("outer"))
+}
+
 func Benchmark_VM_Context_With_Frame_Locals_Partial_Overlay(b *testing.B) {
 	for _, localCount := range []int{4, 8, 9, 12, 16, 32, 64, 128} {
 		b.Run(fmt.Sprintf("locals_%d", localCount), func(b *testing.B) {
@@ -617,6 +655,34 @@ func Benchmark_VM_Context_With_Frame_Locals_Partial_Overlay(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				benchmarkFrameLocalsContextSink = machine.contextWithFrameLocals()
+			}
+		})
+	}
+}
+
+func Benchmark_VM_Scoped_Context_With_Frame_Locals_Partial_Overlay(b *testing.B) {
+	for _, localCount := range []int{4, 8, 9, 12, 16, 32, 64, 128} {
+		b.Run(fmt.Sprintf("locals_%d", localCount), func(b *testing.B) {
+			root := plush.NewContext()
+			parent := newPartialOverlayContext(root)
+			machine := newRuntimeHelperTestVM(parent)
+			frame := machine.currentFrame()
+			frame.cl.Fn.LocalNames = make(map[int]string, localCount)
+			for index := 0; index < localCount; index++ {
+				name := fmt.Sprintf("local%d", index)
+				frame.cl.Fn.LocalNames[index] = name
+				machine.stack[index] = &object.String{Value: name + "-value"}
+				parent.InternID(name)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				scoped, scope := machine.scopedContextWithFrameLocals()
+				if scoped == nil {
+					b.Fatal("expected scoped context")
+				}
+				scope.release()
 			}
 		})
 	}
