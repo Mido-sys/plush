@@ -31,6 +31,7 @@ var PunchHoleCacheLifetime = 1 * time.Minute
 var cacheEnabled bool
 var holeTemplateFileKey = "__plush_internal_hole_render_key_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var interpreterPartialRenderKey = "__plush_internal_interpreter_partial_render_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var trustedPartialBytecodeCacheKey = "__plush_internal_trusted_partial_bytecode_cache_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var errClearCache error = errors.New("template recently cached, skipping")
 var punchHoleConcurrencyLimit atomic.Int64
 var buffaloRenderPassCounter atomic.Uint64

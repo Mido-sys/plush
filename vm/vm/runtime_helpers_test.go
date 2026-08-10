@@ -988,6 +988,38 @@ func Test_VM_Partial_Setup_And_Helper_Rendering(t *testing.T) {
 	require.Error(t, err)
 }
 
+func Test_VM_Partial_Helper_Uses_Trusted_Bytecode_Before_Feeder(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	feederCalls := 0
+	render := func(name string) template.HTML {
+		ctx := plush.NewContextWith(map[string]interface{}{
+			vmPartialFeederName: func(partialName string) (string, error) {
+				require.Equal(t, "helper-row.plush", partialName)
+				feederCalls++
+				return `<span><%= name %></span>`, nil
+			},
+		})
+		plush.EnableTrustedPartialBytecodeCache(ctx)
+		rendered, err := vmPartialHelper(
+			"helper-row.plush",
+			map[string]interface{}{"name": name},
+			plush.NewHelperContext(ctx, nil),
+		)
+		require.NoError(t, err)
+		return rendered
+	}
+
+	require.Equal(t, template.HTML(`<span>Mido</span>`), render("Mido"))
+	require.Equal(t, template.HTML(`<span>Leela</span>`), render("Leela"))
+	require.Equal(t, 1, feederCalls)
+}
+
 func Test_VM_Render_Fast_Partial_Segment(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{
 		"name": "Mido",

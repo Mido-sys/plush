@@ -26,6 +26,29 @@ func ClearTemplateCache() {
 	}
 }
 
+func EnableTrustedPartialBytecodeCache(ctx hctx.Context) {
+	SetTrustedPartialBytecodeCache(ctx, true)
+}
+
+func DisableTrustedPartialBytecodeCache(ctx hctx.Context) {
+	SetTrustedPartialBytecodeCache(ctx, false)
+}
+
+func SetTrustedPartialBytecodeCache(ctx hctx.Context, enabled bool) {
+	if ctx == nil {
+		return
+	}
+	ctx.Set(trustedPartialBytecodeCacheKey, enabled)
+}
+
+func TrustedPartialBytecodeCacheEnabled(ctx hctx.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(trustedPartialBytecodeCacheKey).(bool)
+	return enabled
+}
+
 func CachedVMBytecode(filename string, ctx hctx.Context) (interface{}, bool) {
 	if filename == "" || !cacheEnabled || templateCacheBackend == nil || !isVMBytecodeCacheableFile(filename) || isHole(ctx) {
 		return nil, false

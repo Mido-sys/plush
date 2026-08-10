@@ -612,6 +612,65 @@ func BenchmarkRenderCachedFilename(b *testing.B) {
 	}
 }
 
+func BenchmarkVMTrustedPartialBytecodeCache(b *testing.B) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	b.Cleanup(func() {
+		rootplush.ClearTemplateCache()
+		rootplush.PlushCacheSetup(nil)
+	})
+
+	const partialName = "bench-product-card.plush"
+	const partialSource = `<span><%= product %></span>`
+	products := []string{
+		"one", "two", "three", "four", "five", "six", "seven", "eight",
+		"nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+	}
+	tmpl, err := Compile(`<%= for (_, product) in products { %><%= partial("` + partialName + `") %><% } %>`)
+	if err != nil {
+		b.Fatal(err)
+	}
+	newContext := func(trusted bool) hctx.Context {
+		ctx := rootplush.NewContextWith(map[string]interface{}{
+			"products": products,
+			"partialFeeder": func(name string) (string, error) {
+				if name != partialName {
+					return "", fmt.Errorf("unexpected partial %q", name)
+				}
+				return partialSource, nil
+			},
+		})
+		if trusted {
+			rootplush.EnableTrustedPartialBytecodeCache(ctx)
+		}
+		return ctx
+	}
+
+	if _, err := tmpl.Render(newContext(false)); err != nil {
+		b.Fatal(err)
+	}
+
+	for _, scenario := range []struct {
+		name    string
+		trusted bool
+	}{
+		{name: "source_validated", trusted: false},
+		{name: "trusted_bytecode", trusted: true},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				out, err := tmpl.Render(newContext(scenario.trusted))
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkSink = out
+			}
+		})
+	}
+}
+
 func BenchmarkRenderSourceBytecodeCache(b *testing.B) {
 	scenarios := []benchmarkScenario{
 		{

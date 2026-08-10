@@ -1236,16 +1236,25 @@ func cachedPartialBytecodeLinkForFilename(filename string, ctx hctx.Context) (*p
 	if link, ok := links.GetLink(key, 0); ok {
 		return link, true
 	}
-	return nil, false
+	if !plush.TrustedPartialBytecodeCacheEnabled(ctx) {
+		return nil, false
+	}
+	cached, ok := plush.CachedVMBytecodeForCleanFilename(filename)
+	if !ok {
+		return nil, false
+	}
+	bytecode, ok := cached.(*compiler.Bytecode)
+	if !ok || bytecode == nil {
+		return nil, false
+	}
+	return links.Set(key, 0, bytecode), true
 }
 
 func directPartialBytecodeLinkForName(name string, filename string, ctx hctx.Context) (*partialBytecodeLink, bool, error) {
 	if filename == "" {
 		return nil, false, nil
 	}
-	links := partialBytecodeLinks(ctx)
-	linkKey := partialBytecodeLinkKey(filename, "", 0)
-	if link, ok := links.GetLink(linkKey, 0); ok {
+	if link, ok := cachedPartialBytecodeLinkForFilename(filename, ctx); ok {
 		if directPartialBytecodeLinkCanRender(link.bytecode) {
 			return link, true, nil
 		}
@@ -1677,16 +1686,6 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 	}
 	childFile := plush.TemplateFilenameForError(help.Context)
 
-	pf, ok := links.partialFeeder(help.Context)
-	if !ok {
-		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
-	}
-
-	part, err := pf(name)
-	if err != nil {
-		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
-	}
-
 	if help.Value(vmAlreadyInPartial) == nil {
 		help.Set(vmAlreadyInPartial, name)
 		defer help.Set(vmAlreadyInPartial, nil)
@@ -1702,15 +1701,35 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 		}()
 	}
 
+	needsJSEscape := partialNeedsJSEscape(help.Context, name)
+	var cachedOut strings.Builder
+	if renderedCached, err := renderCachedPartialBytecodeInto(&cachedOut, help.Context, name, needsJSEscape); renderedCached || err != nil {
+		if err != nil {
+			return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
+		}
+		part := cachedOut.String()
+		if layout, ok := data["layout"].(string); ok {
+			return vmPartialHelper(layout, map[string]interface{}{"yield": template.HTML(part)}, help)
+		}
+		return template.HTML(part), nil
+	}
+
+	pf, ok := links.partialFeeder(help.Context)
+	if !ok {
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
+	}
+
+	part, err := pf(name)
+	if err != nil {
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
+	}
+
 	part, err = renderLinkedPartial(part, help.Context)
 	if err != nil {
 		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
-	if ct, ok := help.Value("contentType").(string); ok {
-		ext := filepath.Ext(name)
-		if strings.Contains(ct, "javascript") && ext != ".js" && ext != "" {
-			part = template.JSEscapeString(part)
-		}
+	if needsJSEscape {
+		part = template.JSEscapeString(part)
 	}
 
 	if layout, ok := data["layout"].(string); ok {

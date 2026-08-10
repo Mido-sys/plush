@@ -4019,7 +4019,53 @@ func Test_VM_Partial_Bytecode_Links_Reuse_Within_Render(t *testing.T) {
 	require.Equal(t, 1, links.Len())
 }
 
+func Test_VM_Trusted_Partial_Bytecode_Cache_Bypasses_Feeder_Across_Renders(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	const filename = "trusted-row.plush"
+	source := `<span><%= name %></span>`
+	feederCalls := 0
+	tmpl, err := Compile(`<%= partial("` + filename + `") %>`)
+	require.NoError(t, err)
+
+	render := func(name string) string {
+		ctx := plush.NewContextWith(map[string]interface{}{
+			"name": name,
+			"partialFeeder": func(got string) (string, error) {
+				require.Equal(t, filename, got)
+				feederCalls++
+				return source, nil
+			},
+		})
+		plush.EnableTrustedPartialBytecodeCache(ctx)
+		out, renderErr := tmpl.Render(ctx)
+		require.NoError(t, renderErr)
+		return out
+	}
+
+	require.Equal(t, "<span>Mido</span>", render("Mido"))
+	require.Equal(t, "<span>Leela</span>", render("Leela"))
+	require.Equal(t, 1, feederCalls)
+
+	cache.Delete(plush.GenerateASTKey(filename))
+	source = `<strong><%= name %></strong>`
+	require.Equal(t, "<strong>Fry</strong>", render("Fry"))
+	require.Equal(t, 2, feederCalls)
+}
+
 func Test_VM_Partial_Bytecode_Links_Do_Not_Stale_Dynamic_Feeder_Source(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
 	parts := []string{`<%= "a" %>`, `<%= "b" %>`}
 	calls := 0
 	ctx := plush.NewContextWith(map[string]interface{}{

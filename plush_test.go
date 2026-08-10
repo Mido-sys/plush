@@ -34,6 +34,23 @@ func Test_Render_Keeps_Spacing(t *testing.T) {
 	r.Equal("hi mark", s)
 }
 
+func Test_Trusted_Partial_Bytecode_Cache_Setting_Inherits_To_Child_Contexts(t *testing.T) {
+	ctx := plush.NewContext()
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(nil))
+
+	plush.EnableTrustedPartialBytecodeCache(ctx)
+	require.True(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.True(t, plush.TrustedPartialBytecodeCacheEnabled(ctx.New()))
+
+	plush.DisableTrustedPartialBytecodeCache(ctx)
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+
+	plush.SetTrustedPartialBytecodeCache(nil, true)
+	plush.EnableTrustedPartialBytecodeCache(nil)
+	plush.DisableTrustedPartialBytecodeCache(nil)
+}
+
 func Test_Render_HTML_Injected_String(t *testing.T) {
 	r := require.New(t)
 
