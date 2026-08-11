@@ -24,6 +24,9 @@ type valueFastInvoker func(name string, raw interface{}, args *fastCallArgs) (in
 type contextualValueFastInvoker func(name string, raw interface{}, args *fastCallArgs, ctx hctx.Context) (interface{}, error)
 type fastStructLoopDirectCallWriter func(out *strings.Builder, ctx hctx.Context, bindings fastRenderBindings, plan *fastStructLoopCallPlan, loopKey interface{}, item reflect.Value) (bool, error)
 type FastHelperFunc func(FastWriter, FastArgs) error
+
+// FastValueHelperFunc receives a context that is valid only for the duration
+// of the helper call. Helpers must not retain the context after returning.
 type FastValueHelperFunc func(hctx.Context, FastArgs) (interface{}, error)
 
 type fastHelperRegistry struct {
