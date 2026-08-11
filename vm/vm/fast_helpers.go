@@ -89,7 +89,13 @@ func fastHelperRegistryForContext(ctx hctx.Context, create bool) *fastHelperRegi
 	if ctx == nil {
 		return nil
 	}
-	if registry, ok := ctx.Value(vmFastHelpersKey).(*fastHelperRegistry); ok && registry != nil {
+	var value interface{}
+	if lookup, ok := ctx.(contextLookup); ok {
+		value, _ = lookup.Lookup(vmFastHelpersKey)
+	} else {
+		value = ctx.Value(vmFastHelpersKey)
+	}
+	if registry, ok := value.(*fastHelperRegistry); ok && registry != nil {
 		return registry
 	}
 	if !create {
