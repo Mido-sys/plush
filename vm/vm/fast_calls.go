@@ -169,7 +169,7 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 		return rendered, err
 	})
 	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
-		return fastLineError(call.Line, err)
+		return fastBlockCallLineError(call.Line, err)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings
 		return rendered, err
 	})
 	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
-		return fastLineError(call.Line, err)
+		return fastBlockCallLineError(call.Line, err)
 	}
 	return nil
 }

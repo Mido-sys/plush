@@ -18,23 +18,26 @@ type partialFormDocument struct {
 }
 
 type partialFormRow struct {
-	ID   string
-	Icon string
-	Name string
-	Tags []string
-	Rank int
-	Mode string
+	ID      string
+	Icon    string
+	Name    string
+	Tags    []string
+	Rank    int
+	Mode    string
+	Enabled bool
 }
 
 const partialFormDocumentSource = `<%= if (document) { %>
-<%= form({action: documentPath(), method: "POST", class: "document"}) { %>
 <%= for (line, row) in document.Rows { %>
 <%= if (row.Icon) { %><%= iconTag(row.Icon) %><% } else { %>no icon<% } %>
 <a href="<%= rowPath({id: row.ID}) %>"><%= row.Name %></a>
 <%= if (row.Tags) { %><%= for (line, tag) in row.Tags { %><%= tag %><% } %><% } %>
+<%= if (row.Enabled) { %>
+<%= form({action: documentPath(), method: "POST", class: "document"}) { %>
 <%= f.InputTag({name:"Rows["+line+"].Rank", value:row.Rank, type:"hidden"}) %>
 <%= f.InputTag({name:"Rows["+line+"].ID", value:row.ID, type:"hidden"}) %>
 <%= f.InputTag({name:"Rows["+line+"].Mode", value:row.Mode, type:"hidden"}) %>
+<% } %>
 <% } %>
 <% } %>
 <% } else { %>empty<% } %>`
@@ -42,8 +45,8 @@ const partialFormDocumentSource = `<%= if (document) { %>
 func newPartialFormDocumentContext(partialName, source, formName string) *plush.Context {
 	values := map[string]interface{}{
 		"document": &partialFormDocument{Rows: []partialFormRow{
-			{ID: "first", Icon: "/first.png", Name: "First", Tags: []string{"Alpha", "Beta"}, Rank: 1, Mode: "first-mode"},
-			{ID: "second", Name: "Second", Tags: []string{"Gamma"}, Rank: 2, Mode: "second-mode"},
+			{ID: "first", Icon: "/first.png", Name: "First", Tags: []string{"Alpha", "Beta"}, Rank: 1, Mode: "first-mode", Enabled: true},
+			{ID: "second", Name: "Second", Tags: []string{"Gamma"}, Rank: 2, Mode: "second-mode", Enabled: true},
 		}},
 		"documentPath": func() string { return "/document" },
 		"rowPath": func(data map[string]interface{}) string {
@@ -200,6 +203,43 @@ func Test_VM_Form_Partial_With_Nested_Loops_Does_Not_Use_Compatibility_Fallback(
 	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
 	require.Zero(t, diagnostics.PartialFallbacks.Calls)
+}
+
+func Test_VM_Form_Partial_Error_Uses_Inner_Block_Line(t *testing.T) {
+	const source = `<%= for (_, row) in rows { %>
+<%= if (row.Enabled) { %>
+<%= form({}) { %>
+<%= missing(row.Name) %>
+<% } %>
+<% } %>
+<% } %>`
+	type row struct {
+		Name    string
+		Enabled bool
+	}
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"rows": []row{{Name: "First", Enabled: true}},
+		"form": func(_ tags.Options, help hctx.HelperContext) (template.HTML, error) {
+			body, err := help.Block()
+			return template.HTML(body), err
+		},
+		"partialFeeder": func(name string) (string, error) {
+			if name != "document-error.plush" {
+				return "", fmt.Errorf("unexpected partial %q", name)
+			}
+			return source, nil
+		},
+	})
+	tmpl, err := Compile(`<%= partial("document-error.plush") %>`)
+	require.NoError(t, err)
+	_, err = tmpl.Render(ctx)
+	require.Error(t, err)
+
+	var trace *plush.TemplateTraceError
+	require.ErrorAs(t, err, &trace)
+	require.NotEmpty(t, trace.Frames)
+	require.Equal(t, 4, trace.Frames[len(trace.Frames)-1].Line)
+	require.Contains(t, err.Error(), `document-error.plush:4: could not call form function`)
 }
 
 func Test_VM_Form_Partial_With_Generic_Block_Retains_Compatibility_Fallback(t *testing.T) {
