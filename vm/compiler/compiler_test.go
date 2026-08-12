@@ -487,28 +487,28 @@ func Test_Compiler_Fast_Value_And_Partial_Data_Helper_Edges(t *testing.T) {
 
 func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	plan := &FastRenderPlan{}
-	loop := &FastLoopPlan{KeyName: "i", ValueName: "product"}
+	loop := &FastLoopPlan{KeyName: "i", ValueName: "record"}
 
-	_, ok := fastValuePlanFromLoopOperand(plan, nil, &ast.Identifier{Value: "product"}, false, 1)
+	_, ok := fastValuePlanFromLoopOperand(plan, nil, &ast.Identifier{Value: "record"}, false, 1)
 	require.False(t, ok)
 
 	_, ok = fastValuePlanFromLoopInfix(plan, loop, nil, 1)
 	require.False(t, ok)
 
-	value, ok := fastValuePlanFromLoopInfix(plan, loop, parseCompilerExpression(t, `product.Name + "x"`).(*ast.InfixExpression), 1)
+	value, ok := fastValuePlanFromLoopInfix(plan, loop, parseCompilerExpression(t, `record.Name + "x"`).(*ast.InfixExpression), 1)
 	require.True(t, ok)
 	require.Equal(t, FastValueConcat, value.Kind)
 
 	_, ok = fastValuePlanFromLoopInfix(plan, loop, parseCompilerExpression(t, `i.Name == "x"`).(*ast.InfixExpression), 1)
 	require.False(t, ok)
 
-	value, ok = fastValuePlanFromLoopInfix(plan, loop, parseCompilerExpression(t, `product.Name == "x"`).(*ast.InfixExpression), 1)
+	value, ok = fastValuePlanFromLoopInfix(plan, loop, parseCompilerExpression(t, `record.Name == "x"`).(*ast.InfixExpression), 1)
 	require.True(t, ok)
 	require.Equal(t, FastValueInfix, value.Kind)
 
-	root, ok := fastLoopExpressionRootName(parseCompilerExpression(t, `product.Tags[0]`))
+	root, ok := fastLoopExpressionRootName(parseCompilerExpression(t, `record.Tags[0]`))
 	require.True(t, ok)
-	require.Equal(t, "product", root)
+	require.Equal(t, "record", root)
 
 	_, ok = fastLoopExpressionRootName(&ast.StringLiteral{Value: "nope"})
 	require.False(t, ok)
@@ -516,7 +516,7 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	require.False(t, isFastLoopKeyIdentifier(loop, parseCompilerExpression(t, `i.Name`)))
 	require.True(t, isFastLoopKeyIdentifier(loop, &ast.Identifier{Value: "i"}))
 
-	_, ok = fastValuePlanFromLoopIndex(loop, &ast.Identifier{Value: "product"}, 1)
+	_, ok = fastValuePlanFromLoopIndex(loop, &ast.Identifier{Value: "record"}, 1)
 	require.False(t, ok)
 
 	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `other[0]`), 1)
@@ -528,7 +528,7 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, FastValueIndex, value.Kind)
 
-	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `product.Tags[0].Name`), 1)
+	value, ok = fastValuePlanFromLoopIndex(loop, parseCompilerExpression(t, `record.Tags[0].Name`), 1)
 	require.True(t, ok)
 	require.Equal(t, FastValuePath, value.Kind)
 	require.Equal(t, []FastPathStepKind{FastPathStepProperty, FastPathStepIndexInteger, FastPathStepProperty}, []FastPathStepKind{
@@ -552,7 +552,7 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 	}, 1)
 	require.False(t, ok)
 
-	value, ok = fastValuePlanFromLoopCall(loop, parseCompilerExpression(t, `product.Name.Echo()`).(*ast.CallExpression), 1)
+	value, ok = fastValuePlanFromLoopCall(loop, parseCompilerExpression(t, `record.Name.Echo()`).(*ast.CallExpression), 1)
 	require.True(t, ok)
 	require.Equal(t, FastPathStepCall, value.Path[len(value.Path)-1].Kind)
 
@@ -573,7 +573,7 @@ func Test_Compiler_Fast_Loop_Value_Helper_Edges(t *testing.T) {
 
 func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 	plan := &FastRenderPlan{}
-	loop := &FastLoopPlan{KeyName: "i", ValueName: "product"}
+	loop := &FastLoopPlan{KeyName: "i", ValueName: "record"}
 
 	_, ok := fastLoopPlanFromExpression(plan, nil, 1)
 	require.False(t, ok)
@@ -582,7 +582,7 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 	require.False(t, ok)
 
 	_, ok = fastLoopPlanFromExpression(plan, &ast.ForExpression{
-		Iterable: &ast.StringLiteral{Value: "products"},
+		Iterable: &ast.StringLiteral{Value: "records"},
 		Block:    &ast.BlockStatement{},
 	}, 1)
 	require.False(t, ok)
@@ -595,15 +595,15 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 
 	fastLoop, ok := fastLoopPlanFromExpression(plan, &ast.ForExpression{
 		KeyName:   "i",
-		ValueName: "product",
-		Iterable:  &ast.Identifier{Value: "products"},
+		ValueName: "record",
+		Iterable:  &ast.Identifier{Value: "records"},
 		Block: &ast.BlockStatement{Statements: []ast.Statement{
 			&ast.ExpressionStatement{Expression: &ast.HTMLLiteral{Value: "<li>"}},
-			&ast.ReturnStatement{Type: token.E_START, ReturnValue: &ast.Identifier{Value: "product"}},
+			&ast.ReturnStatement{Type: token.E_START, ReturnValue: &ast.Identifier{Value: "record"}},
 		}},
 	}, 7)
 	require.True(t, ok)
-	require.Equal(t, "products", fastLoop.IterableName)
+	require.Equal(t, "records", fastLoop.IterableName)
 	require.Equal(t, []FastLoopPartKind{FastLoopPartStatic, FastLoopPartValue}, []FastLoopPartKind{
 		fastLoop.Parts[0].Kind,
 		fastLoop.Parts[1].Kind,
@@ -631,23 +631,23 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 	require.Equal(t, FastLoopPartKey, parts[0].Kind)
 
 	parts = nil
-	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, &ast.Identifier{Value: "product"}, 2))
+	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, &ast.Identifier{Value: "record"}, 2))
 	require.Equal(t, FastLoopPartValue, parts[0].Kind)
 
 	parts = nil
-	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `product.Name`), 2))
+	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `record.Name`), 2))
 	require.Equal(t, FastLoopPartValueProperty, parts[0].Kind)
 
 	parts = nil
-	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `product.Profile.Name`), 2))
+	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `record.Profile.Name`), 2))
 	require.Equal(t, FastLoopPartValuePath, parts[0].Kind)
 
 	parts = nil
-	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `product.Name.Echo()`), 2))
+	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `record.Name.Echo()`), 2))
 	require.Equal(t, FastLoopPartValuePath, parts[0].Kind)
 
 	parts = nil
-	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `label(product.Name, i)`), 2))
+	require.True(t, appendFastLoopOutputParts(plan, loop, &parts, parseCompilerExpression(t, `label(record.Name, i)`), 2))
 	require.Equal(t, FastLoopPartCall, parts[0].Kind)
 
 	parts = nil
@@ -727,9 +727,9 @@ func Test_Compiler_Fast_Loop_And_Conditional_Plan_Edges(t *testing.T) {
 	require.False(t, ok)
 
 	loopConditional, ok := fastLoopConditionalPlanFromExpression(plan, loop, &ast.IfExpression{
-		Condition: &ast.Identifier{Value: "product"},
+		Condition: &ast.Identifier{Value: "record"},
 		Block: &ast.BlockStatement{Statements: []ast.Statement{
-			&ast.ReturnStatement{Type: token.E_START, ReturnValue: &ast.Identifier{Value: "product"}},
+			&ast.ReturnStatement{Type: token.E_START, ReturnValue: &ast.Identifier{Value: "record"}},
 		}},
 		ElseIf: []*ast.ElseIfExpression{{
 			Condition: &ast.Identifier{Value: "i"},
@@ -1795,7 +1795,7 @@ func Test_Fast_Render_Plan_Includes_Property_Access(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Simple_Loops(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= i %>:<%= product.Name %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= i %>:<%= record.Name %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1803,24 +1803,24 @@ func Test_Fast_Render_Plan_Includes_Simple_Loops(t *testing.T) {
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records"}, bytecode.FastRenderPlan.Bindings)
 	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
-	require.Equal(t, "products", segment.Loop.IterableName)
+	require.Equal(t, "records", segment.Loop.IterableName)
 	require.Equal(t, "i", segment.Loop.KeyName)
-	require.Equal(t, "product", segment.Loop.ValueName)
+	require.Equal(t, "record", segment.Loop.ValueName)
 	require.Equal(t, []FastLoopPart{
 		{Kind: FastLoopPartKey, Line: 1},
 		{Kind: FastLoopPartStatic, Value: ":"},
-		{Kind: FastLoopPartValueProperty, Value: "Name", Receiver: "product", Full: "product.Name", Line: 1},
+		{Kind: FastLoopPartValueProperty, Value: "Name", Receiver: "record", Full: "record.Name", Line: 1},
 		{Kind: FastLoopPartStatic, Value: ";"},
 	}, segment.Loop.Parts)
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Indexed_Value_Paths(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= product.Friends[0].Name %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= record.Friends[0].Name %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1836,7 +1836,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Indexed_Value_Paths(t *testing.T) {
 	part := segment.Loop.Parts[0]
 	require.Equal(t, FastLoopPartValuePath, part.Kind)
 	require.Equal(t, FastValuePath, part.ValuePlan.Kind)
-	require.Equal(t, "product", part.ValuePlan.Value)
+	require.Equal(t, "record", part.ValuePlan.Value)
 	require.Len(t, part.ValuePlan.Path, 3)
 	require.Equal(t, FastPathStepProperty, part.ValuePlan.Path[0].Kind)
 	require.Equal(t, "Friends", part.ValuePlan.Path[0].Value)
@@ -1849,7 +1849,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Indexed_Value_Paths(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_String_Indexed_Value_Paths(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= product.Meta["label"] %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= record.Meta["label"] %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1872,7 +1872,7 @@ func Test_Fast_Render_Plan_Includes_Loop_String_Indexed_Value_Paths(t *testing.T
 }
 
 func Test_Fast_Render_Plan_Includes_Top_Level_Context_Paths_Inside_Loops(t *testing.T) {
-	program, err := parser.Parse(`<%= for (_, product) in products { %><%= category.CategorySeoTitle %>/<%= product.ProductSeoUrl %><% } %>`)
+	program, err := parser.Parse(`<%= for (_, record) in records { %><%= category.CategorySeoTitle %>/<%= record.RecordSeoUrl %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1881,7 +1881,7 @@ func Test_Fast_Render_Plan_Includes_Top_Level_Context_Paths_Inside_Loops(t *test
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
 	require.Empty(t, bytecode.FastReject)
-	require.Equal(t, []string{"products", "category"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "category"}, bytecode.FastRenderPlan.Bindings)
 
 	loop := bytecode.FastRenderPlan.Segments[0].Loop
 	require.NotNil(t, loop)
@@ -1893,7 +1893,7 @@ func Test_Fast_Render_Plan_Includes_Top_Level_Context_Paths_Inside_Loops(t *test
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Method_Call_Value_Paths(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= product.Name.Echo() %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= record.Name.Echo() %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1919,7 +1919,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Method_Call_Value_Paths(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Literal_Outputs(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= "x<y>" %><%= 3 %><%= 1.5 %><%= true %><% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= "x<y>" %><%= 3 %><%= 1.5 %><%= true %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1936,7 +1936,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Literal_Outputs(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1944,7 +1944,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls(t *testing.T) {
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products", "label", "prefix"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "label", "prefix"}, bytecode.FastRenderPlan.Bindings)
 	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
@@ -1958,13 +1958,13 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls(t *testing.T) {
 	require.Equal(t, 1, part.Call.NameIndex)
 	require.Len(t, part.Call.Args, 2)
 
-	productArg := part.Call.Args[0]
-	require.Equal(t, FastValuePath, productArg.Kind)
-	require.Equal(t, "product", productArg.Value)
-	require.Equal(t, -1, productArg.NameIndex)
-	require.Len(t, productArg.Path, 1)
-	require.Equal(t, FastPathStepProperty, productArg.Path[0].Kind)
-	require.Equal(t, "Name", productArg.Path[0].Value)
+	recordArg := part.Call.Args[0]
+	require.Equal(t, FastValuePath, recordArg.Kind)
+	require.Equal(t, "record", recordArg.Value)
+	require.Equal(t, -1, recordArg.NameIndex)
+	require.Len(t, recordArg.Path, 1)
+	require.Equal(t, FastPathStepProperty, recordArg.Path[0].Kind)
+	require.Equal(t, "Name", recordArg.Path[0].Value)
 
 	prefixArg := part.Call.Args[1]
 	require.Equal(t, FastValueName, prefixArg.Kind)
@@ -1975,7 +1975,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Helper_Call_Method_Arguments(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= label(product.Name.Echo(), prefix) %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= label(record.Name.Echo(), prefix) %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -1983,7 +1983,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Call_Method_Arguments(t *testing
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products", "label", "prefix"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "label", "prefix"}, bytecode.FastRenderPlan.Bindings)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
@@ -2002,7 +2002,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Call_Method_Arguments(t *testing
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Conditionals(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= if product.Enabled { %><%= product.Name %><% } else if fallback { %>fallback<% } else { %>hidden<% } %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= if record.Enabled { %><%= record.Name %><% } else if fallback { %>fallback<% } else { %>hidden<% } %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2010,7 +2010,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Conditionals(t *testing.T) {
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products", "fallback"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "fallback"}, bytecode.FastRenderPlan.Bindings)
 	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
@@ -2024,7 +2024,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Conditionals(t *testing.T) {
 
 	first := part.Conditional.Branches[0]
 	require.Equal(t, FastValuePath, first.Condition.Kind)
-	require.Equal(t, "product", first.Condition.Value)
+	require.Equal(t, "record", first.Condition.Value)
 	require.Equal(t, -1, first.Condition.NameIndex)
 	require.Len(t, first.Condition.Path, 1)
 	require.Equal(t, "Enabled", first.Condition.Path[0].Value)
@@ -2048,7 +2048,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Conditionals(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Break_And_Continue(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= if product.Stop { %><%= break %><% } %><%= if product.Skip { %><%= continue %><% } %><%= product.Name %><% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= if record.Stop { %><%= break %><% } %><%= if record.Skip { %><%= continue %><% } %><%= record.Name %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2072,7 +2072,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Break_And_Continue(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Script_Loop_Control(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { break } %><%= for (i, product) in products { continue } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { break } %><%= for (i, record) in records { continue } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2110,7 +2110,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Block_Helper_Calls(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls_Using_Key_Argument(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= label(i) %>;<% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= label(i) %>;<% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2118,7 +2118,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls_Using_Key_Argument(t *test
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products", "label"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "label"}, bytecode.FastRenderPlan.Bindings)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
@@ -2132,7 +2132,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Helper_Calls_Using_Key_Argument(t *test
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Conditionals_Using_Key_Condition(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= if i { %><%= product.Name %><% } %><% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= if i { %><%= record.Name %><% } %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2153,7 +2153,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Conditionals_Using_Key_Condition(t *tes
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Infix_Conditionals(t *testing.T) {
-	program, err := parser.Parse(`<%= for (i, product) in products { %><%= if product.Stock > min { %><%= product.Name %><% } else if i == 0 { %>first<% } %><% } %>`)
+	program, err := parser.Parse(`<%= for (i, record) in records { %><%= if record.Score > min { %><%= record.Name %><% } else if i == 0 { %>first<% } %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2161,7 +2161,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Infix_Conditionals(t *testing.T) {
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"products", "min"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"records", "min"}, bytecode.FastRenderPlan.Bindings)
 	segment := bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
@@ -2177,9 +2177,9 @@ func Test_Fast_Render_Plan_Includes_Loop_Infix_Conditionals(t *testing.T) {
 	require.NotNil(t, first.Left)
 	require.NotNil(t, first.Right)
 	require.Equal(t, FastValuePath, first.Left.Kind)
-	require.Equal(t, "product", first.Left.Value)
+	require.Equal(t, "record", first.Left.Value)
 	require.Len(t, first.Left.Path, 1)
-	require.Equal(t, "Stock", first.Left.Path[0].Value)
+	require.Equal(t, "Score", first.Left.Path[0].Value)
 	require.Equal(t, FastValueName, first.Right.Kind)
 	require.Equal(t, "min", first.Right.Value)
 
@@ -2192,7 +2192,7 @@ func Test_Fast_Render_Plan_Includes_Loop_Infix_Conditionals(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Top_Level_Infix_Output(t *testing.T) {
-	program, err := parser.Parse(`<%= robot.Stock == 3.0 %>`)
+	program, err := parser.Parse(`<%= robot.Score == 3.0 %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2212,7 +2212,7 @@ func Test_Fast_Render_Plan_Includes_Top_Level_Infix_Output(t *testing.T) {
 	require.Equal(t, FastValuePath, segment.ValuePlan.Left.Kind)
 	require.Equal(t, "robot", segment.ValuePlan.Left.Value)
 	require.Len(t, segment.ValuePlan.Left.Path, 1)
-	require.Equal(t, "Stock", segment.ValuePlan.Left.Path[0].Value)
+	require.Equal(t, "Score", segment.ValuePlan.Left.Path[0].Value)
 	require.Equal(t, FastValueFloat, segment.ValuePlan.Right.Kind)
 	require.Equal(t, 3.0, segment.ValuePlan.Right.FloatValue)
 }
@@ -2261,7 +2261,7 @@ func Test_Fast_Render_Plan_From_Instructions_Includes_Loop_Function(t *testing.T
 		&object.String{Value: "Name"},
 		&object.String{Value: "items"},
 		&object.String{Value: "i"},
-		&object.String{Value: "product"},
+		&object.String{Value: "record"},
 	}
 	instructions := code.Instructions{}
 	instructions = append(instructions, code.Make(code.OpGetName, 4)...)
@@ -2277,7 +2277,7 @@ func Test_Fast_Render_Plan_From_Instructions_Includes_Loop_Function(t *testing.T
 	require.NotNil(t, loop)
 	require.Equal(t, "items", loop.IterableName)
 	require.Equal(t, "i", loop.KeyName)
-	require.Equal(t, "product", loop.ValueName)
+	require.Equal(t, "record", loop.ValueName)
 	require.Len(t, loop.Parts, 4)
 	require.Equal(t, FastLoopPartStatic, loop.Parts[0].Kind)
 	require.Equal(t, "<b>", loop.Parts[0].Value)
@@ -2310,11 +2310,11 @@ func Test_Fast_Loop_Plan_From_Function_Branches(t *testing.T) {
 			0:  3,
 			12: 4,
 		},
-	}, constants, "i", "product")
+	}, constants, "i", "record")
 	require.True(t, ok)
 	require.NotNil(t, loop)
 	require.Equal(t, "i", loop.KeyName)
-	require.Equal(t, "product", loop.ValueName)
+	require.Equal(t, "record", loop.ValueName)
 	require.Len(t, loop.Parts, 3)
 	require.Equal(t, FastLoopPartStatic, loop.Parts[0].Kind)
 	require.Equal(t, "&lt;raw&gt;7<b>", loop.Parts[0].Value)
@@ -2322,27 +2322,27 @@ func Test_Fast_Loop_Plan_From_Function_Branches(t *testing.T) {
 	require.Equal(t, FastLoopPartValueProperty, loop.Parts[2].Kind)
 	require.Equal(t, "Name", loop.Parts[2].Value)
 
-	_, ok = fastLoopPlanFromFunction(nil, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(nil, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 1}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 1}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Instructions{byte(255)}}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Instructions{byte(255)}}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteHTML, 99)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteHTML, 99)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteString, 2)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteString, 2)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteConstant, 99)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteConstant, 99)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocal, 2)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocal, 2)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocalProperty, 0, 3)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocalProperty, 0, 3)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocalProperty, 1, 1)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteLocalProperty, 1, 1)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpAdd)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpAdd)}, constants, "i", "record")
 	require.False(t, ok)
-	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteString, 0)}, constants, "i", "product")
+	_, ok = fastLoopPlanFromFunction(&object.CompiledFunction{NumParameters: 2, Instructions: code.Make(code.OpWriteString, 0)}, constants, "i", "record")
 	require.False(t, ok)
 
 	renderPlan := &FastRenderPlan{}
@@ -2674,7 +2674,7 @@ func Test_Fast_Render_Plan_Includes_Conditionals_And_Partials(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Loop_Partial(t *testing.T) {
-	program, err := parser.Parse(`<%= for (_, product) in products { %><%= partial("partials/product-card.plush.html") %><% } %>`)
+	program, err := parser.Parse(`<%= for (_, record) in records { %><%= partial("partials/record-card.plush.html") %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2690,11 +2690,11 @@ func Test_Fast_Render_Plan_Includes_Loop_Partial(t *testing.T) {
 	require.Len(t, segment.Loop.Parts, 1)
 	require.Equal(t, FastLoopPartPartial, segment.Loop.Parts[0].Kind)
 	require.NotNil(t, segment.Loop.Parts[0].Partial)
-	require.Equal(t, "partials/product-card.plush.html", segment.Loop.Parts[0].Partial.Name)
+	require.Equal(t, "partials/record-card.plush.html", segment.Loop.Parts[0].Partial.Name)
 }
 
 func Test_Fast_Render_Plan_Includes_Partial_Data_Map(t *testing.T) {
-	program, err := parser.Parse(`<%= partial("row.plush", {name: name, title: product.Name, literal: "ok"}) %>`)
+	program, err := parser.Parse(`<%= partial("row.plush", {name: name, title: record.Name, literal: "ok"}) %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2718,7 +2718,7 @@ func Test_Fast_Render_Plan_Includes_Partial_Data_Map(t *testing.T) {
 }
 
 func Test_Fast_Render_Plan_Includes_Partial_Data_Helper_Call(t *testing.T) {
-	program, err := parser.Parse(`<%= partial("row.plush", {label: label(product.Name, prefix)}) %>`)
+	program, err := parser.Parse(`<%= partial("row.plush", {label: label(record.Name, prefix)}) %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2726,7 +2726,7 @@ func Test_Fast_Render_Plan_Includes_Partial_Data_Helper_Call(t *testing.T) {
 
 	bytecode := compiler.Bytecode()
 	require.NotNil(t, bytecode.FastRenderPlan)
-	require.Equal(t, []string{"label", "product", "prefix"}, bytecode.FastRenderPlan.Bindings)
+	require.Equal(t, []string{"label", "record", "prefix"}, bytecode.FastRenderPlan.Bindings)
 	require.Len(t, bytecode.FastRenderPlan.Segments, 1)
 
 	segment := bytecode.FastRenderPlan.Segments[0]
@@ -2741,12 +2741,12 @@ func Test_Fast_Render_Plan_Includes_Partial_Data_Helper_Call(t *testing.T) {
 	require.Equal(t, "label", value.Call.Name)
 	require.Len(t, value.Call.Args, 2)
 	require.Equal(t, FastValuePath, value.Call.Args[0].Kind)
-	require.Equal(t, "product", value.Call.Args[0].Value)
+	require.Equal(t, "record", value.Call.Args[0].Value)
 	require.Equal(t, []FastPathStep{{
 		Kind:     FastPathStepProperty,
 		Value:    "Name",
-		Receiver: "product",
-		Full:     "product.Name",
+		Receiver: "record",
+		Full:     "record.Name",
 		Line:     1,
 	}}, value.Call.Args[0].Path)
 	require.Equal(t, FastValueName, value.Call.Args[1].Kind)
@@ -2797,7 +2797,7 @@ func Test_Direct_Write_Call_Fusion_Skips_Block_Helpers(t *testing.T) {
 }
 
 func Test_Direct_Property_Write_Fusion(t *testing.T) {
-	program, err := parser.Parse(`<%= user.Name %><% let robot = {Name: "Bender"} %><%= robot.Name %><%= for (i, product) in products { %><%= product.Name %><% } %>`)
+	program, err := parser.Parse(`<%= user.Name %><% let robot = {Name: "Bender"} %><%= robot.Name %><%= for (i, record) in records { %><%= record.Name %><% } %>`)
 	require.NoError(t, err)
 
 	compiler := New()
@@ -2852,8 +2852,8 @@ func Test_Peephole_Optimizes_Compiled_Function_Constants(t *testing.T) {
 func Test_Indexed_Receiver_Callee_Chain(t *testing.T) {
 	tests := []compilerTestCase{
 		{
-			input:             `product_listing.Products[0].Name[0]`,
-			expectedConstants: []interface{}{"product_listing", "Products", 0, "Name", 0},
+			input:             `record_listing.Records[0].Name[0]`,
+			expectedConstants: []interface{}{"record_listing", "Records", 0, "Name", 0},
 			expectedInstructions: []code.Instructions{
 				code.Make(code.OpGetName, 0),
 				code.Make(code.OpGetProperty, 1),

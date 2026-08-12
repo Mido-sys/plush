@@ -119,7 +119,7 @@ func Test_Render_Diagnostics_Interpreter_Context(t *testing.T) {
 	defer plush.SetRenderMode(previous)
 
 	ctx := plush.NewContext()
-	ctx.Set(meta.TemplateFileKey, "products/show.plush")
+	ctx.Set(meta.TemplateFileKey, "records/show.plush")
 	ctx.Set("renderValue", func() string {
 		time.Sleep(20 * time.Millisecond)
 		return "interpreter"
@@ -132,7 +132,7 @@ func Test_Render_Diagnostics_Interpreter_Context(t *testing.T) {
 	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
 	r.Equal(plush.RenderModeNameInterpreter, diagnostics.Mode)
-	r.Equal("products/show.plush", diagnostics.TemplateFilename)
+	r.Equal("records/show.plush", diagnostics.TemplateFilename)
 	r.Equal(plush.VMBytecodeCacheDisabled, diagnostics.VMBytecodeCache)
 	r.NotZero(diagnostics.EngineDuration)
 }
@@ -143,7 +143,7 @@ func Test_Render_Diagnostics_From_Data_After_Buffalo_Renderer(t *testing.T) {
 	defer plush.SetRenderMode(previous)
 
 	data := map[string]interface{}{
-		meta.TemplateFileKey: "products/show.plush",
+		meta.TemplateFileKey: "records/show.plush",
 		"renderValue": func() string {
 			time.Sleep(20 * time.Millisecond)
 			return "interpreter"
@@ -156,7 +156,7 @@ func Test_Render_Diagnostics_From_Data_After_Buffalo_Renderer(t *testing.T) {
 	diagnostics, ok := plush.RenderDiagnosticsFromData(data)
 	r.True(ok)
 	r.Equal(plush.RenderModeNameInterpreter, diagnostics.Mode)
-	r.Equal("products/show.plush", diagnostics.TemplateFilename)
+	r.Equal("records/show.plush", diagnostics.TemplateFilename)
 	r.Equal(plush.VMBytecodeCacheDisabled, diagnostics.VMBytecodeCache)
 	r.NotZero(diagnostics.EngineDuration)
 }
@@ -167,7 +167,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	defer plush.SetRenderMode(previous)
 
 	ctx := plush.NewContext()
-	ctx.Set(meta.TemplateFileKey, "products/show.plush")
+	ctx.Set(meta.TemplateFileKey, "records/show.plush")
 	ctx.Set("renderBody", func() string {
 		time.Sleep(20 * time.Millisecond)
 		return "body"
@@ -181,7 +181,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	r.NoError(err)
 	first, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
-	r.Equal("products/show.plush", first.TemplateFilename)
+	r.Equal("records/show.plush", first.TemplateFilename)
 	r.NotZero(first.EngineDuration)
 
 	ctx.Set(meta.TemplateFileKey, "application.plush")
@@ -189,7 +189,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	r.NoError(err)
 	second, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
-	r.Equal("products/show.plush", second.TemplateFilename)
+	r.Equal("records/show.plush", second.TemplateFilename)
 	r.Greater(second.EngineDuration, first.EngineDuration)
 }
 
@@ -221,7 +221,7 @@ func Test_Buffalo_Renderer_With_Context_Configures_Context(t *testing.T) {
 
 	configured := false
 	data := map[string]interface{}{
-		meta.TemplateFileKey: "products/show.plush",
+		meta.TemplateFileKey: "records/show.plush",
 	}
 	rendered, err := plush.BuffaloRendererWithContext(`<%= marker %>`, data, nil, func(ctx *plush.Context) {
 		configured = true

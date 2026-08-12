@@ -664,9 +664,9 @@ func Test_Root_Render_Mode_VM_Generic_Segment_Stays_In_VM(t *testing.T) {
 	defer rootplush.SetVMGenericFallback(previousFallback)
 
 	ctx := rootplush.NewContext()
-	out, err := rootplush.Render(`<% let forceBytecode = fn() { return "x" } %><% let title = "Products" %><%= title %>`, ctx)
+	out, err := rootplush.Render(`<% let forceBytecode = fn() { return "x" } %><% let title = "Records" %><%= title %>`, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "Products", out)
+	require.Equal(t, "Records", out)
 
 	diagnostics, ok := rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
@@ -688,17 +688,17 @@ func Test_Root_Render_Mode_VM_Generic_Segment_Keeps_Bytecode_Cache(t *testing.T)
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, filename)
 
-	input := `<% let forceBytecode = fn() { return "x" } %><% let title = "Products" %><%= title %>`
+	input := `<% let forceBytecode = fn() { return "x" } %><% let title = "Records" %><%= title %>`
 	out, err := rootplush.Render(input, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "Products", out)
+	require.Equal(t, "Records", out)
 	diagnostics, ok := rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
 	require.Equal(t, rootplush.VMBytecodeCacheMissStore, diagnostics.VMBytecodeCache)
 
 	out, err = rootplush.Render(input, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "Products", out)
+	require.Equal(t, "Records", out)
 	diagnostics, ok = rootplush.RenderDiagnosticsFromContext(ctx)
 	require.True(t, ok)
 	require.Equal(t, rootplush.VMBytecodeCacheHit, diagnostics.VMBytecodeCache)

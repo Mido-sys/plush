@@ -220,9 +220,9 @@ func Test_Render_Append_Array_With_Type_Interface(t *testing.T) {
 }
 
 type Category1 struct {
-	Products []Product1
+	Records []Record1
 }
-type Product1 struct {
+type Record1 struct {
 	Name []string
 }
 
@@ -234,7 +234,7 @@ func Test_Render_Access_Callee_Array(t *testing.T) {
 		data     Category1
 	}{
 		{"success", true, "Buffalo", Category1{
-			[]Product1{
+			[]Record1{
 				{Name: []string{"Buffalo"}},
 			},
 		}},
@@ -244,10 +244,10 @@ func Test_Render_Access_Callee_Array(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
-			input := `<% let a = product_listing.Products[0].Name[0] %><%= a  %>`
+			input := `<% let a = record_listing.Records[0].Name[0] %><%= a  %>`
 
 			ctx := plush.NewContext()
-			ctx.Set("product_listing", tc.data)
+			ctx.Set("record_listing", tc.data)
 
 			s, err := plush.Render(input, ctx)
 			if tc.success {

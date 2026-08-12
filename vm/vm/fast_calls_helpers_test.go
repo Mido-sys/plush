@@ -51,7 +51,7 @@ func Test_VM_Fast_Helper_Registry_Uses_Typed_Lookup_With_Value_Fallback(t *testi
 	require.Equal(t, 1, fallback.value)
 }
 
-func Test_VM_Write_Fast_Direct_String_Call_Segment_Variants(t *testing.T) {
+func Test_VM_Write_Fast_Direct_String_Call_Segment_Modes(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"name": "<Mido>"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"name"}}, ctx)
 	call := &compiler.FastCallPlan{

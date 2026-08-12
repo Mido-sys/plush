@@ -1371,7 +1371,7 @@ func Test_String_Function(t *testing.T) {
 	t.Column("alive", "boolean", {"null": true})
 	t.Column("birth_date", "timestamp", {"null": true})
 	t.Column("bio", "text", {"null": true})
-	t.Column("price", "numeric", {"null": true, "default": "1.00"})
+	t.Column("value", "numeric", {"null": true, "default": "1.00"})
 	t.Column("email", "string", {"default": "foo@example.com", "size": 50})
 }
 create_table("users_2", {"timestamps": false}) {
@@ -1381,7 +1381,7 @@ create_table("users_2", {"timestamps": false}) {
 	t.Column("alive", "boolean", {"null": true})
 	t.Column("birth_date", "timestamp", {"null": true})
 	t.Column("bio", "text", {"null": true})
-	t.Column("price", "numeric", {"null": true, "default": "1.00"})
+	t.Column("value", "numeric", {"null": true, "default": "1.00"})
 	t.Column("email", "string", {"default": "foo@example.com", "size": 50})
 }
 drop_column("table_name", "column1_name")

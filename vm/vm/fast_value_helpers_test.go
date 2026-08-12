@@ -428,7 +428,7 @@ func Test_VM_Fast_Value_Field_And_Access_Edge_Branches(t *testing.T) {
 			{Kind: compiler.FastPathStepProperty, Value: "Name"},
 			{Kind: compiler.FastPathStepProperty, Value: "Missing"},
 		},
-	}, reflect.TypeOf(vmStructLoopProduct{}))
+	}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.False(t, ok)
 	require.Nil(t, chain)
 
@@ -437,7 +437,7 @@ func Test_VM_Fast_Value_Field_And_Access_Edge_Branches(t *testing.T) {
 	require.True(t, handled)
 	require.Nil(t, value)
 
-	chainPlan, next, ok := buildFastAccessChainPlanForSteps([]compiler.FastPathStep{{Kind: compiler.FastPathStepKind(255)}}, reflect.TypeOf(vmStructLoopProduct{}))
+	chainPlan, next, ok := buildFastAccessChainPlanForSteps([]compiler.FastPathStep{{Kind: compiler.FastPathStepKind(255)}}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.False(t, ok)
 	require.Nil(t, chainPlan)
 	require.Nil(t, next)

@@ -41,8 +41,8 @@ func Test_Parity_Phase_12_Nested_Partial_Path_Metadata(t *testing.T) {
 		ctx.Set("partialFeeder", func(name string) (string, error) {
 			return partials[name], nil
 		})
-		ctx.Set(meta.TemplateBaseFileNameKey, "path/product_listing")
-		ctx.Set(meta.TemplateFileKey, "/fake/templates/path/product_listing.html")
+		ctx.Set(meta.TemplateBaseFileNameKey, "path/record_listing")
+		ctx.Set(meta.TemplateFileKey, "/fake/templates/path/record_listing.html")
 		ctx.Set(meta.TemplateExtensionKey, "html")
 		return ctx
 	})
@@ -141,8 +141,8 @@ func Test_Parity_Partials_Data_Map_Values(t *testing.T) {
 }
 
 func Test_Parity_Partials_Data_Map_Helper_Call_Value(t *testing.T) {
-	compareRender(t, `<%= partial("row", {label: label(product.Name, prefix)}) %>|<%= product.Name %>`, contextWith(map[string]interface{}{
-		"product": struct {
+	compareRender(t, `<%= partial("row", {label: label(record.Name, prefix)}) %>|<%= record.Name %>`, contextWith(map[string]interface{}{
+		"record": struct {
 			Name string
 		}{Name: "<Bender>"},
 		"prefix": "robot",
@@ -295,12 +295,12 @@ func Test_Phase_12_VM_Plush_Cache_Uses_Current_URL_In_Full_Key(t *testing.T) {
 
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, "phase12-url.plush")
-	ctx.Set(meta.TemplateCurrentUrlKey, "/products/123?ignored=true")
+	ctx.Set(meta.TemplateCurrentUrlKey, "/records/123?ignored=true")
 
 	out, err := renderVMContext(t, `<%= "x" %><%H "hole" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "xhole", out)
-	requireCacheKey(t, cache, "full:phase12-url.plush|url:products_123")
+	requireCacheKey(t, cache, "full:phase12-url.plush|url:records_123")
 }
 
 func Test_Phase_12_VM_Plush_Caches_Bytecode_By_AST_Key(t *testing.T) {

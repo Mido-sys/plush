@@ -295,18 +295,18 @@ func Test_Render_For_Map_Nil_Value(t *testing.T) {
 }
 
 type Category struct {
-	Products []Product
+	Records []Record
 }
-type Product struct {
+type Record struct {
 	Name []string
 }
 
 func Test_Render_For_Array_Outof_Bound_Index(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
-	product_listing := Category{}
-	ctx.Set("product_listing", product_listing)
-	input := `<%= for (i, names) in product_listing.Products[0].Name { %>
+	record_listing := Category{}
+	ctx.Set("record_listing", record_listing)
+	input := `<%= for (i, names) in record_listing.Records[0].Name { %>
 				<%= splt %>
 			<% } %>`
 	_, err := plush.Render(input, ctx)

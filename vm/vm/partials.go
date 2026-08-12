@@ -1796,35 +1796,37 @@ func shouldFallbackPartialBytecode(bytecode *compiler.Bytecode) bool {
 	if shouldFallbackGenericBytecode(bytecode) {
 		return true
 	}
-	return plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasBlockCalls(bytecode.FastRenderPlan)
+	return plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasCompatibilityBlockCalls(bytecode.FastRenderPlan)
 }
 
 func partialFallbackReason(bytecode *compiler.Bytecode) plush.RenderPartialFallbackReason {
 	if shouldFallbackGenericBytecode(bytecode) {
 		return plush.RenderPartialFallbackGenericBytecode
 	}
-	if plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasBlockCalls(bytecode.FastRenderPlan) {
+	if plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasCompatibilityBlockCalls(bytecode.FastRenderPlan) {
 		return plush.RenderPartialFallbackBlockCallCompatibility
 	}
 	return ""
 }
 
-func fastRenderPlanHasBlockCalls(plan *compiler.FastRenderPlan) bool {
-	return plan != nil && fastRenderSegmentsHaveBlockCalls(plan.Segments)
+func fastRenderPlanHasCompatibilityBlockCalls(plan *compiler.FastRenderPlan) bool {
+	return plan != nil && fastRenderSegmentsHaveCompatibilityBlockCalls(plan.Segments)
 }
 
-func fastRenderSegmentsHaveBlockCalls(segments []compiler.FastRenderSegment) bool {
+func fastRenderSegmentsHaveCompatibilityBlockCalls(segments []compiler.FastRenderSegment) bool {
 	for i := range segments {
 		segment := &segments[i]
 		switch segment.Kind {
 		case compiler.FastRenderSegmentBlockCall:
-			return true
+			if fastBlockCallNeedsCompatibilityFallback(segment.BlockCall) {
+				return true
+			}
 		case compiler.FastRenderSegmentConditional:
-			if fastConditionalHasBlockCalls(segment.Conditional) {
+			if fastConditionalHasCompatibilityBlockCalls(segment.Conditional) {
 				return true
 			}
 		case compiler.FastRenderSegmentLoop:
-			if fastLoopHasBlockCalls(segment.Loop) {
+			if fastLoopHasCompatibilityBlockCalls(segment.Loop) {
 				return true
 			}
 		}
@@ -1832,34 +1834,51 @@ func fastRenderSegmentsHaveBlockCalls(segments []compiler.FastRenderSegment) boo
 	return false
 }
 
-func fastConditionalHasBlockCalls(conditional *compiler.FastConditionalPlan) bool {
+func fastBlockCallNeedsCompatibilityFallback(call *compiler.FastBlockCallPlan) bool {
+	if call == nil || call.BlockBytecode == nil {
+		return true
+	}
+	// Buffalo's form helper injects f into its block context. This path has
+	// dedicated VM parity coverage, including nested loops and receiver calls.
+	if call.Name != "form" {
+		return true
+	}
+	if !call.BlockBytecode.Static && call.BlockBytecode.FastRenderPlan == nil {
+		return true
+	}
+	return fastRenderPlanHasCompatibilityBlockCalls(call.BlockBytecode.FastRenderPlan)
+}
+
+func fastConditionalHasCompatibilityBlockCalls(conditional *compiler.FastConditionalPlan) bool {
 	if conditional == nil {
 		return false
 	}
 	for i := range conditional.Branches {
-		if fastRenderSegmentsHaveBlockCalls(conditional.Branches[i].Segments) {
+		if fastRenderSegmentsHaveCompatibilityBlockCalls(conditional.Branches[i].Segments) {
 			return true
 		}
 	}
-	return fastRenderSegmentsHaveBlockCalls(conditional.ElseSegments)
+	return fastRenderSegmentsHaveCompatibilityBlockCalls(conditional.ElseSegments)
 }
 
-func fastLoopHasBlockCalls(loop *compiler.FastLoopPlan) bool {
-	return loop != nil && fastLoopPartsHaveBlockCalls(loop.Parts)
+func fastLoopHasCompatibilityBlockCalls(loop *compiler.FastLoopPlan) bool {
+	return loop != nil && fastLoopPartsHaveCompatibilityBlockCalls(loop.Parts)
 }
 
-func fastLoopPartsHaveBlockCalls(parts []compiler.FastLoopPart) bool {
+func fastLoopPartsHaveCompatibilityBlockCalls(parts []compiler.FastLoopPart) bool {
 	for i := range parts {
 		part := &parts[i]
 		switch part.Kind {
 		case compiler.FastLoopPartBlockCall:
-			return true
+			if fastBlockCallNeedsCompatibilityFallback(part.BlockCall) {
+				return true
+			}
 		case compiler.FastLoopPartConditional:
-			if fastLoopConditionalHasBlockCalls(part.Conditional) {
+			if fastLoopConditionalHasCompatibilityBlockCalls(part.Conditional) {
 				return true
 			}
 		case compiler.FastLoopPartLoop:
-			if fastLoopHasBlockCalls(part.Loop) {
+			if fastLoopHasCompatibilityBlockCalls(part.Loop) {
 				return true
 			}
 		}
@@ -1867,16 +1886,16 @@ func fastLoopPartsHaveBlockCalls(parts []compiler.FastLoopPart) bool {
 	return false
 }
 
-func fastLoopConditionalHasBlockCalls(conditional *compiler.FastLoopConditionalPlan) bool {
+func fastLoopConditionalHasCompatibilityBlockCalls(conditional *compiler.FastLoopConditionalPlan) bool {
 	if conditional == nil {
 		return false
 	}
 	for i := range conditional.Branches {
-		if fastLoopPartsHaveBlockCalls(conditional.Branches[i].Parts) {
+		if fastLoopPartsHaveCompatibilityBlockCalls(conditional.Branches[i].Parts) {
 			return true
 		}
 	}
-	return fastLoopPartsHaveBlockCalls(conditional.ElseParts)
+	return fastLoopPartsHaveCompatibilityBlockCalls(conditional.ElseParts)
 }
 
 func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Context) (bool, error) {

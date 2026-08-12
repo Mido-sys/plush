@@ -3,10 +3,10 @@ package plush_test
 import "testing"
 
 type parityCategory struct {
-	Products []parityProduct
+	Records []parityRecord
 }
 
-type parityProduct struct {
+type parityRecord struct {
 	Name []string
 }
 
@@ -137,9 +137,9 @@ func Test_Parity_Variables_Native_Typed_Slice_Append_Error(t *testing.T) {
 }
 
 func Test_Parity_Variables_Access_Callee_Array(t *testing.T) {
-	compareRender(t, `<% let a = product_listing.Products[0].Name[0] %><%= a %>`, contextWith(map[string]interface{}{
-		"product_listing": parityCategory{
-			Products: []parityProduct{
+	compareRender(t, `<% let a = record_listing.Records[0].Name[0] %><%= a %>`, contextWith(map[string]interface{}{
+		"record_listing": parityCategory{
+			Records: []parityRecord{
 				{Name: []string{"Buffalo"}},
 			},
 		},
@@ -147,7 +147,7 @@ func Test_Parity_Variables_Access_Callee_Array(t *testing.T) {
 }
 
 func Test_Parity_Variables_Access_Callee_Array_Out_Of_Bounds(t *testing.T) {
-	compareBothRenderError(t, `<% let a = product_listing.Products[0].Name[0] %><%= a %>`, contextWith(map[string]interface{}{
-		"product_listing": parityCategory{},
+	compareBothRenderError(t, `<% let a = record_listing.Records[0].Name[0] %><%= a %>`, contextWith(map[string]interface{}{
+		"record_listing": parityCategory{},
 	}))
 }

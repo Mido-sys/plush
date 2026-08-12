@@ -12,15 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type vmStructLoopProduct struct {
+type vmStructLoopRecord struct {
 	Name string
 }
 
-func (p vmStructLoopProduct) Echo() string {
+func (p vmStructLoopRecord) Echo() string {
 	return p.Name + "!"
 }
 
-func (p *vmStructLoopProduct) PointerEcho() string {
+func (p *vmStructLoopRecord) PointerEcho() string {
 	return p.Name + "?"
 }
 
@@ -32,7 +32,7 @@ func (s vmStructLoopStringer) String() string {
 	return "stringer:" + s.value
 }
 
-type vmStructLoopStringerProduct struct {
+type vmStructLoopStringerRecord struct {
 	Title vmStructLoopStringer
 }
 
@@ -43,7 +43,7 @@ func structLoopCallPlan(t *testing.T, args ...compiler.FastValuePlan) *fastStruc
 		NameIndex: 0,
 		Args:      args,
 		Line:      1,
-	}, reflect.TypeOf(vmStructLoopProduct{}))
+	}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.True(t, ok)
 	require.NotNil(t, plan)
 	return plan
@@ -54,7 +54,7 @@ func structLoopNameArg() compiler.FastValuePlan {
 		Kind:      compiler.FastValuePath,
 		NameIndex: -1,
 		Path: []compiler.FastPathStep{
-			{Kind: compiler.FastPathStepProperty, Value: "Name", Receiver: "product", Full: "product.Name", Line: 1},
+			{Kind: compiler.FastPathStepProperty, Value: "Name", Receiver: "record", Full: "record.Name", Line: 1},
 		},
 		Line: 1,
 	}
@@ -63,7 +63,7 @@ func structLoopNameArg() compiler.FastValuePlan {
 func Test_VM_Fast_Struct_Loop_Direct_Call_Writers(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"prefix": "<pre>"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"label", "prefix"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "<bot>"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "<bot>"})
 
 	oneArgPlan := structLoopCallPlan(t, structLoopNameArg())
 	twoArgPlan := structLoopCallPlan(t, structLoopNameArg(), compiler.FastValuePlan{Kind: compiler.FastValueName, NameIndex: 1, Value: "prefix", Line: 1})
@@ -142,17 +142,17 @@ func Test_VM_Fast_Struct_Loop_Direct_Call_Writers(t *testing.T) {
 func Test_VM_Fast_Struct_Loop_Call_Arg_Values(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"prefix": "pre"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"prefix"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 	accessPlan := structLoopCallPlan(t, structLoopNameArg()).args[0].accessPlan
 
-	callPlan, ok := buildFastStructLoopCallPlan(nil, reflect.TypeOf(vmStructLoopProduct{}))
+	callPlan, ok := buildFastStructLoopCallPlan(nil, reflect.TypeOf(vmStructLoopRecord{}))
 	require.False(t, ok)
 	require.Nil(t, callPlan)
 
-	nilArgPlan := buildFastStructLoopCallArgPlan(nil, reflect.TypeOf(vmStructLoopProduct{}))
+	nilArgPlan := buildFastStructLoopCallArgPlan(nil, reflect.TypeOf(vmStructLoopRecord{}))
 	require.Equal(t, fastStructLoopCallArgNil, nilArgPlan.kind)
 
-	nameNilPlan := buildFastStructLoopCallArgPlan(&compiler.FastValuePlan{Kind: compiler.FastValueName, Value: "nil"}, reflect.TypeOf(vmStructLoopProduct{}))
+	nameNilPlan := buildFastStructLoopCallArgPlan(&compiler.FastValuePlan{Kind: compiler.FastValueName, Value: "nil"}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.Equal(t, fastStructLoopCallArgNil, nameNilPlan.kind)
 
 	genericPathPlan := buildFastStructLoopCallArgPlan(&compiler.FastValuePlan{
@@ -161,7 +161,7 @@ func Test_VM_Fast_Struct_Loop_Call_Arg_Values(t *testing.T) {
 		Path: []compiler.FastPathStep{
 			{Kind: compiler.FastPathStepProperty, Value: "Missing"},
 		},
-	}, reflect.TypeOf(vmStructLoopProduct{}))
+	}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.Equal(t, fastStructLoopCallArgGeneric, genericPathPlan.kind)
 
 	tests := []struct {
@@ -228,7 +228,7 @@ func Test_VM_Fast_Struct_Loop_Call_Arg_Values(t *testing.T) {
 func Test_VM_Fast_Struct_Loop_Value_And_Condition_Edges(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"flag": true, "prefix": "pre"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"flag", "prefix"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 	namePlan := structLoopNameArg()
 	nameArgPlan := structLoopCallPlan(t, namePlan).args[0]
 
@@ -250,7 +250,7 @@ func Test_VM_Fast_Struct_Loop_Value_And_Condition_Edges(t *testing.T) {
 	value, ok, err = evalFastStructLoopValue(&compiler.FastValuePlan{Kind: compiler.FastValuePath, NameIndex: -1}, ctx, bindings, nil, item)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, vmStructLoopProduct{Name: "bot"}, value)
+	require.Equal(t, vmStructLoopRecord{Name: "bot"}, value)
 
 	value, ok, err = evalFastStructLoopPathValue(&namePlan, ctx, bindings, reflect.Value{})
 	require.NoError(t, err)
@@ -603,7 +603,7 @@ func Test_VM_Fast_Struct_Loop_Value_And_Condition_Edges(t *testing.T) {
 		Kind:      compiler.FastValuePath,
 		NameIndex: -1,
 		Path: []compiler.FastPathStep{
-			{Kind: compiler.FastPathStepProperty, Value: "Child", Receiver: "product", Full: "product.Child", Line: 1},
+			{Kind: compiler.FastPathStepProperty, Value: "Child", Receiver: "record", Full: "record.Child", Line: 1},
 		},
 		Line: 1,
 	}
@@ -617,12 +617,12 @@ func Test_VM_Fast_Struct_Loop_Value_And_Condition_Edges(t *testing.T) {
 		Kind:      compiler.FastValuePath,
 		NameIndex: -1,
 		Path: []compiler.FastPathStep{
-			{Kind: compiler.FastPathStepProperty, Value: "Title", Receiver: "product", Full: "product.Title", Line: 1},
+			{Kind: compiler.FastPathStepProperty, Value: "Title", Receiver: "record", Full: "record.Title", Line: 1},
 		},
 		Line: 1,
 	}
-	stringerArgPlan := buildFastStructLoopCallArgPlan(&stringerValuePlan, reflect.TypeOf(vmStructLoopStringerProduct{}))
-	arg, ok, err = evalFastStructLoopCallArgString(&stringerArgPlan, ctx, bindings, nil, reflect.ValueOf(vmStructLoopStringerProduct{Title: vmStructLoopStringer{value: "title"}}))
+	stringerArgPlan := buildFastStructLoopCallArgPlan(&stringerValuePlan, reflect.TypeOf(vmStructLoopStringerRecord{}))
+	arg, ok, err = evalFastStructLoopCallArgString(&stringerArgPlan, ctx, bindings, nil, reflect.ValueOf(vmStructLoopStringerRecord{Title: vmStructLoopStringer{value: "title"}}))
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "stringer:title", arg)
@@ -660,8 +660,8 @@ func Test_VM_Fast_Struct_Loop_Writer_Op_Edges(t *testing.T) {
 		"label": func(value string) string { return value + "!" },
 	})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"label"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "<bot>"})
-	nameLookup := cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "Name")
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "<bot>"})
+	nameLookup := cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "Name")
 	callPlan := structLoopCallPlan(t, structLoopNameArg())
 	nameAccessPlan := callPlan.args[0].accessPlan
 
@@ -672,8 +672,8 @@ func Test_VM_Fast_Struct_Loop_Writer_Op_Edges(t *testing.T) {
 		{
 			kind:       fastStructLoopWriterField,
 			name:       "Name",
-			receiver:   "product",
-			full:       "product.Name",
+			receiver:   "record",
+			full:       "record.Name",
 			line:       2,
 			fieldIndex: nameLookup.fieldIndex,
 			fieldType:  stringType,
@@ -686,9 +686,9 @@ func Test_VM_Fast_Struct_Loop_Writer_Op_Edges(t *testing.T) {
 		{
 			kind: fastStructLoopWriterMethodCall,
 			methodPlan: &fastLoopMethodCallPlan{
-				method: compiler.FastPathStep{Value: "Echo", Receiver: "product", Full: "product.Echo", Line: 3},
+				method: compiler.FastPathStep{Value: "Echo", Receiver: "record", Full: "record.Echo", Line: 3},
 				call:   compiler.FastPathStep{Value: "Echo", Line: 3},
-				lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "Echo"),
+				lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "Echo"),
 			},
 		},
 	}
@@ -757,7 +757,7 @@ func Test_VM_Fast_Struct_Loop_Writer_Op_Edges(t *testing.T) {
 	err = renderFastStructLoopWriterOps(&strings.Builder{}, ctx, bindings, &fastStructLoopRenderState{}, nil, []fastStructLoopWriterOp{{
 		kind: fastStructLoopWriterMethodCall,
 		methodPlan: &fastLoopMethodCallPlan{
-			method: compiler.FastPathStep{Value: "Missing", Receiver: "product", Full: "product.Missing", Line: 8},
+			method: compiler.FastPathStep{Value: "Missing", Receiver: "record", Full: "record.Missing", Line: 8},
 			call:   compiler.FastPathStep{Value: "Missing", Line: 8},
 			lookup: propertyLookup{kind: propertyLookupMissing},
 		},
@@ -812,47 +812,47 @@ func Test_VM_Fast_Struct_Loop_Writer_Op_Edges(t *testing.T) {
 
 func Test_VM_Fast_Struct_Loop_Method_Call_And_Reflect_Edges(t *testing.T) {
 	ctx := plush.NewContext()
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "<bot>"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "<bot>"})
 
 	require.NoError(t, writeFastLoopMethodCall(&strings.Builder{}, ctx, nil, item))
 	require.NoError(t, writeFastLoopMethodCall(&strings.Builder{}, ctx, &fastLoopMethodCallPlan{
-		method: compiler.FastPathStep{Value: "Echo", Receiver: "product", Full: "product.Echo", Line: 3},
+		method: compiler.FastPathStep{Value: "Echo", Receiver: "record", Full: "record.Echo", Line: 3},
 		call:   compiler.FastPathStep{Value: "Echo", Line: 3},
-		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "Echo"),
+		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "Echo"),
 	}, reflect.Value{}))
 
 	var out strings.Builder
 	valueMethod := &fastLoopMethodCallPlan{
-		method: compiler.FastPathStep{Value: "Echo", Receiver: "product", Full: "product.Echo", Line: 4},
+		method: compiler.FastPathStep{Value: "Echo", Receiver: "record", Full: "record.Echo", Line: 4},
 		call:   compiler.FastPathStep{Value: "Echo", Line: 4},
-		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "Echo"),
+		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "Echo"),
 	}
 	require.NoError(t, writeFastLoopMethodCall(&out, ctx, valueMethod, item))
 	require.Equal(t, "&lt;bot&gt;!", out.String())
 
 	out.Reset()
 	pointerMethod := &fastLoopMethodCallPlan{
-		method: compiler.FastPathStep{Value: "PointerEcho", Receiver: "product", Full: "product.PointerEcho", Line: 5},
+		method: compiler.FastPathStep{Value: "PointerEcho", Receiver: "record", Full: "record.PointerEcho", Line: 5},
 		call:   compiler.FastPathStep{Value: "PointerEcho", Line: 5},
-		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "PointerEcho"),
+		lookup: cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "PointerEcho"),
 	}
 	require.NoError(t, writeFastLoopMethodCall(&out, ctx, pointerMethod, item))
 	require.Equal(t, "&lt;bot&gt;?", out.String())
 
-	addressable := reflect.ValueOf(&vmStructLoopProduct{Name: "addr"}).Elem()
-	method, ok := fastBoundMethodValue(addressable, cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "PointerEcho"))
+	addressable := reflect.ValueOf(&vmStructLoopRecord{Name: "addr"}).Elem()
+	method, ok := fastBoundMethodValue(addressable, cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "PointerEcho"))
 	require.True(t, ok)
 	results := method.Call(nil)
 	require.Len(t, results, 1)
 	require.Equal(t, "addr?", results[0].Interface())
 
-	_, ok = fastBoundMethodValue(reflect.Value{}, cachedPropertyLookup(reflect.TypeOf(vmStructLoopProduct{}), "Echo"))
+	_, ok = fastBoundMethodValue(reflect.Value{}, cachedPropertyLookup(reflect.TypeOf(vmStructLoopRecord{}), "Echo"))
 	require.False(t, ok)
 	_, ok = fastBoundMethodValue(item, propertyLookup{kind: propertyLookupMissing})
 	require.False(t, ok)
 
 	missing := &fastLoopMethodCallPlan{
-		method: compiler.FastPathStep{Value: "Missing", Receiver: "product", Full: "product.Missing", Line: 6},
+		method: compiler.FastPathStep{Value: "Missing", Receiver: "record", Full: "record.Missing", Line: 6},
 		call:   compiler.FastPathStep{Value: "Missing", Line: 6},
 		lookup: propertyLookup{kind: propertyLookupMissing},
 	}
@@ -899,7 +899,7 @@ func Test_VM_Fast_Struct_Loop_Method_Call_And_Reflect_Edges(t *testing.T) {
 }
 
 func Test_VM_Fast_Struct_Loop_Builder_Edge_Branches(t *testing.T) {
-	elemType := reflect.TypeOf(vmStructLoopProduct{})
+	elemType := reflect.TypeOf(vmStructLoopRecord{})
 
 	writerPlan, ok := buildFastStructLoopWriterPlan(nil, elemType)
 	require.False(t, ok)
@@ -1052,8 +1052,8 @@ func Test_VM_Fast_Struct_Loop_Builder_Edge_Branches(t *testing.T) {
 func Test_VM_Fast_Struct_Field_Loop_Render_And_Cache_Branches(t *testing.T) {
 	ctx := plush.NewContext()
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{}, ctx)
-	iter := reflect.ValueOf([]vmStructLoopProduct{{Name: "<bot>"}, {Name: "fry"}})
-	elemType := reflect.TypeOf(vmStructLoopProduct{})
+	iter := reflect.ValueOf([]vmStructLoopRecord{{Name: "<bot>"}, {Name: "fry"}})
+	elemType := reflect.TypeOf(vmStructLoopRecord{})
 	var out strings.Builder
 
 	handled, err := renderFastStructFieldLoop(&out, ctx, bindings, nil, iter)
@@ -1082,7 +1082,7 @@ func Test_VM_Fast_Struct_Field_Loop_Render_And_Cache_Branches(t *testing.T) {
 		Parts: []compiler.FastLoopPart{
 			{Kind: compiler.FastLoopPartKey},
 			{Kind: compiler.FastLoopPartStatic, Value: ":"},
-			{Kind: compiler.FastLoopPartValueProperty, Value: "Name", Receiver: "product", Full: "product.Name", Line: 3},
+			{Kind: compiler.FastLoopPartValueProperty, Value: "Name", Receiver: "record", Full: "record.Name", Line: 3},
 			{Kind: compiler.FastLoopPartStatic, Value: ";"},
 		},
 	}
@@ -1106,8 +1106,8 @@ func Test_VM_Fast_Struct_Field_Loop_Render_And_Cache_Branches(t *testing.T) {
 	hiddenLoop := &compiler.FastLoopPlan{Line: 4, Parts: []compiler.FastLoopPart{{
 		Kind:     compiler.FastLoopPartValueProperty,
 		Value:    "hidden",
-		Receiver: "product",
-		Full:     "product.hidden",
+		Receiver: "record",
+		Full:     "record.hidden",
 		Line:     4,
 	}}}
 	handled, err = renderFastStructFieldLoop(&strings.Builder{}, ctx, bindings, hiddenLoop, reflect.ValueOf([]vmFastPropertyUser{{hidden: "secret"}}))
