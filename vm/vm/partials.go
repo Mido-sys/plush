@@ -1799,6 +1799,16 @@ func shouldFallbackPartialBytecode(bytecode *compiler.Bytecode) bool {
 	return plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasBlockCalls(bytecode.FastRenderPlan)
 }
 
+func partialFallbackReason(bytecode *compiler.Bytecode) plush.RenderPartialFallbackReason {
+	if shouldFallbackGenericBytecode(bytecode) {
+		return plush.RenderPartialFallbackGenericBytecode
+	}
+	if plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasBlockCalls(bytecode.FastRenderPlan) {
+		return plush.RenderPartialFallbackBlockCallCompatibility
+	}
+	return ""
+}
+
 func fastRenderPlanHasBlockCalls(plan *compiler.FastRenderPlan) bool {
 	return plan != nil && fastRenderSegmentsHaveBlockCalls(plan.Segments)
 }
@@ -1963,7 +1973,7 @@ func renderGenericPartialInline(out *strings.Builder, input string, ctx hctx.Con
 	if out == nil || !shouldFallbackPartialBytecode(bytecode) {
 		return false, nil
 	}
-	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	rendered, err := renderInterpreterPartialFallback(input, ctx, filename, bytecode)
 	if err != nil {
 		return true, err
 	}
@@ -1997,13 +2007,22 @@ func renderLinkedPartialBytecode(link *partialBytecodeLink, ctx hctx.Context, fi
 }
 
 func renderInterpreterPartial(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
-	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	rendered, err := renderInterpreterPartialFallback(input, ctx, filename, bytecode)
 	if err != nil {
 		return "", err
 	}
 	observation := beginPartialOutputObservation(bytecode, filename, ctx)
 	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
 	return rendered, nil
+}
+
+func renderInterpreterPartialFallback(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
+	plush.AddRenderDiagnosticPartialFallback(ctx, filename, partialFallbackReason(bytecode))
+	restore := plush.BeginRenderDiagnosticPartialFallback(ctx)
+	if restore != nil {
+		defer restore()
+	}
+	return renderInterpreterFallback(input, ctx, filename)
 }
 
 func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialBytecodeLink, ctx hctx.Context) (bool, error) {

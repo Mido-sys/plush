@@ -28,13 +28,18 @@ const (
 	RenderFastPathGeneric             = "generic"
 	RenderFastPathInterpreterFallback = "interpreter-fallback"
 
+	RenderPartialFallbackGenericBytecode        RenderPartialFallbackReason = "generic-bytecode"
+	RenderPartialFallbackBlockCallCompatibility RenderPartialFallbackReason = "block-call-compatibility"
+	RenderPartialFallbackInheritedInterpreter   RenderPartialFallbackReason = "inherited-interpreter"
+
 	PunchHoleCacheDisabled = "disabled"
 	PunchHoleCacheHit      = "hit"
 	PunchHoleCacheMiss     = "miss"
 
-	renderPartialOutputDetailLimit = 8
-	renderLoopOutputDetailLimit    = 8
-	renderVMHelperPathDetailLimit  = 8
+	renderPartialOutputDetailLimit   = 8
+	renderLoopOutputDetailLimit      = 8
+	renderVMHelperPathDetailLimit    = 8
+	renderPartialFallbackDetailLimit = 16
 )
 
 // RenderVMHelperCallPath identifies how the VM invoked a Go helper.
@@ -50,6 +55,12 @@ const (
 var renderDiagnosticsKey = "__plush_internal_render_diagnostics_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var renderVMHotspotDiagnosticsKey = "__plush_internal_render_vm_hotspot_diagnostics_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var renderDiagnosticsRootActiveKey = "__plush_internal_render_diagnostics_root_active_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var renderPartialFallbackDiagnosticsKey = "__plush_internal_render_partial_fallback_diagnostics_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var renderPartialFallbackActiveKey = "__plush_internal_render_partial_fallback_active_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+
+// RenderPartialFallbackReason describes why a partial executed through the
+// interpreter while the surrounding render was using the VM.
+type RenderPartialFallbackReason string
 
 type renderDiagnosticsState struct {
 	mu          sync.Mutex
@@ -70,6 +81,24 @@ type RenderDiagnostics struct {
 	LoopOutput       RenderLoopOutputSizeDiagnostics
 	PartialOutput    RenderPartialOutputSizeDiagnostics
 	VMHotspots       RenderVMHotspotDiagnostics
+	PartialFallbacks RenderPartialFallbackDiagnostics
+}
+
+// RenderPartialFallbackDiagnostics aggregates VM partials that entered the
+// interpreter. Details are bounded so diagnostics cannot grow with arbitrary
+// dynamic partial names.
+type RenderPartialFallbackDiagnostics struct {
+	Calls          int
+	DetailsDropped int
+	Details        []RenderPartialFallbackDetail
+}
+
+// RenderPartialFallbackDetail aggregates one partial filename and fallback
+// reason within a render.
+type RenderPartialFallbackDetail struct {
+	Name   string
+	Reason RenderPartialFallbackReason
+	Calls  int
 }
 
 type RenderOutputSizeDiagnostics struct {
@@ -903,6 +932,100 @@ func UpdateRenderDiagnosticsForTemplate(ctx hctx.Context, filename string, updat
 		}
 		update(d)
 	})
+}
+
+// AddRenderDiagnosticPartialFallback records one partial that entered the
+// interpreter during a VM render. Recording is available with regular render
+// diagnostics and does not require VM hotspot timing to be enabled.
+func AddRenderDiagnosticPartialFallback(ctx hctx.Context, name string, reason RenderPartialFallbackReason) {
+	if ctx == nil || !RenderPartialFallbackDiagnosticsEnabled(ctx) {
+		return
+	}
+	if name == "" {
+		name = "<anonymous>"
+	}
+	if reason == "" {
+		reason = RenderPartialFallbackGenericBytecode
+	}
+	UpdateRenderDiagnostics(ctx, func(d *RenderDiagnostics) {
+		d.PartialFallbacks.Calls++
+		for i := range d.PartialFallbacks.Details {
+			detail := &d.PartialFallbacks.Details[i]
+			if detail.Name == name && detail.Reason == reason {
+				detail.Calls++
+				return
+			}
+		}
+		if len(d.PartialFallbacks.Details) >= renderPartialFallbackDetailLimit {
+			d.PartialFallbacks.DetailsDropped++
+			return
+		}
+		d.PartialFallbacks.Details = append(d.PartialFallbacks.Details, RenderPartialFallbackDetail{
+			Name:   name,
+			Reason: reason,
+			Calls:  1,
+		})
+	})
+}
+
+// BeginRenderDiagnosticPartialFallback marks nested partial calls as inherited
+// interpreter work until the returned restore function is called.
+func BeginRenderDiagnosticPartialFallback(ctx hctx.Context) func() {
+	if ctx == nil || !RenderPartialFallbackDiagnosticsEnabled(ctx) {
+		return nil
+	}
+	previous := ctx.Value(renderPartialFallbackActiveKey)
+	ctx.Set(renderPartialFallbackActiveKey, true)
+	return func() {
+		if previous == nil {
+			ctx.Set(renderPartialFallbackActiveKey, false)
+			return
+		}
+		ctx.Set(renderPartialFallbackActiveKey, previous)
+	}
+}
+
+// RenderDiagnosticPartialFallbackActive reports whether the current
+// interpreter render was entered as a VM partial fallback.
+func RenderDiagnosticPartialFallbackActive(ctx hctx.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	active, _ := ctx.Value(renderPartialFallbackActiveKey).(bool)
+	return active
+}
+
+// EnableRenderPartialFallbackDiagnostics enables bounded partial fallback
+// details on ctx.
+func EnableRenderPartialFallbackDiagnostics(ctx hctx.Context) {
+	SetRenderPartialFallbackDiagnostics(ctx, true)
+}
+
+// DisableRenderPartialFallbackDiagnostics disables partial fallback details on
+// ctx.
+func DisableRenderPartialFallbackDiagnostics(ctx hctx.Context) {
+	SetRenderPartialFallbackDiagnostics(ctx, false)
+}
+
+// SetRenderPartialFallbackDiagnostics controls partial fallback details on ctx.
+func SetRenderPartialFallbackDiagnostics(ctx hctx.Context, enabled bool) {
+	if ctx == nil {
+		return
+	}
+	ctx.Set(renderPartialFallbackDiagnosticsKey, enabled)
+	if enabled {
+		renderDiagnosticsStateFromContext(ctx, true)
+	}
+}
+
+// RenderPartialFallbackDiagnosticsEnabled reports whether partial fallback
+// details are enabled on ctx.
+func RenderPartialFallbackDiagnosticsEnabled(ctx hctx.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(renderPartialFallbackDiagnosticsKey).(bool)
+	return enabled
 }
 
 func renderDiagnosticsCanUpdateTemplate(d *RenderDiagnostics, filename string) bool {

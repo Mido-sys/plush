@@ -63,6 +63,9 @@ func PartialHelper(name string, data map[string]interface{}, help HelperContext)
 		help.Set(meta.TemplateFileKey, name)
 	}
 	childFile := TemplateFilenameForError(help.Context)
+	if RenderDiagnosticPartialFallbackActive(help.Context) {
+		AddRenderDiagnosticPartialFallback(help.Context, childFile, RenderPartialFallbackInheritedInterpreter)
+	}
 
 	pf, ok := help.Value("partialFeeder").(func(string) (string, error))
 	if !ok {
