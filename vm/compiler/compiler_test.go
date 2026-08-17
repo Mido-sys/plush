@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"html/template"
+	"strings"
 	"testing"
 
 	"github.com/gobuffalo/plush/v5/ast"
@@ -1568,6 +1569,26 @@ func Test_Static_Only_Bytecode_Includes_Scalar_Constants(t *testing.T) {
 	require.Equal(t, `10<span>items</span>`, bytecode.StaticOutput)
 	require.Equal(t, len(`10<span>items</span>`), bytecode.StaticSize)
 	require.Truef(t, instructionContainsOpcode(bytecode.Instructions, code.OpWriteConstant), "expected OpWriteConstant:\n%s", bytecode.Instructions.String())
+}
+
+func Test_Static_Output_Detection_Rejects_Dynamic_Template_Before_Allocating_Static_Prefix(t *testing.T) {
+	constants := []object.Object{
+		&object.Native{Value: template.HTML(strings.Repeat("x", 32*1024))},
+		&object.String{Value: "name"},
+	}
+	instructions := code.Instructions{}
+	instructions = append(instructions, code.Make(code.OpWriteHTML, 0)...)
+	instructions = append(instructions, code.Make(code.OpWriteName, 1)...)
+
+	var output string
+	var static bool
+	allocations := testing.AllocsPerRun(100, func() {
+		output, static = staticOutputFromInstructions(instructions, constants)
+	})
+
+	require.False(t, static)
+	require.Empty(t, output)
+	require.Zero(t, allocations)
 }
 
 func Test_Output_Size_StaticSize_Excludes_NonGuaranteed_Branch_And_Loop_Static(t *testing.T) {

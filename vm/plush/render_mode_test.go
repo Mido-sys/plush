@@ -482,6 +482,70 @@ func Test_Buffalo_Renderer_From_Trusted_Bytecode_Cache(t *testing.T) {
 	require.False(t, hit)
 }
 
+func Test_Buffalo_Trusted_Bytecode_Cache_Hit_Bypasses_Source_Load_Until_Invalidated(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	t.Cleanup(func() {
+		rootplush.ClearTemplateCache()
+		rootplush.PlushCacheSetup(nil)
+	})
+
+	previousMode := rootplush.SetRenderMode(rootplush.RenderModeVM)
+	t.Cleanup(func() {
+		rootplush.SetRenderMode(previousMode)
+	})
+
+	const physicalFilename = "/templates/client-7/trusted-page.plush.html"
+	source := `<h1><%= name %></h1>`
+	sourceLoads := 0
+	renderFile := func(name string) (string, bool, error) {
+		data := map[string]interface{}{
+			meta.TemplateFileKey: "templates/trusted-page.plush",
+			"name":               name,
+		}
+		configure := func(ctx *rootplush.Context) {
+			rootplush.EnableTrustedPartialBytecodeCache(ctx)
+		}
+		if rendered, hit, err := rootplush.BuffaloRendererFromTrustedBytecodeCache(physicalFilename, data, nil, configure); hit || err != nil {
+			return rendered, hit, err
+		}
+
+		sourceLoads++
+		configureAndCache := func(ctx *rootplush.Context) {
+			configure(ctx)
+			rootplush.SetTrustedTopLevelBytecodeCacheFilename(ctx, physicalFilename)
+		}
+		rendered, err := rootplush.BuffaloRendererWithContext(source, data, nil, configureAndCache)
+		return rendered, false, err
+	}
+
+	first, hit, err := renderFile("Mido")
+	require.NoError(t, err)
+	require.False(t, hit)
+	require.Equal(t, "<h1>Mido</h1>", first)
+	require.Equal(t, 1, sourceLoads)
+
+	second, hit, err := renderFile("Leela")
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "<h1>Leela</h1>", second)
+	require.Equal(t, 1, sourceLoads, "a trusted hit must not load template source")
+
+	source = `<section><%= name %></section>`
+	cache.Delete(rootplush.GenerateASTKey(physicalFilename))
+	third, hit, err := renderFile("Fry")
+	require.NoError(t, err)
+	require.False(t, hit)
+	require.Equal(t, "<section>Fry</section>", third)
+	require.Equal(t, 2, sourceLoads, "explicit invalidation must force one source reload")
+
+	fourth, hit, err := renderFile("Bender")
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "<section>Bender</section>", fourth)
+	require.Equal(t, 2, sourceLoads)
+}
+
 func Test_Buffalo_Renderer_From_Trusted_Bytecode_Cache_Stays_Off_In_Interpreter_Mode(t *testing.T) {
 	previousMode := rootplush.SetRenderMode(rootplush.RenderModeInterpreter)
 	defer rootplush.SetRenderMode(previousMode)

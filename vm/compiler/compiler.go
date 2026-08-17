@@ -1451,6 +1451,10 @@ func (c *Compiler) lastWriteConstantIndex(op code.Opcode) (int, bool) {
 }
 
 func staticOutputFromInstructions(instructions code.Instructions, constants []object.Object) (string, bool) {
+	if !staticOutputInstructionsOnly(instructions, constants) {
+		return "", false
+	}
+
 	var out strings.Builder
 	for i := 0; i < len(instructions); {
 		op := code.Opcode(instructions[i])
@@ -1484,6 +1488,58 @@ func staticOutputFromInstructions(instructions code.Instructions, constants []ob
 		i += 1 + read
 	}
 	return out.String(), true
+}
+
+// staticOutputInstructionsOnly validates the complete instruction stream
+// before staticOutputFromInstructions starts building its result. Dynamic
+// templates can contain large static prefixes; rejecting them first avoids
+// allocating and then discarding a copy of that prefix.
+func staticOutputInstructionsOnly(instructions code.Instructions, constants []object.Object) bool {
+	for i := 0; i < len(instructions); {
+		op := code.Opcode(instructions[i])
+		def, err := code.Lookup(instructions[i])
+		if err != nil {
+			return false
+		}
+		operands, read := code.ReadOperands(def, instructions[i+1:])
+		switch op {
+		case code.OpWriteHTML:
+			if _, ok := htmlConstantValue(constants, operands[0]); !ok {
+				return false
+			}
+		case code.OpWriteString:
+			if _, ok := stringConstantValue(constants, operands[0]); !ok {
+				return false
+			}
+		case code.OpWriteConstant:
+			if !staticConstantOutputSupported(constants, operands[0]) {
+				return false
+			}
+		default:
+			return false
+		}
+		i += 1 + read
+	}
+	return true
+}
+
+func staticConstantOutputSupported(constants []object.Object, index int) bool {
+	if index < 0 || index >= len(constants) {
+		return false
+	}
+	obj := constants[index]
+	if object.IsNull(obj) {
+		return true
+	}
+	switch obj := obj.(type) {
+	case *object.Integer, *object.Float, *object.Boolean, *object.String:
+		return true
+	case *object.Native:
+		_, ok := obj.Value.(template.HTML)
+		return ok
+	default:
+		return false
+	}
 }
 
 func stringConstantValue(constants []object.Object, index int) (string, bool) {
