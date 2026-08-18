@@ -211,31 +211,48 @@ func (a FastArgs) Len() int {
 	return a.args.Len()
 }
 
-func (a FastArgs) Raw(index int) (interface{}, bool) {
+func (a FastArgs) raw(index int) (interface{}, bool) {
 	if a.args == nil || index < 0 || index >= a.args.Len() {
 		return nil, false
 	}
-	return fastArgGoValue(a.args.Raw(index)), true
+	return a.args.Raw(index), true
+}
+
+func (a FastArgs) Raw(index int) (interface{}, bool) {
+	value, ok := a.raw(index)
+	if !ok {
+		return nil, false
+	}
+	return fastArgGoValue(value), true
 }
 
 func (a FastArgs) String(index int) (string, bool) {
-	if a.args == nil || index < 0 || index >= a.args.Len() {
+	value, ok := a.raw(index)
+	if !ok {
 		return "", false
 	}
-	return fastWriteRawStringArg(a.args.Raw(index))
+	return fastWriteRawStringArg(value)
 }
 
 func (a FastArgs) Bool(index int) (bool, bool) {
-	value, ok := a.Raw(index)
+	value, ok := a.raw(index)
 	if !ok {
 		return false, false
 	}
+	switch value := value.(type) {
+	case *object.Boolean:
+		return value.Value, true
+	case *object.Native:
+		v, ok := value.Value.(bool)
+		return v, ok
+	}
+	value = fastArgGoValue(value)
 	v, ok := value.(bool)
 	return v, ok
 }
 
 func (a FastArgs) Int64(index int) (int64, bool) {
-	value, ok := a.Raw(index)
+	value, ok := a.raw(index)
 	if !ok {
 		return 0, false
 	}
@@ -243,7 +260,7 @@ func (a FastArgs) Int64(index int) (int64, bool) {
 }
 
 func (a FastArgs) Uint64(index int) (uint64, bool) {
-	value, ok := a.Raw(index)
+	value, ok := a.raw(index)
 	if !ok {
 		return 0, false
 	}
@@ -251,7 +268,7 @@ func (a FastArgs) Uint64(index int) (uint64, bool) {
 }
 
 func (a FastArgs) Float64(index int) (float64, bool) {
-	value, ok := a.Raw(index)
+	value, ok := a.raw(index)
 	if !ok {
 		return 0, false
 	}
@@ -277,7 +294,19 @@ func fastArgGoValue(value interface{}) interface{} {
 }
 
 func fastArgInt64(value interface{}) (int64, bool) {
+	switch value := value.(type) {
+	case *object.Integer:
+		return int64(int(value.Value)), true
+	case *object.Float:
+		return int64(value.Value), true
+	case *object.Native:
+		return fastArgInt64Native(value.Value)
+	}
 	value = fastArgGoValue(value)
+	return fastArgInt64Native(value)
+}
+
+func fastArgInt64Native(value interface{}) (int64, bool) {
 	switch value := value.(type) {
 	case int:
 		return int64(value), true
@@ -336,7 +365,19 @@ func fastArgInt64(value interface{}) (int64, bool) {
 }
 
 func fastArgUint64(value interface{}) (uint64, bool) {
+	switch value := value.(type) {
+	case *object.Integer:
+		return fastArgUint64Native(int(value.Value))
+	case *object.Float:
+		return fastArgUint64Native(value.Value)
+	case *object.Native:
+		return fastArgUint64Native(value.Value)
+	}
 	value = fastArgGoValue(value)
+	return fastArgUint64Native(value)
+}
+
+func fastArgUint64Native(value interface{}) (uint64, bool) {
 	switch value := value.(type) {
 	case int:
 		if value < 0 {
@@ -411,7 +452,19 @@ func fastArgUint64(value interface{}) (uint64, bool) {
 }
 
 func fastArgFloat64(value interface{}) (float64, bool) {
+	switch value := value.(type) {
+	case *object.Integer:
+		return float64(int(value.Value)), true
+	case *object.Float:
+		return value.Value, true
+	case *object.Native:
+		return fastArgFloat64Native(value.Value)
+	}
 	value = fastArgGoValue(value)
+	return fastArgFloat64Native(value)
+}
+
+func fastArgFloat64Native(value interface{}) (float64, bool) {
 	switch value := value.(type) {
 	case int:
 		return float64(value), true

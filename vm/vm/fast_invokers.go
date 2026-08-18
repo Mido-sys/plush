@@ -1673,6 +1673,11 @@ func fastWriteStringArg(obj object.Object) (string, bool) {
 }
 
 func fastWriteRawStringArg(value interface{}) (string, bool) {
+	if obj, ok := value.(object.Object); ok {
+		if raw, ok := fastWriteStringArg(obj); ok {
+			return raw, true
+		}
+	}
 	value = fastArgGoValue(value)
 	switch value := value.(type) {
 	case string:
@@ -1739,6 +1744,14 @@ func fastStringMapArg(value interface{}) (map[string]interface{}, bool) {
 }
 
 func fastWriteRawBoolArg(value interface{}) (bool, bool) {
+	switch value := value.(type) {
+	case *object.Boolean:
+		return value.Value, true
+	case *object.Native:
+		if raw, ok := value.Value.(bool); ok {
+			return raw, true
+		}
+	}
 	value = fastArgGoValue(value)
 	if raw, ok := value.(bool); ok {
 		return raw, true
