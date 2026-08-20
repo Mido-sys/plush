@@ -84,8 +84,9 @@ func renderVM(t *testing.T, input string, factory contextFactory) (string, error
 func renderVMContext(t *testing.T, input string, ctx hctx.Context) (string, error) {
 	t.Helper()
 
-	previousFallback := rootplush.SetVMGenericFallback(true)
+	previousFallback := rootplush.SetVMGenericFallback(false)
 	defer rootplush.SetVMGenericFallback(previousFallback)
+	rootplush.EnableRenderPartialFallbackDiagnostics(ctx)
 
 	out, err := vmplush.Render(input, ctx)
 	requireNoInterpreterFallback(t, ctx, err)
@@ -101,6 +102,7 @@ func requireNoInterpreterFallback(t *testing.T, ctx hctx.Context, renderErr erro
 	}
 	if ok {
 		require.NotEqual(t, rootplush.RenderFastPathInterpreterFallback, diagnostics.FastPath, "parity render fell back to the interpreter: %s", diagnostics.FastReject)
+		require.Zero(t, diagnostics.PartialFallbacks.Calls, "parity render used interpreter fallback for a partial: %+v", diagnostics.PartialFallbacks.Details)
 	}
 }
 

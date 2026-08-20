@@ -13,7 +13,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_VM_Write_Fast_Direct_String_Call_Segment_Variants(t *testing.T) {
+var fastValueHelperLookupBenchmarkSink FastValueHelperFunc
+
+func Benchmark_VM_Fast_Value_Helper_Lookup_Through_Partial_Context(b *testing.B) {
+	root := plush.NewContext()
+	helper := func(hctx.Context, FastArgs) (interface{}, error) { return nil, nil }
+	SetFastValueHelper(root, "helper", helper)
+	ctx := newPartialOverlayContext(newPartialOverlayContext(root))
+
+	resolved, ok := fastValueHelperForContext(ctx, "helper")
+	require.True(b, ok)
+	require.NotNil(b, resolved)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resolved, ok = fastValueHelperForContext(ctx, "helper")
+		if !ok {
+			b.Fatal("registered fast value helper was not found")
+		}
+	}
+	fastValueHelperLookupBenchmarkSink = resolved
+}
+
+func Test_VM_Fast_Helper_Registry_Uses_Typed_Lookup_With_Value_Fallback(t *testing.T) {
+	registry := &fastHelperRegistry{helpers: map[string]FastHelperFunc{}}
+
+	typed := newLookupTestContext(map[string]interface{}{vmFastHelpersKey: registry})
+	require.Same(t, registry, fastHelperRegistryForContext(typed, false))
+	require.Equal(t, 1, typed.lookup)
+	require.Zero(t, typed.has)
+	require.Zero(t, typed.value)
+
+	fallback := newVMFallbackContext(map[string]interface{}{vmFastHelpersKey: registry})
+	require.Same(t, registry, fastHelperRegistryForContext(fallback, false))
+	require.Zero(t, fallback.has)
+	require.Equal(t, 1, fallback.value)
+}
+
+func Test_VM_Write_Fast_Direct_String_Call_Segment_Modes(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"name": "<Mido>"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"name"}}, ctx)
 	call := &compiler.FastCallPlan{

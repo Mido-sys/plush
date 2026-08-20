@@ -3,6 +3,7 @@ package vm
 import (
 	"fmt"
 	"html/template"
+	"io"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ type benchmarkScenario struct {
 type benchmarkRobot struct {
 	Name    benchmarkName
 	Enabled bool
-	Stock   uint32
+	Score   uint32
 	Friends []benchmarkRobot
 }
 
@@ -38,23 +39,23 @@ func (n benchmarkName) Echo() string {
 	return string(n)
 }
 
-type benchmarkProduct struct {
+type benchmarkRecord struct {
 	Name     string
 	Count    int
 	Category benchmarkCategory
 }
 
-type benchmarkCatalog struct {
-	Products []benchmarkStoreProduct
+type benchmarkDataset struct {
+	Records []benchmarkWorkspaceRecord
 }
 
-type benchmarkStoreProduct struct {
+type benchmarkWorkspaceRecord struct {
 	Name    string
-	Stock   uint32
-	Friends []benchmarkStoreFriend
+	Score   uint32
+	Friends []benchmarkWorkspacePeer
 }
 
-type benchmarkStoreFriend struct {
+type benchmarkWorkspacePeer struct {
 	Name string
 }
 
@@ -115,7 +116,7 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "mixed_numeric_operators",
-			input: `<%= i32 == 0 %>|<%= u32 == 0 %>|<%= u64one == 1.0 %>|<%= f32i == 3 %>|<%= f64i == i32v %>|<%= robot.Stock == 3.0 %>`,
+			input: `<%= i32 == 0 %>|<%= u32 == 0 %>|<%= u64one == 1.0 %>|<%= f32i == 3 %>|<%= f64i == i32v %>|<%= robot.Score == 3.0 %>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
 					"i32":    int32(0),
@@ -124,7 +125,7 @@ func benchmarkScenarios() []benchmarkScenario {
 					"u64one": uint64(1),
 					"f32i":   float32(3),
 					"f64i":   float64(3),
-					"robot":  benchmarkRobot{Stock: uint32(3)},
+					"robot":  benchmarkRobot{Score: uint32(3)},
 				})
 			},
 			reuse: true,
@@ -143,28 +144,28 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "loop_struct_property",
-			input: `<%= for (i, product) in products { %><%= product.Name %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= record.Name %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkRobot, 100)
-				for i := range products {
-					products[i] = benchmarkRobot{Name: benchmarkName(fmt.Sprintf("product-%d", i))}
+				records := make([]benchmarkRobot, 100)
+				for i := range records {
+					records[i] = benchmarkRobot{Name: benchmarkName(fmt.Sprintf("record-%d", i))}
 				}
-				return rootplush.NewContextWith(map[string]interface{}{"products": products})
+				return rootplush.NewContextWith(map[string]interface{}{"records": records})
 			},
 			reuse: true,
 		},
 		{
 			name:  "loop_concat_output",
-			input: `<%= for (i, product) in products { %><%= product.Name + " x " + product.Count %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= record.Name + " x " + record.Count %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkProduct, 100)
-				for i := range products {
-					products[i] = benchmarkProduct{
-						Name:  fmt.Sprintf("product-%d", i),
+				records := make([]benchmarkRecord, 100)
+				for i := range records {
+					records[i] = benchmarkRecord{
+						Name:  fmt.Sprintf("record-%d", i),
 						Count: i + 1,
 					}
 				}
-				return rootplush.NewContextWith(map[string]interface{}{"products": products})
+				return rootplush.NewContextWith(map[string]interface{}{"records": records})
 			},
 			reuse: true,
 		},
@@ -182,10 +183,10 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "nested_struct_property",
-			input: `<%= product.Category.Label %>:<%= product.Name %>`,
+			input: `<%= record.Category.Label %>:<%= record.Name %>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
-					"product": benchmarkProduct{
+					"record": benchmarkRecord{
 						Name:     "Bender",
 						Category: benchmarkCategory{Label: "Robot"},
 					},
@@ -195,30 +196,30 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "loop_nested_struct_property",
-			input: `<%= for (i, product) in products { %><%= product.Category.Label %>:<%= product.Name %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= record.Category.Label %>:<%= record.Name %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkProduct, 100)
-				for i := range products {
-					products[i] = benchmarkProduct{
-						Name:     fmt.Sprintf("product-%d", i),
+				records := make([]benchmarkRecord, 100)
+				for i := range records {
+					records[i] = benchmarkRecord{
+						Name:     fmt.Sprintf("record-%d", i),
 						Category: benchmarkCategory{Label: "robot"},
 					}
 				}
-				return rootplush.NewContextWith(map[string]interface{}{"products": products})
+				return rootplush.NewContextWith(map[string]interface{}{"records": records})
 			},
 			reuse: true,
 		},
 		{
 			name:  "loop_helper_call",
-			input: `<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkRobot, 100)
-				for i := range products {
-					products[i] = benchmarkRobot{Name: benchmarkName(fmt.Sprintf("product-%d", i))}
+				records := make([]benchmarkRobot, 100)
+				for i := range records {
+					records[i] = benchmarkRobot{Name: benchmarkName(fmt.Sprintf("record-%d", i))}
 				}
 				return rootplush.NewContextWith(map[string]interface{}{
-					"prefix":   "product",
-					"products": products,
+					"prefix":  "record",
+					"records": records,
 					"label": func(name benchmarkName, prefix string) string {
 						return prefix + ":" + name.Echo()
 					},
@@ -228,15 +229,15 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "loop_helper_call_string",
-			input: `<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkProduct, 100)
-				for i := range products {
-					products[i] = benchmarkProduct{Name: fmt.Sprintf("product-%d", i)}
+				records := make([]benchmarkRecord, 100)
+				for i := range records {
+					records[i] = benchmarkRecord{Name: fmt.Sprintf("record-%d", i)}
 				}
 				return rootplush.NewContextWith(map[string]interface{}{
-					"prefix":   "product",
-					"products": products,
+					"prefix":  "record",
+					"records": records,
 					"label": func(name string, prefix string) string {
 						return prefix + ":" + name
 					},
@@ -246,15 +247,15 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "loop_helper_call_int",
-			input: `<%= for (i, product) in products { %><%= label(i, suffix) %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= label(i, suffix) %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkProduct, 100)
-				for i := range products {
-					products[i] = benchmarkProduct{Name: fmt.Sprintf("product-%d", i)}
+				records := make([]benchmarkRecord, 100)
+				for i := range records {
+					records[i] = benchmarkRecord{Name: fmt.Sprintf("record-%d", i)}
 				}
 				return rootplush.NewContextWith(map[string]interface{}{
-					"suffix":   "items",
-					"products": products,
+					"suffix":  "items",
+					"records": records,
 					"label": func(index int, suffix string) string {
 						return fmt.Sprintf("%d:%s", index, suffix)
 					},
@@ -264,33 +265,33 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "loop_conditional",
-			input: `<%= for (i, product) in products { %><%= if product.Enabled { %><%= product.Name %><% } else { %>hidden<% } %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= if record.Enabled { %><%= record.Name %><% } else { %>hidden<% } %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkRobot, 100)
-				for i := range products {
-					products[i] = benchmarkRobot{
-						Name:    benchmarkName(fmt.Sprintf("product-%d", i)),
+				records := make([]benchmarkRobot, 100)
+				for i := range records {
+					records[i] = benchmarkRobot{
+						Name:    benchmarkName(fmt.Sprintf("record-%d", i)),
 						Enabled: i%2 == 0,
 					}
 				}
-				return rootplush.NewContextWith(map[string]interface{}{"products": products})
+				return rootplush.NewContextWith(map[string]interface{}{"records": records})
 			},
 			reuse: true,
 		},
 		{
 			name:  "loop_infix_conditional",
-			input: `<%= for (i, product) in products { %><%= if product.Stock > min && i != 0 { %><%= product.Name %><% } else { %>hidden<% } %>;<% } %>`,
+			input: `<%= for (i, record) in records { %><%= if record.Score > min && i != 0 { %><%= record.Name %><% } else { %>hidden<% } %>;<% } %>`,
 			ctx: func() hctx.Context {
-				products := make([]benchmarkRobot, 100)
-				for i := range products {
-					products[i] = benchmarkRobot{
-						Name:  benchmarkName(fmt.Sprintf("product-%d", i)),
-						Stock: uint32(i % 5),
+				records := make([]benchmarkRobot, 100)
+				for i := range records {
+					records[i] = benchmarkRobot{
+						Name:  benchmarkName(fmt.Sprintf("record-%d", i)),
+						Score: uint32(i % 5),
 					}
 				}
 				return rootplush.NewContextWith(map[string]interface{}{
-					"min":      uint64(2),
-					"products": products,
+					"min":     uint64(2),
+					"records": records,
 				})
 			},
 			reuse: true,
@@ -369,11 +370,11 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "partial_data_helper_map",
-			input: `<%= partial("row.plush", {label: label(product.Name, prefix)}) %><%= partial("row.plush", {label: label(product.Name, prefix)}) %><%= partial("row.plush", {label: label(product.Name, prefix)}) %>`,
+			input: `<%= partial("row.plush", {label: label(record.Name, prefix)}) %><%= partial("row.plush", {label: label(record.Name, prefix)}) %><%= partial("row.plush", {label: label(record.Name, prefix)}) %>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
-					"product": benchmarkProduct{Name: "Bender"},
-					"prefix":  "robot",
+					"record": benchmarkRecord{Name: "Bender"},
+					"prefix": "robot",
 					"label": func(name string, prefix string) string {
 						return prefix + ":" + name
 					},
@@ -420,10 +421,10 @@ func benchmarkScenarios() []benchmarkScenario {
 		},
 		{
 			name:  "conditional_simple_access",
-			input: `<%= if robot.Stock > min { %><%= robot.Name %><% } else if fallback { %><%= labels["status"] %>:<%= count == 1 %><% } else { %>no<% } %>`,
+			input: `<%= if robot.Score > min { %><%= robot.Name %><% } else if fallback { %><%= labels["status"] %>:<%= count == 1 %><% } else { %>no<% } %>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
-					"robot":    benchmarkRobot{Name: benchmarkName("Bender"), Stock: 0},
+					"robot":    benchmarkRobot{Name: benchmarkName("Bender"), Score: 0},
 					"min":      uint32(0),
 					"fallback": true,
 					"labels":   map[string]string{"status": "ready"},
@@ -456,16 +457,16 @@ func benchmarkScenarios() []benchmarkScenario {
 			reuse: true,
 		},
 		{
-			name: "generic_storefront_shape",
-			input: `<% let title = "Products" %>
+			name: "generic_workspace_shape",
+			input: `<% let title = "Records" %>
 <%= wrap({class: "grid"}) { %>
 <h2><%= title %></h2>
 <%= if (!hidden) { %>
-<%= for (_, product) in catalog.Products { %>
+<%= for (_, record) in dataset.Records { %>
 <article>
-<h3><%= product.Name %></h3>
-<%= if (product.Stock > 0) { %><span><%= product.Stock %></span><% } else { %><span>sold out</span><% } %>
-<ul><%= for (_, friend) in product.Friends { %><%= if (friend.Name == "stop") { %><%= break %><% } %><li><%= friend.Name %></li><% } %></ul>
+<h3><%= record.Name %></h3>
+<%= if (record.Score > 0) { %><span><%= record.Score %></span><% } else { %><span>unavailable</span><% } %>
+<ul><%= for (_, friend) in record.Friends { %><%= if (friend.Name == "stop") { %><%= break %><% } %><li><%= friend.Name %></li><% } %></ul>
 </article>
 <% } %>
 <% } %>
@@ -473,10 +474,10 @@ func benchmarkScenarios() []benchmarkScenario {
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
 					"hidden": false,
-					"catalog": benchmarkCatalog{Products: []benchmarkStoreProduct{
-						{Name: "Bender", Stock: 3, Friends: []benchmarkStoreFriend{{Name: "Fry"}, {Name: "Leela"}}},
-						{Name: "Zoidberg", Stock: 0, Friends: []benchmarkStoreFriend{{Name: "Hermes"}, {Name: "stop"}, {Name: "Amy"}}},
-						{Name: "Nibbler", Stock: 1, Friends: []benchmarkStoreFriend{{Name: "Mido"}}},
+					"dataset": benchmarkDataset{Records: []benchmarkWorkspaceRecord{
+						{Name: "Bender", Score: 3, Friends: []benchmarkWorkspacePeer{{Name: "Fry"}, {Name: "Leela"}}},
+						{Name: "Zoidberg", Score: 0, Friends: []benchmarkWorkspacePeer{{Name: "Hermes"}, {Name: "stop"}, {Name: "Amy"}}},
+						{Name: "Nibbler", Score: 1, Friends: []benchmarkWorkspacePeer{{Name: "Mido"}}},
 					}},
 					"wrap": func(data map[string]interface{}, help rootplush.HelperContext) (template.HTML, error) {
 						body, err := help.Block()
@@ -612,15 +613,137 @@ func BenchmarkRenderCachedFilename(b *testing.B) {
 	}
 }
 
+func BenchmarkVMTrustedPartialBytecodeCache(b *testing.B) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	b.Cleanup(func() {
+		rootplush.ClearTemplateCache()
+		rootplush.PlushCacheSetup(nil)
+	})
+
+	const partialName = "bench-record-card.plush"
+	const partialSource = `<span><%= record %></span>`
+	records := []string{
+		"one", "two", "three", "four", "five", "six", "seven", "eight",
+		"nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+	}
+	tmpl, err := Compile(`<%= for (_, record) in records { %><%= partial("` + partialName + `") %><% } %>`)
+	if err != nil {
+		b.Fatal(err)
+	}
+	newContext := func(trusted bool) hctx.Context {
+		ctx := rootplush.NewContextWith(map[string]interface{}{
+			"records": records,
+			"partialFeeder": func(name string) (string, error) {
+				if name != partialName {
+					return "", fmt.Errorf("unexpected partial %q", name)
+				}
+				return partialSource, nil
+			},
+		})
+		if trusted {
+			rootplush.EnableTrustedPartialBytecodeCache(ctx)
+		}
+		return ctx
+	}
+
+	if _, err := tmpl.Render(newContext(false)); err != nil {
+		b.Fatal(err)
+	}
+
+	for _, scenario := range []struct {
+		name    string
+		trusted bool
+	}{
+		{name: "source_validated", trusted: false},
+		{name: "trusted_bytecode", trusted: true},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				out, err := tmpl.Render(newContext(scenario.trusted))
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkSink = out
+			}
+		})
+	}
+}
+
+func BenchmarkVMFormPartialCompatibilityFallback(b *testing.B) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	previousFallback := rootplush.SetVMGenericFallback(true)
+	b.Cleanup(func() {
+		rootplush.SetVMGenericFallback(previousFallback)
+		rootplush.ClearTemplateCache()
+		rootplush.PlushCacheSetup(nil)
+	})
+
+	for _, scenario := range []struct {
+		name        string
+		partialName string
+		helperName  string
+		source      string
+	}{
+		{
+			name:        "compiled_form",
+			partialName: "bench-compiled-form.plush",
+			helperName:  "form",
+			source:      partialFormDocumentSource,
+		},
+		{
+			name:        "compatibility_fallback",
+			partialName: "bench-fallback-form.plush",
+			helperName:  "guardedForm",
+			source:      strings.Replace(partialFormDocumentSource, "form(", "guardedForm(", 1),
+		},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			tmpl, err := Compile(`<%= partial("` + scenario.partialName + `") %>`)
+			if err != nil {
+				b.Fatal(err)
+			}
+			newContext := func() hctx.Context {
+				ctx := newPartialFormDocumentContext(scenario.partialName, scenario.source, scenario.helperName)
+				ctx.Set("partialFeeder", func(name string) (string, error) {
+					if name != scenario.partialName {
+						return "", fmt.Errorf("unexpected partial %q", name)
+					}
+					contents, err := io.ReadAll(strings.NewReader(scenario.source))
+					return string(contents), err
+				})
+				rootplush.EnableTrustedPartialBytecodeCache(ctx)
+				return ctx
+			}
+			if _, err := tmpl.Render(newContext()); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				out, err := tmpl.Render(newContext())
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkSink = out
+			}
+		})
+	}
+}
+
 func BenchmarkRenderSourceBytecodeCache(b *testing.B) {
 	scenarios := []benchmarkScenario{
 		{
 			name:  "variable_snippet",
-			input: `<script>window.store = "<%= storeURL %>"; window.page = "<%= page %>";</script>`,
+			input: `<script>window.origin = "<%= originURL %>"; window.page = "<%= page %>";</script>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
-					"storeURL": "devstorev1.com",
-					"page":     "product",
+					"originURL": "example.test",
+					"page":      "record",
 				})
 			},
 			reuse: true,
@@ -630,7 +753,7 @@ func BenchmarkRenderSourceBytecodeCache(b *testing.B) {
 			input: `<%= assetTag("app.js") %><%= assetTag("app.css") %><%= assetTag(name + ".js") %>`,
 			ctx: func() hctx.Context {
 				return rootplush.NewContextWith(map[string]interface{}{
-					"name": "product",
+					"name": "record",
 					"assetTag": func(name string) template.HTML {
 						return template.HTML(`<script src="/assets/` + name + `"></script>`)
 					},

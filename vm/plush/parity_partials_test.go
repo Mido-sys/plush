@@ -11,6 +11,7 @@ import (
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/helpers/meta"
 	"github.com/gobuffalo/plush/v5/templatecache/inmemory"
+	vmplush "github.com/gobuffalo/plush/v5/vm/plush"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +19,23 @@ type parityPartialNode struct {
 	Label    string
 	Enabled  bool
 	Children []parityPartialNode
+}
+
+type parityPartialRecordSet struct {
+	PathPrefix string
+	Records    []parityPartialRecord
+}
+
+type parityPartialRecord struct {
+	Slug string
+}
+
+type parityPartialViewEnvelope struct {
+	RecordSet *parityPartialRecordSet
+}
+
+type parityPartialRootView struct {
+	PathPrefix string
 }
 
 func Test_Parity_Partials_Simple(t *testing.T) {
@@ -41,11 +59,110 @@ func Test_Parity_Phase_12_Nested_Partial_Path_Metadata(t *testing.T) {
 		ctx.Set("partialFeeder", func(name string) (string, error) {
 			return partials[name], nil
 		})
-		ctx.Set(meta.TemplateBaseFileNameKey, "path/product_listing")
-		ctx.Set(meta.TemplateFileKey, "/fake/templates/path/product_listing.html")
+		ctx.Set(meta.TemplateBaseFileNameKey, "path/record_listing")
+		ctx.Set(meta.TemplateFileKey, "/fake/templates/path/record_listing.html")
 		ctx.Set(meta.TemplateExtensionKey, "html")
 		return ctx
 	})
+}
+
+func Test_Parity_Partials_Three_Level_Chain_Inherits_Shadowed_Local(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	rootplush.PlushCacheSetup(cache)
+	defer rootplush.ClearTemplateCache()
+
+	partials := map[string]string{
+		"level-one.plush.html": `<%= partial("nested/level-two.plush.html") %>`,
+		"nested/level-two.plush.html": `<% let view_state = get_view_state() %>` +
+			`<%= if (view_state && view_state.RecordSet.Records) { %>` +
+			`<%= partial("nested/level-three.plush.html") %><% } %>`,
+		"nested/level-three.plush.html": `<%= for (_, record) in view_state.RecordSet.Records { %>` +
+			`<a href="/<%= view_state.RecordSet.PathPrefix %>/<%= record.Slug %>"><%= record.Slug %></a>` +
+			`<% } %>`,
+	}
+	newContext := func() hctx.Context {
+		ctx := rootplush.NewContextWith(map[string]interface{}{
+			// The level-two local must shadow this differently shaped root value
+			// throughout both nested partial calls.
+			"view_state": parityPartialRootView{PathPrefix: "wrong-root"},
+			"get_view_state": func() parityPartialViewEnvelope {
+				return parityPartialViewEnvelope{RecordSet: &parityPartialRecordSet{
+					PathPrefix: "local-path",
+					Records: []parityPartialRecord{
+						{Slug: "first-record"},
+						{Slug: "second-record"},
+					},
+				}}
+			},
+			"partialFeeder": parityRecursivePartialFeeder(partials),
+		})
+		ctx.Set(meta.TemplateFileKey, "nested-partial-root.plush.html")
+		return ctx
+	}
+
+	const input = `<%= partial("level-one.plush.html") %>`
+	const expected = `<a href="/local-path/first-record">first-record</a>` +
+		`<a href="/local-path/second-record">second-record</a>`
+	interpreterOut, interpreterErr := rootplush.Render(input, newContext())
+	require.NoError(t, interpreterErr)
+	require.Equal(t, expected, interpreterOut)
+
+	for render := 0; render < 2; render++ {
+		vmOut, vmErr := renderVMContext(t, input, newContext())
+		require.NoError(t, vmErr)
+		require.Equal(t, expected, vmOut)
+	}
+}
+
+func Test_Parity_Partials_Three_Level_Compatibility_Fallback_Rejects_Invalid_Shadowed_Field(t *testing.T) {
+	partials := map[string]string{
+		"level-one.plush.html": `<%= partial("nested/level-two.plush.html") %>`,
+		"nested/level-two.plush.html": `<% let view_state = get_view_state() %>` +
+			`<%= partial("nested/level-three.plush.html") %>`,
+		"nested/level-three.plush.html": `<%= compatibility({}) { %>` +
+			`<%= view_state.PathPrefix %><% } %>`,
+	}
+	newContext := func() hctx.Context {
+		return rootplush.NewContextWith(map[string]interface{}{
+			"view_state": parityPartialRootView{PathPrefix: "wrong-root"},
+			"get_view_state": func() parityPartialViewEnvelope {
+				return parityPartialViewEnvelope{RecordSet: &parityPartialRecordSet{
+					PathPrefix: "local-path",
+				}}
+			},
+			"compatibility": func(_ map[string]interface{}, help rootplush.HelperContext) (template.HTML, error) {
+				body, err := help.Block()
+				return template.HTML(body), err
+			},
+			"partialFeeder": parityRecursivePartialFeeder(partials),
+		})
+	}
+
+	const input = `<%= partial("level-one.plush.html") %>`
+	_, interpreterErr := rootplush.RenderInterpreter(input, newContext())
+	requireInvalidNestedViewFieldError(t, interpreterErr)
+
+	previousFallback := rootplush.SetVMGenericFallback(true)
+	defer rootplush.SetVMGenericFallback(previousFallback)
+	vmCtx := newContext()
+	rootplush.EnableRenderPartialFallbackDiagnostics(vmCtx)
+	_, vmErr := vmplush.Render(input, vmCtx)
+	requireInvalidNestedViewFieldError(t, vmErr)
+
+	diagnostics, ok := rootplush.RenderDiagnosticsFromContext(vmCtx)
+	require.True(t, ok)
+	require.Equal(t, 1, diagnostics.PartialFallbacks.Calls)
+	require.Len(t, diagnostics.PartialFallbacks.Details, 1)
+	require.Equal(t, rootplush.RenderPartialFallbackBlockCallCompatibility, diagnostics.PartialFallbacks.Details[0].Reason)
+	require.Equal(t, 1, diagnostics.PartialFallbacks.Details[0].Calls)
+	require.Contains(t, diagnostics.PartialFallbacks.Details[0].Name, "nested/level-three.plush.html")
+}
+
+func requireInvalidNestedViewFieldError(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "'view_state' does not have a field or method named 'PathPrefix'")
+	require.ErrorContains(t, err, "view_state.PathPrefix")
 }
 
 func Test_Parity_Phase_12_Partials_Data_Recursion_Layout_And_Yield(t *testing.T) {
@@ -141,8 +258,8 @@ func Test_Parity_Partials_Data_Map_Values(t *testing.T) {
 }
 
 func Test_Parity_Partials_Data_Map_Helper_Call_Value(t *testing.T) {
-	compareRender(t, `<%= partial("row", {label: label(product.Name, prefix)}) %>|<%= product.Name %>`, contextWith(map[string]interface{}{
-		"product": struct {
+	compareRender(t, `<%= partial("row", {label: label(record.Name, prefix)}) %>|<%= record.Name %>`, contextWith(map[string]interface{}{
+		"record": struct {
 			Name string
 		}{Name: "<Bender>"},
 		"prefix": "robot",
@@ -295,12 +412,12 @@ func Test_Phase_12_VM_Plush_Cache_Uses_Current_URL_In_Full_Key(t *testing.T) {
 
 	ctx := rootplush.NewContext()
 	ctx.Set(meta.TemplateFileKey, "phase12-url.plush")
-	ctx.Set(meta.TemplateCurrentUrlKey, "/products/123?ignored=true")
+	ctx.Set(meta.TemplateCurrentUrlKey, "/records/123?ignored=true")
 
 	out, err := renderVMContext(t, `<%= "x" %><%H "hole" %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "xhole", out)
-	requireCacheKey(t, cache, "full:phase12-url.plush|url:products_123")
+	requireCacheKey(t, cache, "full:phase12-url.plush|url:records_123")
 }
 
 func Test_Phase_12_VM_Plush_Caches_Bytecode_By_AST_Key(t *testing.T) {

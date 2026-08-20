@@ -508,6 +508,11 @@ Alpha
 
 Partial data is scoped to that partial render. Passing `{name: record.Name}` does not replace `record.Name` or `name` in the parent context after the partial finishes.
 
+Nested compiled partials preserve lexical locals and shadowing across each
+partial boundary. When a nested partial fails, its template trace retains the
+inner source line, including errors raised inside a block helper body, instead
+of replacing it with the outer helper-call line.
+
 You can pass literals, variables, struct fields, indexed values, and nested property chains:
 
 ```erb
@@ -539,6 +544,7 @@ For one-off template strings, the interpreter is still a good default because th
 | --- | --- | --- |
 | Hot template string reused many times | `vmplush.Compile` once, then `tmpl.Render(ctx)` | Avoids parse and compile on every render |
 | File-backed app templates | `plush.SetRenderMode(plush.RenderModeVM)` plus `PlushCacheSetup` | Reuses cached VM bytecode by filename |
+| Watched file-backed templates | Trusted partial and top-level bytecode cache APIs | Skips warm source reads and source hashing when the application owns invalidation |
 | One-off/dynamic template strings | Default `plush.Render` interpreter | Avoids compile overhead when reuse is unlikely |
 | App-specific hot helpers | Optional `vmplush.SetFastHelper` and `vmplush.SetFastValueHelper` | Skips generic reflection for helper hot paths |
 
@@ -584,7 +590,10 @@ import (
 plush.SetRenderMode(plush.RenderModeVM)
 ```
 
-The blank import registers the VM renderer. Without it, `RenderModeVM` cannot call the VM path.
+The blank import registers both the normal VM renderer and the trusted
+filename-cache renderer. Without it, `RenderModeVM` cannot call the VM path.
+Applications normally do not call `RegisterVMRenderer` or
+`RegisterTrustedVMCacheRenderer` directly.
 
 ### Filename Cache
 
@@ -608,7 +617,137 @@ ctx.Set(meta.TemplateFileKey, "templates/items/show.plush.html")
 html, err := plush.Render(input, ctx)
 ```
 
-The filename must be present in the context for filename-backed cache reuse. On the first render, the VM compiles the template. On later renders of the same filename, it can reuse bytecode.
+The filename must be present in the context for filename-backed cache reuse. On the first render, the VM compiles the template. On later renders of the same filename, it can reuse bytecode. The regular path still receives the current source and compares its hash before using the cached entry. It therefore avoids parsing and compilation, but a file-backed application may still read the source before calling Plush.
+
+### Trusted File-Backed Bytecode Cache
+
+Applications that monitor their template files and reliably invalidate cache entries can opt into filename-first bytecode reuse. This lets warm VM renders execute cached bytecode before reading or hashing template source.
+
+The trusted mode uses the existing template cache; it does not create a second bytecode cache and does not cache rendered HTML, request data, helper results, or template source strings.
+
+Configure `PlushCacheSetup`, select `RenderModeVM`, and register the VM renderer as shown in the preceding sections before using this mode.
+
+#### Trusted partials
+
+Enable trusted partial bytecode reuse on each render context:
+
+```go
+html, err := plush.BuffaloRendererWithContext(input, data, helpers, func(ctx *plush.Context) {
+  plush.EnableTrustedPartialBytecodeCache(ctx)
+})
+```
+
+The setting is inherited by child contexts. On the first partial call, Plush uses `partialFeeder`, compiles the source, and stores its bytecode. Later calls can find that bytecode by filename before invoking `partialFeeder`. Current context values and the partial data map are still evaluated for every call.
+
+The bytecode cache accepts `.plush`, `.plush.html`, and plain `.html` template
+filenames.
+
+Do not enable this option for a dynamic `partialFeeder` that can return different source for the same filename without cache invalidation. Without trusted mode, partials retain source-hash validation.
+
+The complete per-context control surface is:
+
+```go
+plush.EnableTrustedPartialBytecodeCache(ctx)
+plush.DisableTrustedPartialBytecodeCache(ctx)
+plush.SetTrustedPartialBytecodeCache(ctx, enabled)
+enabled := plush.TrustedPartialBytecodeCacheEnabled(ctx)
+```
+
+#### Trusted top-level templates
+
+Top-level pages and layouts need a physical cache filename that is unique to the source file. A file-backed renderer can try the cache before loading source and fall back to its normal read path on a miss:
+
+```go
+import (
+  "os"
+
+  plush "github.com/gobuffalo/plush/v5"
+  "github.com/gobuffalo/plush/v5/helpers/meta"
+  _ "github.com/gobuffalo/plush/v5/vm/plush"
+)
+
+func renderTemplate(
+  logicalFilename string,
+  physicalFilename string,
+  data map[string]interface{},
+  helpers map[string]interface{},
+) (string, error) {
+  data[meta.TemplateFileKey] = logicalFilename
+
+  configure := func(ctx *plush.Context) {
+    plush.EnableTrustedPartialBytecodeCache(ctx)
+  }
+
+  if html, hit, err := plush.BuffaloRendererFromTrustedBytecodeCache(
+    physicalFilename,
+    data,
+    helpers,
+    configure,
+  ); err != nil || hit {
+    return html, err
+  }
+
+  source, err := os.ReadFile(physicalFilename)
+  if err != nil {
+    return "", err
+  }
+
+  return plush.BuffaloRendererWithContext(string(source), data, helpers, func(ctx *plush.Context) {
+    plush.EnableTrustedPartialBytecodeCache(ctx)
+    plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, physicalFilename)
+  })
+}
+```
+
+`BuffaloRendererFromTrustedBytecodeCache` returns `hit == false` when the cache entry is missing, VM mode is disabled, trusted mode was not enabled, or the bytecode requires source-backed interpreter fallback. In those cases, load the source and render normally as shown above.
+
+The physical cache filename is separate from `meta.TemplateFileKey`. Templates and partial path resolution continue to see the logical filename, while the cache can distinguish tenant, template version, and locale files. Include those identities in the physical path:
+
+```text
+/templates/client-1/template-a/templates/page.plush.html
+/templates/client-2/template-b/templates/page.plush.html
+/templates/client-2/template-b/templates/page.plush.fr-ca.html
+```
+
+`SetTrustedTopLevelBytecodeCacheFilename` applies to the next top-level VM render only. Plush consumes it before executing child renders so punch holes and nested templates cannot inherit the parent file's cache identity.
+`TrustedTopLevelBytecodeCacheFilename` exposes the pending value for custom
+file-backed renderers; ordinary callers do not need to read it.
+
+Custom VM integrations can register a compatible `plush.TrustedVMCacheRenderFunc` with `plush.RegisterTrustedVMCacheRenderer`. The standard integration exposes that function directly as `vmplush.RenderTrustedBytecodeCache`.
+
+#### Invalidation requirements
+
+Trusted bytecode is correct only while the application keeps filename cache entries synchronized with the files. When a monitored template changes or is deleted, remove every cache key that may resolve to that file:
+
+```go
+cache.Delete(plush.GenerateASTKey(physicalFilename))
+```
+
+If an application supports aliases, underscore partial names, locale fallbacks, or logical filename shortcuts, invalidate all corresponding physical and logical keys. File additions and deletions should also clear the application's filename-resolution or alias cache. The next request will miss, read the selected source, compile it, and repopulate the bytecode cache.
+
+Use a full physical path or another globally unique identity when multiple clients share one Plush cache. Two different sources must never use the same trusted cache filename. Interpreter mode does not use the filename-first bytecode path and continues loading top-level and partial source normally.
+
+### VM Context and Partial Compatibility
+
+Recent VM runtime improvements do not require template or helper API changes:
+
+- Frame-local partial contexts keep their first eight local values inline, reuse
+  overflow storage for larger scopes, and return pooled contexts after scoped
+  loop, partial, and registered fast-helper calls. Custom contexts still use
+  their own `New` implementation.
+- Fast loop calls reuse argument storage, and fast-helper registry lookup uses a
+  typed context lookup when the context supports it. Compatibility contexts
+  continue through the existing `Value` lookup.
+- Compiled partials containing supported block helpers, including form blocks
+  nested inside loops and conditionals, stay on the VM fast path. A block whose
+  bytecode cannot use a compatible fast plan still uses the configured
+  interpreter fallback.
+- Locals and shadowed names remain scoped correctly through nested partial
+  chains. Errors raised inside a block helper preserve the innermost template
+  line in the partial trace instead of reporting only the outer helper line.
+
+The pooling and inline-storage bounds are performance choices, not template
+limits. Larger scopes continue through overflow storage with the same behavior.
 
 ### Compiled Render Diagnostics
 
@@ -668,6 +807,7 @@ Useful fields:
 | `EngineDuration` | Time spent inside Plush rendering. Use `EngineDurationMilliseconds()` for reporting. |
 | `FastPlan` | Static complexity counters for the compiled fast plan: bindings, segments, static segments, name segments, property reads, value writes, helper calls, conditionals, loops, loop parts, partials, max depth, helper names, and partial names. |
 | `VMHotspots` | Optional helper and partial call counts/timings when VM hotspot diagnostics are enabled. Helper diagnostics also separate direct invocations from reflective compatibility calls and retain bounded helper/signature details. |
+| `PartialFallbacks` | Optional aggregate and bounded per-partial details for partials that entered the interpreter during a VM render. Enable collection with `EnableRenderPartialFallbackDiagnostics`. |
 
 #### VM Execution Paths
 
@@ -806,6 +946,67 @@ The aggregate counters remain exact. To bound diagnostic memory, one diagnostics
 
 This diagnostic does not record helper arguments, return values, context data, or rendered output. Signatures and helper names can still reveal application structure, so keep these logs and headers internal. Plush caches the calling strategy associated with a function type; it does not cache a request's helper closure or its result.
 
+#### Detecting Partial Interpreter Fallbacks
+
+Partial fallback diagnostics identify the individual partials that entered the
+classic interpreter while their surrounding render was using the VM. They are
+independent of VM hotspot timing and are disabled by default.
+
+Enable them on the render context, then inspect `PartialFallbacks` after the
+render:
+
+```go
+ctx := plush.NewContext()
+plush.EnableRenderPartialFallbackDiagnostics(ctx)
+
+_, err := plush.Render(input, ctx)
+if err != nil {
+  return err
+}
+
+diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
+if ok {
+  fmt.Printf("partial fallback calls: %d\n", diagnostics.PartialFallbacks.Calls)
+  fmt.Printf("partial fallback details dropped: %d\n", diagnostics.PartialFallbacks.DetailsDropped)
+  for _, detail := range diagnostics.PartialFallbacks.Details {
+    fmt.Printf("name=%s reason=%s calls=%d\n", detail.Name, detail.Reason, detail.Calls)
+  }
+}
+```
+
+`RenderDiagnostics.PartialFallbacks` is a
+`RenderPartialFallbackDiagnostics` value. Each retained
+`RenderPartialFallbackDetail` has a typed `RenderPartialFallbackReason`:
+
+| Reason | Constant | Meaning |
+| --- | --- | --- |
+| `generic-bytecode` | `RenderPartialFallbackGenericBytecode` | The partial could not use a supported fast plan and VM generic fallback was configured to use the interpreter. |
+| `block-call-compatibility` | `RenderPartialFallbackBlockCallCompatibility` | A block helper in the partial does not have a VM-compatible direct path. Supported `form` blocks stay on the VM path. |
+| `inherited-interpreter` | `RenderPartialFallbackInheritedInterpreter` | The partial was called from another partial that had already entered interpreter fallback. |
+
+`PartialFallbacks.Calls` is exact for the render. To keep diagnostic memory
+bounded when names are dynamic, Plush retains at most 16 unique
+`name + reason` details. Each call whose pair is not retained increments
+`DetailsDropped`; repeated calls for a retained pair continue updating its count.
+
+Use `SetRenderPartialFallbackDiagnostics` when a boolean setting is more
+convenient, or `DisableRenderPartialFallbackDiagnostics` to turn collection off
+on a reused context. `RenderPartialFallbackDiagnosticsEnabled` reports the
+effective setting. These diagnostics record partial names and reason codes, not
+source text, arguments, context values, helper results, or rendered HTML.
+
+Custom VM integrations can record equivalent work with
+`AddRenderDiagnosticPartialFallback`. Use
+`BeginRenderDiagnosticPartialFallback` around an interpreter-rendered parent so
+nested calls are classified as `inherited-interpreter`;
+`RenderDiagnosticPartialFallbackActive` reports whether that scope is active.
+
+Supported `form` blocks, including nested loops and the injected form builder,
+stay on the compiled path. Unsupported block helpers retain interpreter
+compatibility fallback. Errors raised inside nested partials preserve the
+innermost helper-block source line while retaining the full parent-to-child
+partial filename chain.
+
 If your renderer creates a Plush context internally and then copies local values back into a data map, use `RenderDiagnosticsFromData` after rendering. `BuffaloRendererWithContext` is useful when you also need to set `meta.TemplateFileKey` or enable hotspot diagnostics:
 
 ```go
@@ -890,6 +1091,10 @@ if ok {
     fmt.Sprintf("%d", diagnostics.VMHotspots.PartialCalls))
   w.Header().Set("X-Plush-VM-Partial-Time-Ms",
     fmt.Sprintf("%.3f", diagnostics.VMPartialDurationMilliseconds()))
+  w.Header().Set("X-Plush-VM-Partial-Fallback-Calls",
+    fmt.Sprintf("%d", diagnostics.PartialFallbacks.Calls))
+  w.Header().Set("X-Plush-VM-Partial-Fallback-Details-Dropped",
+    fmt.Sprintf("%d", diagnostics.PartialFallbacks.DetailsDropped))
   w.Header().Set("X-Plush-VM-Helper-Hotspots",
     diagnostics.VMHelperHotspotsHeader())
   if helperPaths := diagnostics.VMHelperCallPathsHeader(); helperPaths != "" {
@@ -932,6 +1137,7 @@ Common header meanings:
 | `X-Plush-VM-Helper-Call-Paths` | Exact direct, reflection, and unclassified helper-call totals; direct/reflection time; reflection percentage; and bounded-detail drop counts. |
 | `X-Plush-VM-Helper-Call-Details` | Up to eight retained helper/signature records, with reflection records ordered first. Use this to identify signatures worth adding to the generated direct invokers or registering through `SetFastHelper` or `SetFastValueHelper`. |
 | `X-Plush-VM-Partial-*` | Optional partial-call count and timing fields. They are zero unless `EnableRenderVMHotspotDiagnostics` was enabled for that context. |
+| `X-Plush-VM-Partial-Fallback-*` | Application-mapped fallback totals and bounded-detail drop counts. They are zero unless `EnableRenderPartialFallbackDiagnostics` was enabled for that context. Inspect `diagnostics.PartialFallbacks.Details` for retained partial names, reasons, and counts. |
 | `Server-Timing` | Browser/devtools-friendly timing summary. The example maps Plush engine time plus optional VM helper and partial hotspot time into server timing metrics. |
 
 ### Adaptive Output-Size Estimator
@@ -1082,6 +1288,9 @@ Most VM optimizations need no template changes. The VM automatically specializes
 - partials with no data, including direct linked rendering when the partial body is simple and does not need partial metadata
 - partials with simple static-key data maps, such as `partial("row", {name: record.Name})`; the VM prepares the keys and value lookup plan, then reads fresh values each render
 - partial data maps with helper-call values, such as `partial("row", {label: label(record.Name, prefix)})`; the VM compiles the call arguments and uses direct value invokers for common helper signatures
+- block-aware form helpers inside partials, including nested loops and
+  conditionals; unsupported block-helper shapes retain the compatibility path
+- lexical locals and shadowed names propagated through nested partial chains
 - dynamic partial names and `layout` data values through the regular VM partial helper-call path
 - linked partial bodies that contain simple property/access/infix output, such as `<%= record.Name %>` or `<%= labels["status"] %>`
 - clean filename cache keys and punch-hole filename checks for file-backed cached renders
@@ -1157,6 +1366,8 @@ The template stays normal:
 ```
 
 Fast helpers should only optimize the hot path. They must not cache request values or rendered output. Use `WriteEscapedString` for normal text and `WriteHTML` only for trusted `template.HTML`. Value helpers should return the same Go value as the normal helper. If either fast helper cannot safely handle the current arguments, return `vmplush.ErrFastUnsupported` so the VM can call the regular helper.
+
+`FastArgs` and the context passed to a `FastValueHelperFunc` are valid only for the duration of that helper call because the VM reuses their backing storage. Do not retain either after the helper returns. A helper that must keep an argument should retain the value returned by `args.Raw(i)`, not `FastArgs` itself.
 
 #### Runtime source partials
 

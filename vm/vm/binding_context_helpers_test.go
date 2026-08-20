@@ -257,6 +257,11 @@ func Test_VM_Push_Name_And_Context_Name_I_D_Cache_Branches(t *testing.T) {
 func Test_VM_Fast_Line_And_Budget_Helper_Branches(t *testing.T) {
 	require.NoError(t, fastLineError(7, nil))
 	require.EqualError(t, fastLineError(0, errors.New("boom")), "line 1: boom")
+	require.EqualError(t, fastBlockCallLineError(3, errors.New("line 8: boom")), "line 8: boom")
+	innerLineError := errors.New("line 8: boom")
+	promoted := fastBlockCallLineError(3, fmt.Errorf("could not call helper function: %w", innerLineError))
+	require.EqualError(t, promoted, "line 8: could not call helper function: boom")
+	require.ErrorIs(t, promoted, innerLineError)
 
 	require.NoError(t, spendFastTraversal(nil, 2))
 	require.NoError(t, spendFastLoop(nil, 2))

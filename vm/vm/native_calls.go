@@ -406,7 +406,7 @@ func (vm *VM) reflectArgs(name string, plan *callPlan, numArgs int, block *objec
 		}
 	} else if len(args) < plan.numIn {
 		args, _ = appendMissingFixedHelperArgs(args, plan, func(kind optionalArgKind, expected reflect.Type) (reflect.Value, bool) {
-			return vm.optionalArg(kind, expected, block)
+			return vm.optionalArgForCall(kind, expected, block, name == "partial")
 		})
 	}
 
@@ -609,9 +609,21 @@ func optionalArgKindFor(expected reflect.Type) optionalArgKind {
 }
 
 func (vm *VM) optionalArg(kind optionalArgKind, expected reflect.Type, block *object.Closure) (reflect.Value, bool) {
+	return vm.optionalArgForCall(kind, expected, block, false)
+}
+
+func (vm *VM) optionalArgForCall(kind optionalArgKind, expected reflect.Type, block *object.Closure, scoped bool) (reflect.Value, bool) {
 	switch kind {
 	case optionalArgHelperContext:
-		hargs := vm.helperContext(block)
+		var hargs plush.HelperContext
+		if scoped {
+			var scope partialChildContextScope
+			hargs, scope = vm.scopedHelperContext(block)
+			vm.lastHelperContextScope.release()
+			vm.lastHelperContextScope = scope
+		} else {
+			hargs = vm.helperContext(block)
+		}
 		vm.lastHelperContext = hargs.Context
 		value := reflect.ValueOf(hargs)
 		if value.Type().AssignableTo(expected) {
@@ -631,15 +643,37 @@ func (vm *VM) optionalArg(kind optionalArgKind, expected reflect.Type, block *ob
 }
 
 func (vm *VM) helperContext(block *object.Closure) plush.HelperContext {
+	ctx := vm.contextWithFrameLocals()
+	return vm.helperContextWithContext(block, ctx)
+}
+
+func (vm *VM) scopedHelperContext(block *object.Closure) (plush.HelperContext, partialChildContextScope) {
+	ctx, scope := vm.scopedContextWithFrameLocals()
+	return vm.helperContextWithContext(block, ctx), scope
+}
+
+func (vm *VM) helperContextWithContext(block *object.Closure, ctx hctx.Context) plush.HelperContext {
 	var runner func(hctx.Context) (string, error)
 	if block != nil {
 		runner = func(ctx hctx.Context) (string, error) {
 			return vm.runBlock(block, ctx)
 		}
 	}
-	ctx := vm.contextWithFrameLocals()
 	seedCapturedBindings(ctx, block)
 	return plush.NewHelperContextWithLine(ctx, runner, vm.currentLineNumber())
+}
+
+func (vm *VM) takeLastHelperContext() (hctx.Context, partialChildContextScope) {
+	ctx := vm.lastHelperContext
+	scope := vm.lastHelperContextScope
+	vm.lastHelperContext = nil
+	vm.lastHelperContextScope = partialChildContextScope{}
+	return ctx, scope
+}
+
+func (vm *VM) discardLastHelperContext() {
+	_, scope := vm.takeLastHelperContext()
+	scope.release()
 }
 
 func (vm *VM) contextWithFrameLocals() hctx.Context {
@@ -650,6 +684,26 @@ func (vm *VM) contextWithFrameLocals() hctx.Context {
 	}
 
 	scoped := ctx.New()
+	vm.copyFrameLocalsToContext(frame, scoped)
+	return scoped
+}
+
+func (vm *VM) scopedContextWithFrameLocals() (hctx.Context, partialChildContextScope) {
+	ctx := vm.ctx
+	frame := vm.currentFrame()
+	if ctx == nil || frame == nil || frame.cl == nil || frame.cl.Fn == nil || len(frame.cl.Fn.LocalNames) == 0 {
+		return ctx, partialChildContextScope{}
+	}
+
+	scoped, scope := scopedPartialHelperChildContext(ctx)
+	vm.copyFrameLocalsToContext(frame, scoped)
+	return scoped, scope
+}
+
+func (vm *VM) copyFrameLocalsToContext(frame *Frame, scoped hctx.Context) {
+	if frame == nil || frame.cl == nil || frame.cl.Fn == nil || scoped == nil {
+		return
+	}
 	for index, name := range frame.cl.Fn.LocalNames {
 		stackIndex := frame.basePointer + index
 		if stackIndex < 0 || stackIndex >= len(vm.stack) {
@@ -661,7 +715,6 @@ func (vm *VM) contextWithFrameLocals() hctx.Context {
 		}
 		scoped.Set(name, object.ToGo(value))
 	}
-	return scoped
 }
 
 func (vm *VM) runBlock(block *object.Closure, ctx hctx.Context) (string, error) {
@@ -708,6 +761,7 @@ func (vm *VM) childVM(cl *object.Closure, args []object.Object, ctx hctx.Context
 }
 
 func (vm *VM) resetChild(cl *object.Closure, args []object.Object, ctx hctx.Context) {
+	vm.discardLastHelperContext()
 	if vm.stackMax > len(vm.stack) {
 		vm.stackMax = len(vm.stack)
 	}

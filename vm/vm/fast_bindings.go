@@ -1,7 +1,10 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/gobuffalo/plush/v5"
 	"github.com/gobuffalo/plush/v5/helpers/hctx"
@@ -275,6 +278,67 @@ func fastLineError(line int, err error) error {
 		line = 1
 	}
 	return fmt.Errorf("line %d: %w", line, err)
+}
+
+func fastBlockCallLineError(line int, err error) error {
+	if err == nil || plush.IsTemplateTraceError(err) {
+		return err
+	}
+	if strings.HasPrefix(err.Error(), "line ") {
+		return err
+	}
+	if promoted, ok := promoteFastWrappedLineError(err); ok {
+		return promoted
+	}
+	return fastLineError(line, err)
+}
+
+type fastPromotedLineError struct {
+	line    int
+	message string
+	cause   error
+}
+
+func (e *fastPromotedLineError) Error() string {
+	return fmt.Sprintf("line %d: %s", e.line, e.message)
+}
+
+func (e *fastPromotedLineError) Unwrap() error {
+	return e.cause
+}
+
+func promoteFastWrappedLineError(err error) (error, bool) {
+	outerMessage := strings.TrimSpace(err.Error())
+	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+		causeMessage := strings.TrimSpace(cause.Error())
+		line, detail, ok := splitFastLineErrorPrefix(causeMessage)
+		if !ok {
+			continue
+		}
+		message := detail
+		if strings.HasSuffix(outerMessage, causeMessage) {
+			message = strings.TrimSpace(strings.TrimSuffix(outerMessage, causeMessage) + detail)
+		}
+		return &fastPromotedLineError{line: line, message: message, cause: err}, true
+	}
+	return nil, false
+}
+
+func splitFastLineErrorPrefix(message string) (int, string, bool) {
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(message, "line ") {
+		return 0, message, false
+	}
+	rest := strings.TrimPrefix(message, "line ")
+	colon := strings.IndexByte(rest, ':')
+	if colon <= 0 {
+		return 0, message, false
+	}
+	line, err := strconv.Atoi(strings.TrimSpace(rest[:colon]))
+	if err != nil || line <= 0 {
+		return 0, message, false
+	}
+	return line, strings.TrimSpace(rest[colon+1:]), true
 }
 
 func fastBudget(ctx hctx.Context) *plush.Budget {

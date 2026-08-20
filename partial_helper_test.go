@@ -65,8 +65,8 @@ func Test_Partial_Helper_Nested_Partial_Path_Handling(t *testing.T) {
 
 	help := plush.HelperContext{Context: plush.NewContext()}
 	help.Set("partialFeeder", partialFeeder)
-	help.Set(meta.TemplateBaseFileNameKey, "path/product_listing")
-	help.Set(meta.TemplateFileKey, "/fake/templates/path/product_listing.html")
+	help.Set(meta.TemplateBaseFileNameKey, "path/record_listing")
+	help.Set(meta.TemplateFileKey, "/fake/templates/path/record_listing.html")
 	help.Set(meta.TemplateExtensionKey, "html")
 
 	html, err := plush.Render(`<%= partial("partials/code-1.plush.html") %>`, help)

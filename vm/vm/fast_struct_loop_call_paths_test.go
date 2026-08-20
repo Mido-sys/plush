@@ -14,7 +14,7 @@ import (
 )
 
 func Test_VM_Fast_Struct_Loop_Call_Part_Branches(t *testing.T) {
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "<bot>"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "<bot>"})
 
 	t.Run("nil plan", func(t *testing.T) {
 		require.NoError(t, writeFastStructLoopCallPart(&strings.Builder{}, plush.NewContext(), fastRenderBindings{}, &fastStructLoopRenderState{}, nil, 0, item))
@@ -273,7 +273,7 @@ func Test_VM_Fast_Struct_Loop_Reflect_Call_Eligibility_Branches(t *testing.T) {
 func Test_VM_Fast_Struct_Loop_Call_Arg_Reflect_Branches(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"prefix": "pre"})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"prefix"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 	accessPlan := structLoopCallPlan(t, structLoopNameArg()).args[0].accessPlan
 
 	value, err := evalFastStructLoopCallArgReflect(nil, ctx, bindings, 0, item, stringType, "helper", 0)
@@ -377,7 +377,7 @@ func Test_VM_Fast_Struct_Loop_Access_Chain_Reflect_Value_Edges(t *testing.T) {
 
 	_, ok, err = evalFastAccessChainReflectValue(&fastAccessChainPlan{steps: []fastAccessChainStep{{
 		kind: fastAccessStepKind(255),
-	}}}, reflect.ValueOf(vmStructLoopProduct{}), ctx)
+	}}}, reflect.ValueOf(vmStructLoopRecord{}), ctx)
 	require.NoError(t, err)
 	require.False(t, ok)
 }

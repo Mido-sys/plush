@@ -76,11 +76,12 @@ func (vm *VM) tryWriteLiteralPartialNameCall(name string, raw interface{}, numAr
 	}
 	oldSP := vm.sp
 	vm.sp -= numArgs
-	callCtx := vm.contextWithFrameLocals()
+	callCtx, callCtxScope := vm.scopedContextWithFrameLocals()
 	handled, err := renderFastNoDataPartialIntoWithDiagnostics(&frame.output, arg.Value, callCtx, vm.currentLineNumber(), vm.renderVMHotspots())
 	if handled || err != nil {
 		vm.syncFrameBindingsFromContext(callCtx)
 	}
+	callCtxScope.release()
 	if err != nil {
 		return true, err
 	}
@@ -96,9 +97,8 @@ type partialOverlayContext struct {
 	parent     hctx.Context
 	vmHotspots plush.RenderVMHotspotDiagnosticsRecorder
 	inline     [8]partialOverlayValue
+	overflow   []partialOverlayValue
 	count      int
-	extra      map[string]interface{}
-	extraIDs   map[int]interface{}
 	idNames    map[int]string
 	nameIDs    map[string]int
 	idInterner *plush.InternTable
@@ -138,11 +138,9 @@ func (c *partialOverlayContext) reset(parent hctx.Context) {
 		c.inline[i] = partialOverlayValue{}
 	}
 	c.count = 0
-	if c.extra != nil {
-		clear(c.extra)
-	}
-	if c.extraIDs != nil {
-		clear(c.extraIDs)
+	if c.overflow != nil {
+		clear(c.overflow)
+		c.overflow = c.overflow[:0]
 	}
 	if c.idNames != nil {
 		clear(c.idNames)
@@ -278,6 +276,12 @@ func (c *partialOverlayContext) InternID(key string) int {
 	if id, ok := c.idForName(key); ok {
 		return id
 	}
+	id := c.resolveUncachedID(key)
+	c.rememberIDName(id, key)
+	return id
+}
+
+func (c *partialOverlayContext) resolveUncachedID(key string) int {
 	var id int
 	if lookup, ok := c.parent.(contextIDLookup); ok {
 		id = lookup.InternID(key)
@@ -287,7 +291,6 @@ func (c *partialOverlayContext) InternID(key string) int {
 		}
 		id = c.idInterner.Intern(key)
 	}
-	c.rememberIDName(id, key)
 	return id
 }
 
@@ -385,9 +388,12 @@ func (c *partialOverlayContext) localValue(key string) (interface{}, bool) {
 			return c.inline[i].value, true
 		}
 	}
-	if c.extra != nil {
-		value, ok := c.extra[key]
-		return value, ok
+	if key != "" {
+		for i := range c.overflow {
+			if c.overflow[i].key == key {
+				return c.overflow[i].value, true
+			}
+		}
 	}
 	return nil, false
 }
@@ -398,9 +404,10 @@ func (c *partialOverlayContext) localValueID(id int) (interface{}, bool) {
 			return c.inline[i].value, true
 		}
 	}
-	if c.extraIDs != nil {
-		value, ok := c.extraIDs[id]
-		return value, ok
+	for i := range c.overflow {
+		if c.overflow[i].id == id {
+			return c.overflow[i].value, true
+		}
 	}
 	return nil, false
 }
@@ -412,10 +419,12 @@ func (c *partialOverlayContext) setLocalExisting(key string, value interface{}) 
 			return true
 		}
 	}
-	if c.extra != nil {
-		if _, ok := c.extra[key]; ok {
-			c.extra[key] = value
-			return true
+	if key != "" {
+		for i := range c.overflow {
+			if c.overflow[i].key == key {
+				c.overflow[i].value = value
+				return true
+			}
 		}
 	}
 	return false
@@ -428,9 +437,9 @@ func (c *partialOverlayContext) setLocalIDExisting(id int, value interface{}) bo
 			return true
 		}
 	}
-	if c.extraIDs != nil {
-		if _, ok := c.extraIDs[id]; ok {
-			c.extraIDs[id] = value
+	for i := range c.overflow {
+		if c.overflow[i].id == id {
+			c.overflow[i].value = value
 			return true
 		}
 	}
@@ -438,7 +447,13 @@ func (c *partialOverlayContext) setLocalIDExisting(id int, value interface{}) bo
 }
 
 func (c *partialOverlayContext) setLocal(key string, value interface{}) {
-	id := c.InternID(key)
+	if c == nil {
+		return
+	}
+	id, ok := c.idForName(key)
+	if !ok {
+		id = c.resolveUncachedID(key)
+	}
 	c.setLocalWithID(key, id, value)
 }
 
@@ -455,19 +470,10 @@ func (c *partialOverlayContext) setLocalWithID(key string, id int, value interfa
 		c.count++
 		return
 	}
-	if key != "" && id >= 0 {
-		c.rememberIDName(id, key)
+	if c.overflow == nil {
+		c.overflow = make([]partialOverlayValue, 0, 4)
 	}
-	if c.extra == nil {
-		c.extra = make(map[string]interface{}, 4)
-	}
-	if key != "" {
-		c.extra[key] = value
-	}
-	if c.extraIDs == nil {
-		c.extraIDs = make(map[int]interface{}, 4)
-	}
-	c.extraIDs[id] = value
+	c.overflow = append(c.overflow, partialOverlayValue{key: key, id: id, value: value})
 }
 
 func (c *partialOverlayContext) rememberIDName(id int, key string) {
@@ -504,6 +510,11 @@ func (c *partialOverlayContext) idForName(key string) (int, bool) {
 			return c.inline[i].id, true
 		}
 	}
+	for i := range c.overflow {
+		if c.overflow[i].key == key {
+			return c.overflow[i].id, true
+		}
+	}
 	if c.nameIDs != nil {
 		if id, ok := c.nameIDs[key]; ok {
 			return id, true
@@ -519,6 +530,11 @@ func (c *partialOverlayContext) nameForID(id int) (string, bool) {
 	for i := 0; i < c.count; i++ {
 		if c.inline[i].id == id && c.inline[i].key != "" {
 			return c.inline[i].key, true
+		}
+	}
+	for i := range c.overflow {
+		if c.overflow[i].id == id && c.overflow[i].key != "" {
+			return c.overflow[i].key, true
 		}
 	}
 	if name, ok := c.idNames[id]; ok {
@@ -1221,16 +1237,25 @@ func cachedPartialBytecodeLinkForFilename(filename string, ctx hctx.Context) (*p
 	if link, ok := links.GetLink(key, 0); ok {
 		return link, true
 	}
-	return nil, false
+	if !plush.TrustedPartialBytecodeCacheEnabled(ctx) {
+		return nil, false
+	}
+	cached, ok := plush.CachedVMBytecodeForCleanFilename(filename)
+	if !ok {
+		return nil, false
+	}
+	bytecode, ok := cached.(*compiler.Bytecode)
+	if !ok || bytecode == nil {
+		return nil, false
+	}
+	return links.Set(key, 0, bytecode), true
 }
 
 func directPartialBytecodeLinkForName(name string, filename string, ctx hctx.Context) (*partialBytecodeLink, bool, error) {
 	if filename == "" {
 		return nil, false, nil
 	}
-	links := partialBytecodeLinks(ctx)
-	linkKey := partialBytecodeLinkKey(filename, "", 0)
-	if link, ok := links.GetLink(linkKey, 0); ok {
+	if link, ok := cachedPartialBytecodeLinkForFilename(filename, ctx); ok {
 		if directPartialBytecodeLinkCanRender(link.bytecode) {
 			return link, true, nil
 		}
@@ -1662,16 +1687,6 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 	}
 	childFile := plush.TemplateFilenameForError(help.Context)
 
-	pf, ok := links.partialFeeder(help.Context)
-	if !ok {
-		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
-	}
-
-	part, err := pf(name)
-	if err != nil {
-		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
-	}
-
 	if help.Value(vmAlreadyInPartial) == nil {
 		help.Set(vmAlreadyInPartial, name)
 		defer help.Set(vmAlreadyInPartial, nil)
@@ -1687,15 +1702,35 @@ func vmPartialHelper(name string, data map[string]interface{}, help plush.Helper
 		}()
 	}
 
+	needsJSEscape := partialNeedsJSEscape(help.Context, name)
+	var cachedOut strings.Builder
+	if renderedCached, err := renderCachedPartialBytecodeInto(&cachedOut, help.Context, name, needsJSEscape); renderedCached || err != nil {
+		if err != nil {
+			return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
+		}
+		part := cachedOut.String()
+		if layout, ok := data["layout"].(string); ok {
+			return vmPartialHelper(layout, map[string]interface{}{"yield": template.HTML(part)}, help)
+		}
+		return template.HTML(part), nil
+	}
+
+	pf, ok := links.partialFeeder(help.Context)
+	if !ok {
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, fmt.Errorf("could not find partial feeder from helpers"))
+	}
+
+	part, err := pf(name)
+	if err != nil {
+		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
+	}
+
 	part, err = renderLinkedPartial(part, help.Context)
 	if err != nil {
 		return "", plush.WrapPartialRenderError(parentFile, parentLine, childFile, err)
 	}
-	if ct, ok := help.Value("contentType").(string); ok {
-		ext := filepath.Ext(name)
-		if strings.Contains(ct, "javascript") && ext != ".js" && ext != "" {
-			part = template.JSEscapeString(part)
-		}
+	if needsJSEscape {
+		part = template.JSEscapeString(part)
 	}
 
 	if layout, ok := data["layout"].(string); ok {
@@ -1761,25 +1796,37 @@ func shouldFallbackPartialBytecode(bytecode *compiler.Bytecode) bool {
 	if shouldFallbackGenericBytecode(bytecode) {
 		return true
 	}
-	return plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasBlockCalls(bytecode.FastRenderPlan)
+	return plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasCompatibilityBlockCalls(bytecode.FastRenderPlan)
 }
 
-func fastRenderPlanHasBlockCalls(plan *compiler.FastRenderPlan) bool {
-	return plan != nil && fastRenderSegmentsHaveBlockCalls(plan.Segments)
+func partialFallbackReason(bytecode *compiler.Bytecode) plush.RenderPartialFallbackReason {
+	if shouldFallbackGenericBytecode(bytecode) {
+		return plush.RenderPartialFallbackGenericBytecode
+	}
+	if plush.VMGenericFallbackEnabled() && bytecode != nil && fastRenderPlanHasCompatibilityBlockCalls(bytecode.FastRenderPlan) {
+		return plush.RenderPartialFallbackBlockCallCompatibility
+	}
+	return ""
 }
 
-func fastRenderSegmentsHaveBlockCalls(segments []compiler.FastRenderSegment) bool {
+func fastRenderPlanHasCompatibilityBlockCalls(plan *compiler.FastRenderPlan) bool {
+	return plan != nil && fastRenderSegmentsHaveCompatibilityBlockCalls(plan.Segments)
+}
+
+func fastRenderSegmentsHaveCompatibilityBlockCalls(segments []compiler.FastRenderSegment) bool {
 	for i := range segments {
 		segment := &segments[i]
 		switch segment.Kind {
 		case compiler.FastRenderSegmentBlockCall:
-			return true
+			if fastBlockCallNeedsCompatibilityFallback(segment.BlockCall) {
+				return true
+			}
 		case compiler.FastRenderSegmentConditional:
-			if fastConditionalHasBlockCalls(segment.Conditional) {
+			if fastConditionalHasCompatibilityBlockCalls(segment.Conditional) {
 				return true
 			}
 		case compiler.FastRenderSegmentLoop:
-			if fastLoopHasBlockCalls(segment.Loop) {
+			if fastLoopHasCompatibilityBlockCalls(segment.Loop) {
 				return true
 			}
 		}
@@ -1787,34 +1834,51 @@ func fastRenderSegmentsHaveBlockCalls(segments []compiler.FastRenderSegment) boo
 	return false
 }
 
-func fastConditionalHasBlockCalls(conditional *compiler.FastConditionalPlan) bool {
+func fastBlockCallNeedsCompatibilityFallback(call *compiler.FastBlockCallPlan) bool {
+	if call == nil || call.BlockBytecode == nil {
+		return true
+	}
+	// Buffalo's form helper injects f into its block context. This path has
+	// dedicated VM parity coverage, including nested loops and receiver calls.
+	if call.Name != "form" {
+		return true
+	}
+	if !call.BlockBytecode.Static && call.BlockBytecode.FastRenderPlan == nil {
+		return true
+	}
+	return fastRenderPlanHasCompatibilityBlockCalls(call.BlockBytecode.FastRenderPlan)
+}
+
+func fastConditionalHasCompatibilityBlockCalls(conditional *compiler.FastConditionalPlan) bool {
 	if conditional == nil {
 		return false
 	}
 	for i := range conditional.Branches {
-		if fastRenderSegmentsHaveBlockCalls(conditional.Branches[i].Segments) {
+		if fastRenderSegmentsHaveCompatibilityBlockCalls(conditional.Branches[i].Segments) {
 			return true
 		}
 	}
-	return fastRenderSegmentsHaveBlockCalls(conditional.ElseSegments)
+	return fastRenderSegmentsHaveCompatibilityBlockCalls(conditional.ElseSegments)
 }
 
-func fastLoopHasBlockCalls(loop *compiler.FastLoopPlan) bool {
-	return loop != nil && fastLoopPartsHaveBlockCalls(loop.Parts)
+func fastLoopHasCompatibilityBlockCalls(loop *compiler.FastLoopPlan) bool {
+	return loop != nil && fastLoopPartsHaveCompatibilityBlockCalls(loop.Parts)
 }
 
-func fastLoopPartsHaveBlockCalls(parts []compiler.FastLoopPart) bool {
+func fastLoopPartsHaveCompatibilityBlockCalls(parts []compiler.FastLoopPart) bool {
 	for i := range parts {
 		part := &parts[i]
 		switch part.Kind {
 		case compiler.FastLoopPartBlockCall:
-			return true
+			if fastBlockCallNeedsCompatibilityFallback(part.BlockCall) {
+				return true
+			}
 		case compiler.FastLoopPartConditional:
-			if fastLoopConditionalHasBlockCalls(part.Conditional) {
+			if fastLoopConditionalHasCompatibilityBlockCalls(part.Conditional) {
 				return true
 			}
 		case compiler.FastLoopPartLoop:
-			if fastLoopHasBlockCalls(part.Loop) {
+			if fastLoopHasCompatibilityBlockCalls(part.Loop) {
 				return true
 			}
 		}
@@ -1822,16 +1886,16 @@ func fastLoopPartsHaveBlockCalls(parts []compiler.FastLoopPart) bool {
 	return false
 }
 
-func fastLoopConditionalHasBlockCalls(conditional *compiler.FastLoopConditionalPlan) bool {
+func fastLoopConditionalHasCompatibilityBlockCalls(conditional *compiler.FastLoopConditionalPlan) bool {
 	if conditional == nil {
 		return false
 	}
 	for i := range conditional.Branches {
-		if fastLoopPartsHaveBlockCalls(conditional.Branches[i].Parts) {
+		if fastLoopPartsHaveCompatibilityBlockCalls(conditional.Branches[i].Parts) {
 			return true
 		}
 	}
-	return fastLoopPartsHaveBlockCalls(conditional.ElseParts)
+	return fastLoopPartsHaveCompatibilityBlockCalls(conditional.ElseParts)
 }
 
 func renderLinkedPartialInline(out *strings.Builder, input string, ctx hctx.Context) (bool, error) {
@@ -1928,7 +1992,7 @@ func renderGenericPartialInline(out *strings.Builder, input string, ctx hctx.Con
 	if out == nil || !shouldFallbackPartialBytecode(bytecode) {
 		return false, nil
 	}
-	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	rendered, err := renderInterpreterPartialFallback(input, ctx, filename, bytecode)
 	if err != nil {
 		return true, err
 	}
@@ -1962,13 +2026,22 @@ func renderLinkedPartialBytecode(link *partialBytecodeLink, ctx hctx.Context, fi
 }
 
 func renderInterpreterPartial(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
-	rendered, err := renderInterpreterFallback(input, ctx, filename)
+	rendered, err := renderInterpreterPartialFallback(input, ctx, filename, bytecode)
 	if err != nil {
 		return "", err
 	}
 	observation := beginPartialOutputObservation(bytecode, filename, ctx)
 	observePartialOutput(bytecode, filename, ctx, len(rendered), observation)
 	return rendered, nil
+}
+
+func renderInterpreterPartialFallback(input string, ctx hctx.Context, filename string, bytecode *compiler.Bytecode) (string, error) {
+	plush.AddRenderDiagnosticPartialFallback(ctx, filename, partialFallbackReason(bytecode))
+	restore := plush.BeginRenderDiagnosticPartialFallback(ctx)
+	if restore != nil {
+		defer restore()
+	}
+	return renderInterpreterFallback(input, ctx, filename)
 }
 
 func renderLinkedPartialBytecodeInline(out *strings.Builder, link *partialBytecodeLink, ctx hctx.Context) (bool, error) {

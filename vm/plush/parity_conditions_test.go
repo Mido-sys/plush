@@ -88,20 +88,20 @@ func Test_Parity_Conditions_Len_Nil_Collection_Short_Circuits_Index(t *testing.T
 func Test_Parity_Conditions_Logical_Unknown_Short_Circuit(t *testing.T) {
 	compareRender(t, `<%= if (names && len(names) >= 1) { %>yes<% } else { %>no<% } %>`, emptyContext)
 	compareRender(t, `<%= paths || pages %>`, contextWith(map[string]interface{}{
-		"paths": "cart",
+		"paths": "route",
 	}))
 	compareRender(t, `<%= pages || paths %>`, contextWith(map[string]interface{}{
-		"paths": "cart",
+		"paths": "route",
 	}))
 	compareRender(t, `<%= paths && pages %>`, contextWith(map[string]interface{}{
-		"paths": "cart",
+		"paths": "route",
 	}))
 }
 
 func Test_Parity_Conditions_Complex_Or_With_Unknown_Middle(t *testing.T) {
-	compareRender(t, `<%= if (paths == "cart" || (page && page.PageTitle != "cafe") || paths == "cart") { %>hi<% } %>`, contextWith(map[string]interface{}{
-		"path":  "cart",
-		"paths": "cart",
+	compareRender(t, `<%= if (paths == "route" || (page && page.PageTitle != "cafe") || paths == "route") { %>hi<% } %>`, contextWith(map[string]interface{}{
+		"path":  "route",
+		"paths": "route",
 	}))
 }
 

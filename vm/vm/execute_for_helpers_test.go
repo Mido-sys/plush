@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type vmForProduct struct {
+type vmForRecord struct {
 	Name string
 }
 
@@ -236,7 +236,7 @@ func Test_VM_Execute_For_Raw_Local_Property_Loop(t *testing.T) {
 	require.True(t, loopCanUseRawValues(block))
 	require.False(t, loopNeedsContextWrites(block))
 
-	result, err := machine.executeFor(&object.Native{Value: []vmForProduct{{Name: "<bender>"}}}, block, "i", "product")
+	result, err := machine.executeFor(&object.Native{Value: []vmForRecord{{Name: "<bender>"}}}, block, "i", "record")
 	require.NoError(t, err)
 	array := result.(*object.Array)
 	require.Len(t, array.Elements, 1)
@@ -250,13 +250,13 @@ func Test_VM_Execute_For_Raw_Local_Property_Error_And_Iterator_Branches(t *testi
 	), 2)
 
 	machine := newExecuteForTestVM(&object.String{Value: "Name"})
-	result, err := machine.executeFor(&object.Native{Value: []interface{}{vmForProduct{Name: "<fry>"}}}, rawNameBlock, "i", "product")
+	result, err := machine.executeFor(&object.Native{Value: []interface{}{vmForRecord{Name: "<fry>"}}}, rawNameBlock, "i", "record")
 	require.NoError(t, err)
 	array := result.(*object.Array)
 	require.Len(t, array.Elements, 1)
 	require.Equal(t, template.HTML("&lt;fry&gt;"), object.ToGo(array.Elements[0]))
 
-	result, err = machine.executeFor(&object.Native{Value: &vmForIterator{values: []interface{}{vmForProduct{Name: "<zoidberg>"}}}}, rawNameBlock, "i", "product")
+	result, err = machine.executeFor(&object.Native{Value: &vmForIterator{values: []interface{}{vmForRecord{Name: "<zoidberg>"}}}}, rawNameBlock, "i", "record")
 	require.NoError(t, err)
 	array = result.(*object.Array)
 	require.Len(t, array.Elements, 1)
@@ -267,11 +267,11 @@ func Test_VM_Execute_For_Raw_Local_Property_Error_And_Iterator_Branches(t *testi
 		code.Make(code.OpReturn),
 	), 2)
 	missingMachine := newExecuteForTestVM(&object.String{Value: "Missing"})
-	result, err = missingMachine.executeFor(&object.Native{Value: []string{"bad"}}, missingBlock, "i", "product")
+	result, err = missingMachine.executeFor(&object.Native{Value: []string{"bad"}}, missingBlock, "i", "record")
 	require.ErrorContains(t, err, "does not have a field or method")
 	require.Empty(t, result.(*object.Array).Elements)
 
-	result, err = missingMachine.executeFor(&object.Native{Value: map[string]vmForProduct{"bad": {Name: "Bender"}}}, missingBlock, "i", "product")
+	result, err = missingMachine.executeFor(&object.Native{Value: map[string]vmForRecord{"bad": {Name: "Bender"}}}, missingBlock, "i", "record")
 	require.ErrorContains(t, err, "does not have a field or method")
 	require.Empty(t, result.(*object.Array).Elements)
 }

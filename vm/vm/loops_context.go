@@ -17,9 +17,10 @@ func (vm *VM) executeFor(iterable object.Object, block *object.Closure, keyName,
 	oldCtx := vm.ctx
 	loopCtx := vm.ctx
 	if writeLoopContext && vm.ctx != nil {
-		loopCtx = vm.contextWithFrameLocals()
+		var loopCtxScope partialChildContextScope
+		loopCtx, loopCtxScope = vm.scopedContextWithFrameLocals()
 		if loopCtx == nil || loopCtx == oldCtx {
-			loopCtx = vm.ctx.New()
+			loopCtx, loopCtxScope = scopedPartialHelperChildContext(vm.ctx)
 		}
 		seedCapturedBindings(loopCtx, block)
 		vm.ctx = loopCtx
@@ -29,6 +30,7 @@ func (vm *VM) executeFor(iterable object.Object, block *object.Closure, keyName,
 			vm.syncCapturedBindings(block)
 			syncFreeCapturedBindingsToContext(oldCtx, block)
 			vm.ctx = oldCtx
+			loopCtxScope.release()
 		}()
 	}
 

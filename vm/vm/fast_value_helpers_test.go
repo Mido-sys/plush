@@ -2,6 +2,7 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 	"html/template"
 	"math"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gobuffalo/plush/v5"
+	"github.com/gobuffalo/plush/v5/helpers/hctx"
 	"github.com/gobuffalo/plush/v5/vm/code"
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
@@ -34,6 +36,157 @@ type vmFastOutputStringer string
 
 func (s vmFastOutputStringer) String() string {
 	return "stringer:" + string(s)
+}
+
+var fastLoopCallValueBenchmarkSink interface{}
+var registeredFastValueHelperBenchmarkSink object.Object
+
+func Benchmark_VM_Registered_Fast_Value_Helper_With_Frame_Locals(b *testing.B) {
+	for _, localCount := range []int{4, 8, 12, 32} {
+		b.Run(fmt.Sprintf("locals_%d", localCount), func(b *testing.B) {
+			root := plush.NewContext()
+			ctx := newPartialOverlayContext(root)
+			machine := newRuntimeHelperTestVM(ctx)
+			frame := machine.currentFrame()
+			frame.cl.Fn.LocalNames = make(map[int]string, localCount)
+			for index := 0; index < localCount; index++ {
+				name := fmt.Sprintf("local%d", index)
+				frame.cl.Fn.LocalNames[index] = name
+				machine.stack[index] = &object.String{Value: name + "-value"}
+				ctx.InternID(name)
+			}
+
+			SetFastValueHelper(ctx, "identity", func(_ hctx.Context, args FastArgs) (interface{}, error) {
+				value, ok := args.Object(0)
+				if !ok {
+					return nil, ErrFastUnsupported
+				}
+				return value, nil
+			})
+			argIndex := localCount
+			machine.stack[argIndex] = &object.String{Value: "value"}
+			machine.sp = argIndex + 1
+
+			handled, err := machine.tryCallRegisteredFastValueHelper("identity", 1, false)
+			require.NoError(b, err)
+			require.True(b, handled)
+			require.Equal(b, argIndex+1, machine.sp)
+			require.Equal(b, "value", object.ToGo(machine.stack[argIndex]))
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				handled, err = machine.tryCallRegisteredFastValueHelper("identity", 1, false)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if !handled {
+					b.Fatal("registered fast value helper was not handled")
+				}
+			}
+			registeredFastValueHelperBenchmarkSink = machine.stack[argIndex]
+		})
+	}
+}
+
+func Test_VM_Registered_Fast_Value_Helper_Releases_Scoped_Frame_Context_After_Sync(t *testing.T) {
+	root := plush.NewContext()
+	ctx := newPartialOverlayContext(root)
+	machine := newRuntimeHelperTestVM(ctx)
+	frame := machine.currentFrame()
+	frame.cl.Fn.LocalNames = map[int]string{0: "local"}
+	machine.stack[0] = &object.String{Value: "before"}
+	machine.stack[1] = &object.String{Value: "result"}
+	machine.sp = 2
+
+	var helperCtx *partialOverlayContext
+	SetFastValueHelper(ctx, "update", func(callCtx hctx.Context, args FastArgs) (interface{}, error) {
+		var ok bool
+		helperCtx, ok = callCtx.(*partialOverlayContext)
+		require.True(t, ok)
+		callCtx.Set("local", "after")
+		value, ok := args.Object(0)
+		require.True(t, ok)
+		return value, nil
+	})
+
+	handled, err := machine.tryCallRegisteredFastValueHelper("update", 1, false)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "after", object.ToGo(machine.stack[0]))
+	require.Equal(t, "result", object.ToGo(machine.stack[1]))
+	require.NotNil(t, helperCtx)
+	require.Nil(t, helperCtx.parent)
+	require.Zero(t, helperCtx.count)
+}
+
+func Benchmark_VM_Eval_Fast_Loop_Call_Value(b *testing.B) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"format": func(value string) string { return value },
+	})
+	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"format"}}, ctx)
+	call := &compiler.FastCallPlan{
+		Name:      "format",
+		NameIndex: 0,
+		Args: []compiler.FastValuePlan{
+			{Kind: compiler.FastValuePath, NameIndex: -1},
+		},
+	}
+
+	value, handled, err := evalFastLoopCallValuePlan(call, ctx, bindings, 0, "value")
+	require.NoError(b, err)
+	require.True(b, handled)
+	require.Equal(b, "value", value)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		value, handled, err = evalFastLoopCallValuePlan(call, ctx, bindings, i, "value")
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !handled {
+			b.Fatal("fast loop call was not handled")
+		}
+	}
+	fastLoopCallValueBenchmarkSink = value
+}
+
+func Test_VM_Eval_Fast_Loop_Call_Value_Keeps_Nested_Args_Isolated(t *testing.T) {
+	ctx := plush.NewContextWith(map[string]interface{}{
+		"outer": func(string) string { return "fallback" },
+		"inner": func(string) string { return "inner" },
+	})
+	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"outer", "inner"}}, ctx)
+	innerCall := &compiler.FastCallPlan{
+		Name:      "inner",
+		NameIndex: 1,
+		Args:      []compiler.FastValuePlan{{Kind: compiler.FastValueString, Value: "nested"}},
+	}
+	SetFastValueHelper(ctx, "outer", func(_ hctx.Context, args FastArgs) (interface{}, error) {
+		before, ok := args.String(0)
+		require.True(t, ok)
+
+		value, handled, err := evalFastLoopCallValuePlan(innerCall, ctx, bindings, 0, "value")
+		require.NoError(t, err)
+		require.True(t, handled)
+		require.Equal(t, "inner", value)
+
+		after, ok := args.String(0)
+		require.True(t, ok)
+		require.Equal(t, before, after)
+		return after, nil
+	})
+
+	outerCall := &compiler.FastCallPlan{
+		Name:      "outer",
+		NameIndex: 0,
+		Args:      []compiler.FastValuePlan{{Kind: compiler.FastValueString, Value: "outer"}},
+	}
+	value, handled, err := evalFastLoopCallValuePlan(outerCall, ctx, bindings, 0, "value")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, "outer", value)
 }
 
 type vmFastValueHiddenChild struct {
@@ -275,7 +428,7 @@ func Test_VM_Fast_Value_Field_And_Access_Edge_Branches(t *testing.T) {
 			{Kind: compiler.FastPathStepProperty, Value: "Name"},
 			{Kind: compiler.FastPathStepProperty, Value: "Missing"},
 		},
-	}, reflect.TypeOf(vmStructLoopProduct{}))
+	}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.False(t, ok)
 	require.Nil(t, chain)
 
@@ -284,7 +437,7 @@ func Test_VM_Fast_Value_Field_And_Access_Edge_Branches(t *testing.T) {
 	require.True(t, handled)
 	require.Nil(t, value)
 
-	chainPlan, next, ok := buildFastAccessChainPlanForSteps([]compiler.FastPathStep{{Kind: compiler.FastPathStepKind(255)}}, reflect.TypeOf(vmStructLoopProduct{}))
+	chainPlan, next, ok := buildFastAccessChainPlanForSteps([]compiler.FastPathStep{{Kind: compiler.FastPathStepKind(255)}}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.False(t, ok)
 	require.Nil(t, chainPlan)
 	require.Nil(t, next)

@@ -1205,12 +1205,13 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 		start = time.Now()
 	}
 	var scratch [1]reflect.Value
-	vm.lastHelperContext = nil
+	vm.discardLastHelperContext()
 	args, err := vm.reflectArgs(name, plan, numArgs, block, scratch[:0])
 	if err != nil {
+		vm.discardLastHelperContext()
 		return err
 	}
-	helperCtx := vm.lastHelperContext
+	helperCtx, helperCtxScope := vm.takeLastHelperContext()
 
 	res := rv.Call(args)
 	if name != "partial" && vmHotspots.Enabled() {
@@ -1221,8 +1222,8 @@ func (vm *VM) callNativeValue(name string, raw interface{}, numArgs int, block *
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
 		}
 		vm.syncFrameBindingsFromContext(helperCtx)
-		vm.lastHelperContext = nil
 	}
+	helperCtxScope.release()
 	vm.sp = vm.sp - numArgs - 1
 
 	if len(res) == 0 {
@@ -1270,12 +1271,13 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 		start = time.Now()
 	}
 	var scratch [1]reflect.Value
-	vm.lastHelperContext = nil
+	vm.discardLastHelperContext()
 	args, err := vm.reflectArgs(name, plan, numArgs, nil, scratch[:0])
 	if err != nil {
+		vm.discardLastHelperContext()
 		return err
 	}
-	helperCtx := vm.lastHelperContext
+	helperCtx, helperCtxScope := vm.takeLastHelperContext()
 
 	res := rv.Call(args)
 	if name != "partial" && vmHotspots.Enabled() {
@@ -1286,8 +1288,8 @@ func (vm *VM) writeNativeValueCall(name string, raw interface{}, numArgs int, ca
 			vm.syncContextBindingsFromContext(vm.ctx, helperCtx)
 		}
 		vm.syncFrameBindingsFromContext(helperCtx)
-		vm.lastHelperContext = nil
 	}
+	helperCtxScope.release()
 	vm.sp = vm.sp - numArgs
 	if calleeOnStack {
 		vm.sp--
@@ -1360,8 +1362,9 @@ func (vm *VM) tryFastWriteNativeValueCall(name string, raw interface{}, numArgs 
 }
 
 func (vm *VM) tryCallRegisteredFastValueHelper(name string, numArgs int, calleeOnStack bool) (bool, error) {
-	value, callCtx, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
+	value, callCtx, callCtxScope, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
 	if !handled || err != nil {
+		callCtxScope.release()
 		return handled, err
 	}
 	vm.sp -= numArgs
@@ -1370,12 +1373,14 @@ func (vm *VM) tryCallRegisteredFastValueHelper(name string, numArgs int, calleeO
 	}
 	vm.syncContextBindingsFromContext(vm.ctx, callCtx)
 	vm.syncFrameBindingsFromContext(callCtx)
+	callCtxScope.release()
 	return true, vm.push(object.Wrap(value))
 }
 
 func (vm *VM) tryWriteRegisteredFastValueHelper(name string, numArgs int, calleeOnStack bool) (bool, error) {
-	value, callCtx, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
+	value, callCtx, callCtxScope, handled, err := vm.registeredFastValueHelperResult(name, numArgs)
 	if !handled || err != nil {
+		callCtxScope.release()
 		return handled, err
 	}
 	vm.sp -= numArgs
@@ -1384,25 +1389,26 @@ func (vm *VM) tryWriteRegisteredFastValueHelper(name string, numArgs int, callee
 	}
 	vm.syncContextBindingsFromContext(vm.ctx, callCtx)
 	vm.syncFrameBindingsFromContext(callCtx)
+	callCtxScope.release()
 	vm.writeFrameOutput(vm.currentFrame(), object.Wrap(value))
 	return true, nil
 }
 
-func (vm *VM) registeredFastValueHelperResult(name string, numArgs int) (interface{}, hctx.Context, bool, error) {
+func (vm *VM) registeredFastValueHelperResult(name string, numArgs int) (interface{}, hctx.Context, partialChildContextScope, bool, error) {
 	helper, ok := fastValueHelperForContext(vm.ctx, name)
 	if !ok {
-		return nil, nil, false, nil
+		return nil, nil, partialChildContextScope{}, false, nil
 	}
 	if numArgs < 0 || vm.sp < numArgs {
-		return nil, nil, false, nil
+		return nil, nil, partialChildContextScope{}, false, nil
 	}
 	var argStore fastCallArgs
 	for _, obj := range vm.stack[vm.sp-numArgs : vm.sp] {
 		argStore.Append(obj)
 	}
-	callCtx := vm.contextWithFrameLocals()
+	callCtx, callCtxScope := vm.scopedContextWithFrameLocals()
 	value, handled, err := callRegisteredFastValueHelper(callCtx, name, helper, fastCallArgsOrNil(&argStore, numArgs), vm.renderVMHotspots())
-	return value, callCtx, handled, err
+	return value, callCtx, callCtxScope, handled, err
 }
 
 func (vm *VM) writeNativeReturnValue(frame *Frame, value reflect.Value, plan *callPlan) {

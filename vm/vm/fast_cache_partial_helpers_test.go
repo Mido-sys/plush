@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"fmt"
 	"html/template"
 	"reflect"
 	"testing"
@@ -295,7 +296,7 @@ func Test_VM_Partial_Overlay_Inline_Name_ID_Does_Not_Allocate_Maps(t *testing.T)
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		local.reset(parent)
-		local.setLocalWithID("section", 7, "value")
+		local.setLocal("section", "value")
 	})
 
 	require.Zero(t, allocs)
@@ -303,12 +304,48 @@ func Test_VM_Partial_Overlay_Inline_Name_ID_Does_Not_Allocate_Maps(t *testing.T)
 	require.Nil(t, local.idNames)
 	id, ok := local.idForName("section")
 	require.True(t, ok)
-	require.Equal(t, 7, id)
-	name, ok := local.nameForID(7)
+	name, ok := local.nameForID(id)
 	require.True(t, ok)
 	require.Equal(t, "section", name)
-	require.Equal(t, 7, local.InternID("section"))
-	require.Zero(t, parent.internID)
+	parentInternCalls := parent.internID
+	require.Equal(t, id, local.InternID("section"))
+	require.Equal(t, parentInternCalls, parent.internID)
+}
+
+func Test_VM_Partial_Overlay_Overflow_Uses_Shared_Entries(t *testing.T) {
+	parent := newIDLookupTestContext(map[string]interface{}{})
+	local := newPartialOverlayContext(parent)
+	ids := make([]int, 12)
+
+	for index := range ids {
+		name := fmt.Sprintf("local%d", index)
+		local.setLocal(name, index)
+		id, ok := local.idForName(name)
+		require.True(t, ok)
+		ids[index] = id
+		resolvedName, ok := local.nameForID(id)
+		require.True(t, ok)
+		require.Equal(t, name, resolvedName)
+	}
+
+	require.Len(t, local.overflow, 4)
+	require.Nil(t, local.nameIDs)
+	require.Nil(t, local.idNames)
+
+	require.True(t, local.Update("local9", "by-name"))
+	value, ok := local.LookupID(ids[9])
+	require.True(t, ok)
+	require.Equal(t, "by-name", value)
+
+	require.True(t, local.UpdateID(ids[10], "by-id"))
+	value, ok = local.Lookup("local10")
+	require.True(t, ok)
+	require.Equal(t, "by-id", value)
+
+	local.reset(parent)
+	require.Empty(t, local.overflow)
+	_, ok = local.Lookup("local9")
+	require.False(t, ok)
 }
 
 func Test_VM_Partial_Overlay_Render_Assigns_Missing_Map_Value_To_Existing_Local(t *testing.T) {

@@ -1088,7 +1088,7 @@ func Test_VM_Mixed_Static_Property_Render_Fast_Path(t *testing.T) {
 }
 
 func Test_VM_Simple_Loop_Render_Fast_Path(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
@@ -1097,12 +1097,12 @@ func Test_VM_Simple_Loop_Render_Fast_Path(t *testing.T) {
 	costs.ObjectTraversal = 3
 	budget := plush.NewBudgetWithCosts(100, costs)
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"items":    []string{"a", "b"},
-		"products": []product{{Name: "Bender"}, {Name: "<Fry>"}},
+		"items":   []string{"a", "b"},
+		"records": []record{{Name: "Bender"}, {Name: "<Fry>"}},
 	})
 	ctx.WithBudget(budget)
 
-	tmpl, err := Compile(`<%= for (i, item) in items { %><%= i %>:<%= item %>;<% } %>|<%= for (i, product) in products { %><%= product.Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, item) in items { %><%= i %>:<%= item %>;<% } %>|<%= for (i, record) in records { %><%= record.Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 
@@ -1116,26 +1116,26 @@ func Test_VM_Simple_Loop_Render_Fast_Path(t *testing.T) {
 }
 
 func Test_VM_Fast_Render_Loop_Break_And_Continue(t *testing.T) {
-	type variant struct {
-		OnSale bool
-		Price  int
+	type mode struct {
+		Preferred bool
+		Value     int
 	}
-	type product struct {
-		Name     string
-		Skip     bool
-		Variants []variant
+	type record struct {
+		Name  string
+		Skip  bool
+		Modes []mode
 	}
 
-	tmpl, err := Compile(`<%= for (_, product) in products { %><%= if product.Skip { %><%= continue %><% } %><%= product.Name %>:<%= for (_, variant) in product.Variants { %><%= if variant.OnSale { %><span><%= variant.Price %></span><%= break %><% } %><% } %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (_, record) in records { %><%= if record.Skip { %><%= continue %><% } %><%= record.Name %>:<%= for (_, mode) in record.Modes { %><%= if mode.Preferred { %><span><%= mode.Value %></span><%= break %><% } %><% } %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	require.Empty(t, tmpl.bytecode.FastReject)
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"products": []product{
-			{Name: "A", Variants: []variant{{OnSale: false, Price: 1}, {OnSale: true, Price: 2}, {OnSale: true, Price: 3}}},
-			{Name: "B", Skip: true, Variants: []variant{{OnSale: true, Price: 4}}},
-			{Name: "C", Variants: []variant{{OnSale: true, Price: 5}}},
+		"records": []record{
+			{Name: "A", Modes: []mode{{Preferred: false, Value: 1}, {Preferred: true, Value: 2}, {Preferred: true, Value: 3}}},
+			{Name: "B", Skip: true, Modes: []mode{{Preferred: true, Value: 4}}},
+			{Name: "C", Modes: []mode{{Preferred: true, Value: 5}}},
 		},
 	})
 
@@ -1503,7 +1503,7 @@ func Test_VM_Conditional_Render_Fast_Plan(t *testing.T) {
 func Test_VM_Fast_Simple_Conditional_Plan_Renders_Simple_Branches(t *testing.T) {
 	type robot struct {
 		Name  string
-		Stock uint32
+		Score uint32
 	}
 
 	costs := plush.ZeroCosts()
@@ -1511,14 +1511,14 @@ func Test_VM_Fast_Simple_Conditional_Plan_Renders_Simple_Branches(t *testing.T) 
 	costs.ObjectTraversal = 2
 	budget := plush.NewBudgetWithCosts(100, costs)
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"robot":    robot{Name: "<Bender>", Stock: 0},
+		"robot":    robot{Name: "<Bender>", Score: 0},
 		"fallback": true,
 		"labels":   map[string]string{"status": "<ready>"},
 		"count":    uint32(1),
 	})
 	ctx.WithBudget(budget)
 
-	tmpl, err := Compile(`<%= if robot.Stock > 0 { %><%= robot.Name %><% } else if fallback { %><%= labels["status"] %>:<%= count == 1 %><% } else { %>no<% } %>`)
+	tmpl, err := Compile(`<%= if robot.Score > 0 { %><%= robot.Name %><% } else if fallback { %><%= labels["status"] %>:<%= count == 1 %><% } else { %>no<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 
@@ -1658,19 +1658,19 @@ func Test_VM_Partial_Render_Binding_Plan_Reuses_Linked_Binding_I_Ds(t *testing.T
 }
 
 func Test_VM_Fast_Loop_Partial_Sees_Current_Loop_Value(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"products": []product{{Name: "Pizza"}, {Name: "Pasta"}},
+		"records": []record{{Name: "Pizza"}, {Name: "Pasta"}},
 		"partialFeeder": func(name string) (string, error) {
-			require.Equal(t, "partials/product-card.plush.html", name)
-			return `<span><%= product.Name %></span>`, nil
+			require.Equal(t, "partials/record-card.plush.html", name)
+			return `<span><%= record.Name %></span>`, nil
 		},
 	})
 
-	tmpl, err := Compile(`<%= for (_, product) in products { %><%= partial("partials/product-card.plush.html") %><% } %>`)
+	tmpl, err := Compile(`<%= for (_, record) in records { %><%= partial("partials/record-card.plush.html") %><% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	require.Len(t, tmpl.bytecode.FastRenderPlan.Segments, 1)
@@ -1683,7 +1683,7 @@ func Test_VM_Fast_Loop_Partial_Sees_Current_Loop_Value(t *testing.T) {
 	out, err := tmpl.Render(ctx)
 	require.NoError(t, err)
 	require.Equal(t, `<span>Pizza</span><span>Pasta</span>`, out)
-	require.False(t, ctx.Has("product"))
+	require.False(t, ctx.Has("record"))
 }
 
 func Test_VM_Partial_Sees_Top_Level_Let_From_Parent_Template(t *testing.T) {
@@ -1821,13 +1821,13 @@ func Test_VM_Fast_Data_Partial_Uses_Overlay_And_Keeps_Values_Live(t *testing.T) 
 }
 
 func Test_VM_Fast_Data_Partial_Helper_Call_Value(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"product": product{Name: "<Bender>"},
-		"prefix":  "robot",
+		"record": record{Name: "<Bender>"},
+		"prefix": "robot",
 		"label": func(name string, prefix string) string {
 			return prefix + ":" + name
 		},
@@ -1836,7 +1836,7 @@ func Test_VM_Fast_Data_Partial_Helper_Call_Value(t *testing.T) {
 		},
 	})
 
-	tmpl, err := Compile(`<%= partial("row.plush", {label: label(product.Name, prefix)}) %>|<%= product.Name %>`)
+	tmpl, err := Compile(`<%= partial("row.plush", {label: label(record.Name, prefix)}) %>|<%= record.Name %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	require.NotEmpty(t, tmpl.bytecode.FastRenderPlan.Segments)
@@ -1867,19 +1867,19 @@ func Test_VM_Fast_Data_Partial_Helper_Call_Value(t *testing.T) {
 }
 
 func Test_VM_Fast_Data_Partial_Helper_Call_Value_Missing_Helper_Names_Error(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"product": product{Name: "Bender"},
-		"prefix":  "robot",
+		"record": record{Name: "Bender"},
+		"prefix": "robot",
 		"partialFeeder": func(string) (string, error) {
 			return `<span>static</span>`, nil
 		},
 	})
 
-	tmpl, err := Compile(`<%= partial("row.plush", {label: label(product.Name, prefix)}) %>`)
+	tmpl, err := Compile(`<%= partial("row.plush", {label: label(record.Name, prefix)}) %>`)
 	require.NoError(t, err)
 
 	_, err = tmpl.Render(ctx)
@@ -2600,11 +2600,11 @@ func Test_VM_Fast_Top_Level_Access_Chain_Skips_Method_In_Middle(t *testing.T) {
 }
 
 func Test_VM_Loop_Fast_Plan_Uses_Typed_Field_Cache(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= product.Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= record.Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -2613,7 +2613,7 @@ func Test_VM_Loop_Fast_Plan_Uses_Typed_Field_Cache(t *testing.T) {
 	require.Len(t, segment.Loop.Parts, 2)
 
 	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": []product{{Name: "Bender"}, {Name: "Fry"}},
+		"records": []record{{Name: "Bender"}, {Name: "Fry"}},
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `Bender;Fry;`, out)
@@ -2626,11 +2626,11 @@ func Test_VM_Loop_Fast_Plan_Uses_Typed_Field_Cache(t *testing.T) {
 }
 
 func Test_VM_Fast_Loop_Helper_Call_Part(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -2641,8 +2641,8 @@ func Test_VM_Fast_Loop_Helper_Call_Part(t *testing.T) {
 	require.NotNil(t, segment.Loop.Parts[0].Call)
 
 	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"prefix":   "robot",
-		"products": []product{{Name: "Bender"}, {Name: "<Fry>"}},
+		"prefix":  "robot",
+		"records": []record{{Name: "Bender"}, {Name: "<Fry>"}},
 		"label": func(name string, prefix string) string {
 			return prefix + ":" + name
 		},
@@ -2657,25 +2657,25 @@ func Test_VM_Fast_Loop_Helper_Call_Part(t *testing.T) {
 	require.NotNil(t, entry.invoker)
 
 	argPlan := &segment.Loop.Parts[0].Call.Args[0]
-	chain, ok := fastFieldChainPlanFor(argPlan, reflect.TypeOf(product{}))
+	chain, ok := fastFieldChainPlanFor(argPlan, reflect.TypeOf(record{}))
 	require.True(t, ok)
 	require.Len(t, chain.steps, 1)
 	require.Equal(t, "Name", chain.steps[0].name)
 }
 
 func Test_VM_Fast_Struct_Loop_Specializes_Helper_Call_Part_Automatically(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
 	require.True(t, ok)
@@ -2684,8 +2684,8 @@ func Test_VM_Fast_Struct_Loop_Specializes_Helper_Call_Part_Automatically(t *test
 	require.NotNil(t, writerPlan.ops[0].call)
 
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"prefix":   "robot",
-		"products": []product{{Name: "Bender"}, {Name: "<Fry>"}},
+		"prefix":  "robot",
+		"records": []record{{Name: "Bender"}, {Name: "<Fry>"}},
 		"label": func(name string, prefix string) string {
 			return prefix + ":" + name
 		},
@@ -2698,7 +2698,7 @@ func Test_VM_Fast_Struct_Loop_Specializes_Helper_Call_Part_Automatically(t *test
 	require.NotNil(t, resolved.directWriter)
 
 	var out strings.Builder
-	handled, err := renderFastStructFieldLoop(&out, ctx, bindings, segment.Loop, reflect.ValueOf([]product{{Name: "Bender"}, {Name: "<Fry>"}}))
+	handled, err := renderFastStructFieldLoop(&out, ctx, bindings, segment.Loop, reflect.ValueOf([]record{{Name: "Bender"}, {Name: "<Fry>"}}))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `robot:Bender;robot:&lt;Fry&gt;;`, out.String())
@@ -2709,19 +2709,19 @@ func Test_VM_Fast_Struct_Loop_Specializes_Helper_Call_Part_Automatically(t *test
 }
 
 func Test_VM_Fast_Struct_Loop_Helper_Call_Learns_Reflect_Arg_Plan(t *testing.T) {
-	type productName string
-	type product struct {
-		Name productName
+	type recordName string
+	type record struct {
+		Name recordName
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= label(product.Name, prefix) %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= label(record.Name, prefix) %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
 	require.True(t, ok)
@@ -2732,13 +2732,13 @@ func Test_VM_Fast_Struct_Loop_Helper_Call_Learns_Reflect_Arg_Plan(t *testing.T) 
 	require.Equal(t, fastStructLoopCallArgAccessChain, writerPlan.ops[0].call.args[0].kind)
 	require.Equal(t, fastStructLoopCallArgBinding, writerPlan.ops[0].call.args[1].kind)
 
-	label := func(name productName, prefix string) string {
+	label := func(name recordName, prefix string) string {
 		return prefix + ":" + string(name)
 	}
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"prefix":   "robot",
-		"products": []product{{Name: "Bender"}, {Name: "<Fry>"}},
-		"label":    label,
+		"prefix":  "robot",
+		"records": []record{{Name: "Bender"}, {Name: "<Fry>"}},
+		"label":   label,
 	})
 	bindings := newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx)
 	state := &fastStructLoopRenderState{}
@@ -2749,7 +2749,7 @@ func Test_VM_Fast_Struct_Loop_Helper_Call_Learns_Reflect_Arg_Plan(t *testing.T) 
 	require.Equal(t, reflect.TypeOf(label), resolved.entry.rt)
 
 	var out strings.Builder
-	handled, err := renderFastStructFieldLoop(&out, ctx, bindings, segment.Loop, reflect.ValueOf([]product{{Name: "Bender"}, {Name: "<Fry>"}}))
+	handled, err := renderFastStructFieldLoop(&out, ctx, bindings, segment.Loop, reflect.ValueOf([]record{{Name: "Bender"}, {Name: "<Fry>"}}))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `robot:Bender;robot:&lt;Fry&gt;;`, out.String())
@@ -2760,11 +2760,11 @@ func Test_VM_Fast_Struct_Loop_Helper_Call_Learns_Reflect_Arg_Plan(t *testing.T) 
 }
 
 func Test_VM_Fast_Loop_Key_Values_For_Helper_Calls(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= label(i) %>:<%= product.Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= label(i) %>:<%= record.Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -2774,7 +2774,7 @@ func Test_VM_Fast_Loop_Key_Values_For_Helper_Calls(t *testing.T) {
 	require.Equal(t, compiler.FastValueLoopKey, segment.Loop.Parts[0].Call.Args[0].Kind)
 
 	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": []product{{Name: "Bender"}, {Name: "Fry"}},
+		"records": []record{{Name: "Bender"}, {Name: "Fry"}},
 		"label": func(index int) string {
 			return fmt.Sprintf("idx-%d", index)
 		},
@@ -2788,12 +2788,12 @@ func Test_VM_Fast_Loop_Key_Values_For_Helper_Calls(t *testing.T) {
 }
 
 func Test_VM_Fast_Loop_Conditional_Part(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name    string
 		Enabled bool
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= if product.Enabled { %><%= product.Name %><% } else if fallback { %>fallback<% } else { %>hidden<% } %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= if record.Enabled { %><%= record.Name %><% } else if fallback { %>fallback<% } else { %>hidden<% } %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -2803,19 +2803,19 @@ func Test_VM_Fast_Loop_Conditional_Part(t *testing.T) {
 	require.Equal(t, compiler.FastLoopPartConditional, segment.Loop.Parts[0].Kind)
 	require.NotNil(t, segment.Loop.Parts[0].Conditional)
 
-	products := []product{
+	records := []record{
 		{Name: "<Bender>", Enabled: true},
 		{Name: "Fry", Enabled: false},
 	}
 	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records":  records,
 		"fallback": false,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `&lt;Bender&gt;;hidden;`, out)
 
 	out, err = tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records":  records,
 		"fallback": true,
 	}))
 	require.NoError(t, err)
@@ -2823,12 +2823,12 @@ func Test_VM_Fast_Loop_Conditional_Part(t *testing.T) {
 }
 
 func Test_VM_Fast_Loop_Infix_Conditional_Part(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name  string
-		Stock uint32
+		Score uint32
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= if product.Stock > min { %><%= product.Name %><% } else if i == 0 { %>first<% } else { %>low<% } %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= if record.Score > min { %><%= record.Name %><% } else if i == 0 { %>first<% } else { %>low<% } %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -2840,10 +2840,10 @@ func Test_VM_Fast_Loop_Infix_Conditional_Part(t *testing.T) {
 
 	out, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
 		"min": uint64(2),
-		"products": []product{
-			{Name: "Bender", Stock: 0},
-			{Name: "<Fry>", Stock: 3},
-			{Name: "Leela", Stock: 1},
+		"records": []record{
+			{Name: "Bender", Score: 0},
+			{Name: "<Fry>", Score: 3},
+			{Name: "Leela", Score: 1},
 		},
 	}))
 	require.NoError(t, err)
@@ -2852,10 +2852,10 @@ func Test_VM_Fast_Loop_Infix_Conditional_Part(t *testing.T) {
 
 func Test_VM_Fast_Top_Level_Infix_Output(t *testing.T) {
 	type robot struct {
-		Stock uint32
+		Score uint32
 	}
 
-	tmpl, err := Compile(`<%= i32 == 0 %>|<%= u32 == 0 %>|<%= u64one == 1.0 %>|<%= f32i == 3 %>|<%= f64i == i32v %>|<%= robot.Stock == 3.0 %>`)
+	tmpl, err := Compile(`<%= i32 == 0 %>|<%= u32 == 0 %>|<%= u64one == 1.0 %>|<%= f32i == 3 %>|<%= f64i == i32v %>|<%= robot.Score == 3.0 %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	mixed := prepareFastMixedPlan(tmpl.bytecode.FastRenderPlan)
@@ -2873,7 +2873,7 @@ func Test_VM_Fast_Top_Level_Infix_Output(t *testing.T) {
 		"u64one": uint64(1),
 		"f32i":   float32(3),
 		"f64i":   float64(3),
-		"robot":  robot{Stock: uint32(3)},
+		"robot":  robot{Score: uint32(3)},
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `true|true|true|true|true|true`, out)
@@ -2916,19 +2916,19 @@ func Test_VM_Fast_Conditional_Missing_Ordered_Error_Names_Operand(t *testing.T) 
 }
 
 func Test_VM_Fast_Struct_Loop_Specializes_Conditional_Part_Automatically(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name  string
-		Stock uint32
+		Score uint32
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= if product.Stock > min { %><%= product.Name %><% } else if i == 0 { %>first<% } else { %>low<% } %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= if record.Score > min { %><%= record.Name %><% } else if i == 0 { %>first<% } else { %>low<% } %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
 	require.True(t, ok)
@@ -2949,17 +2949,17 @@ func Test_VM_Fast_Struct_Loop_Specializes_Conditional_Part_Automatically(t *test
 	require.Equal(t, fastStructLoopCallArgKey, secondCondition.leftValue.kind)
 	require.Equal(t, fastStructLoopCallArgInt, secondCondition.rightValue.kind)
 
-	products := []product{
-		{Name: "Bender", Stock: 0},
-		{Name: "<Fry>", Stock: 3},
-		{Name: "Leela", Stock: 1},
+	records := []record{
+		{Name: "Bender", Score: 0},
+		{Name: "<Fry>", Score: 3},
+		{Name: "Leela", Score: 1},
 	}
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"min":      uint64(2),
-		"products": products,
+		"min":     uint64(2),
+		"records": records,
 	})
 	var out strings.Builder
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `first;&lt;Fry&gt;;low;`, out.String())
@@ -2970,19 +2970,19 @@ func Test_VM_Fast_Struct_Loop_Specializes_Conditional_Part_Automatically(t *test
 }
 
 func Test_VM_Fast_Struct_Loop_Specializes_Logical_Infix_Conditional_Part(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name  string
-		Stock uint32
+		Score uint32
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= if product.Stock > min && i != 0 { %><%= product.Name %><% } else { %>skip<% } %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= if record.Score > min && i != 0 { %><%= record.Name %><% } else { %>skip<% } %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
 	require.True(t, ok)
@@ -3000,17 +3000,17 @@ func Test_VM_Fast_Struct_Loop_Specializes_Logical_Infix_Conditional_Part(t *test
 	require.Equal(t, fastStructLoopConditionInfix, condition.left.kind)
 	require.Equal(t, fastStructLoopConditionInfix, condition.right.kind)
 
-	products := []product{
-		{Name: "Bender", Stock: 5},
-		{Name: "<Fry>", Stock: 3},
-		{Name: "Leela", Stock: 1},
+	records := []record{
+		{Name: "Bender", Score: 5},
+		{Name: "<Fry>", Score: 3},
+		{Name: "Leela", Score: 1},
 	}
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"min":      uint64(2),
-		"products": products,
+		"min":     uint64(2),
+		"records": records,
 	})
 	var out strings.Builder
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `skip;&lt;Fry&gt;;skip;`, out.String())
@@ -3139,21 +3139,21 @@ func Test_VM_Fast_Binding_Output_Inline_Cache_Scalar_Types(t *testing.T) {
 }
 
 func Test_VM_Fast_Struct_Slice_Loop_Specialization(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name  string
-		Price int
+		Value int
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= i %>:<%= product.Name %>=<%= product.Price %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= i %>:<%= record.Name %>=<%= record.Value %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
-	require.Equal(t, reflect.TypeOf(product{}), elemType)
+	require.Equal(t, reflect.TypeOf(record{}), elemType)
 	require.True(t, fastStructFieldLoopParts(segment.Loop, elemType))
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
 	require.True(t, ok)
@@ -3162,53 +3162,53 @@ func Test_VM_Fast_Struct_Slice_Loop_Specialization(t *testing.T) {
 	require.Equal(t, fastStructLoopWriterField, writerPlan.ops[2].kind)
 	require.Equal(t, "Name", writerPlan.ops[2].name)
 	require.Equal(t, fastStructLoopWriterField, writerPlan.ops[4].kind)
-	require.Equal(t, "Price", writerPlan.ops[4].name)
+	require.Equal(t, "Value", writerPlan.ops[4].name)
 
-	products := []product{
-		{Name: "Bender", Price: 10},
-		{Name: "<Fry>", Price: 20},
+	records := []record{
+		{Name: "Bender", Value: 10},
+		{Name: "<Fry>", Value: 20},
 	}
 	var out strings.Builder
 	ctx := plush.NewContext()
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `0:Bender=10;1:&lt;Fry&gt;=20;`, out.String())
 
 	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records": records,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `0:Bender=10;1:&lt;Fry&gt;=20;`, rendered)
 }
 
 func Test_VM_Fast_Struct_Pointer_Slice_Loop_Specialization(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= product.Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= record.Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]*product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]*record{}))
 	require.True(t, ok)
-	require.Equal(t, reflect.TypeOf(product{}), elemType)
+	require.Equal(t, reflect.TypeOf(record{}), elemType)
 	require.True(t, fastStructFieldLoopParts(segment.Loop, elemType))
 
-	products := []*product{{Name: "Bender"}, nil, {Name: "<Fry>"}}
+	records := []*record{{Name: "Bender"}, nil, {Name: "<Fry>"}}
 	var out strings.Builder
 	ctx := plush.NewContext()
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `Bender;;&lt;Fry&gt;;`, out.String())
 
 	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records": records,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `Bender;;&lt;Fry&gt;;`, rendered)
@@ -3218,18 +3218,18 @@ func Test_VM_Fast_Struct_Slice_Loop_Specializes_Nested_Value_Path(t *testing.T) 
 	type category struct {
 		Name string
 	}
-	type product struct {
+	type record struct {
 		Category category
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= product.Category.Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= record.Category.Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	require.True(t, fastStructFieldLoopParts(segment.Loop, elemType))
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
@@ -3239,19 +3239,19 @@ func Test_VM_Fast_Struct_Slice_Loop_Specializes_Nested_Value_Path(t *testing.T) 
 	require.NotNil(t, writerPlan.ops[0].accessPlan)
 	require.Len(t, writerPlan.ops[0].accessPlan.steps, 2)
 
-	products := []product{
+	records := []record{
 		{Category: category{Name: "Drinks"}},
 		{Category: category{Name: "<Snacks>"}},
 	}
 	var out strings.Builder
 	ctx := plush.NewContext()
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `Drinks;&lt;Snacks&gt;;`, out.String())
 
 	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records": records,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `Drinks;&lt;Snacks&gt;;`, rendered)
@@ -3261,18 +3261,18 @@ func Test_VM_Fast_Struct_Slice_Loop_Specializes_Indexed_Value_Path(t *testing.T)
 	type friend struct {
 		Name string
 	}
-	type product struct {
+	type record struct {
 		Friends []friend
 	}
 
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= product.Friends[0].Name %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= record.Friends[0].Name %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
 	require.Equal(t, compiler.FastRenderSegmentLoop, segment.Kind)
 	require.NotNil(t, segment.Loop)
 
-	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]product{}))
+	elemType, ok := fastStructLoopElementType(reflect.TypeOf([]record{}))
 	require.True(t, ok)
 	require.True(t, fastStructFieldLoopParts(segment.Loop, elemType))
 	writerPlan, ok := fastStructLoopWriterPlanFor(segment.Loop, elemType)
@@ -3285,26 +3285,26 @@ func Test_VM_Fast_Struct_Slice_Loop_Specializes_Indexed_Value_Path(t *testing.T)
 	require.Equal(t, fastAccessStepIndex, writerPlan.ops[0].accessPlan.steps[1].kind)
 	require.Equal(t, fastAccessStepField, writerPlan.ops[0].accessPlan.steps[2].kind)
 
-	products := []product{
+	records := []record{
 		{Friends: []friend{{Name: "Bender"}}},
 		{Friends: []friend{{Name: "<Fry>"}}},
 	}
 	var out strings.Builder
 	ctx := plush.NewContext()
-	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(products))
+	handled, err := renderFastStructFieldLoop(&out, ctx, newFastRenderBindings(tmpl.bytecode.FastRenderPlan, ctx), segment.Loop, reflect.ValueOf(records))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, `Bender;&lt;Fry&gt;;`, out.String())
 
 	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": products,
+		"records": records,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `Bender;&lt;Fry&gt;;`, rendered)
 }
 
 func Test_VM_Fast_Struct_Slice_Loop_Specializes_Method_Value_Path(t *testing.T) {
-	tmpl, err := Compile(`<%= for (i, product) in products { %><%= product.Name.Echo() %>;<% } %>`)
+	tmpl, err := Compile(`<%= for (i, record) in records { %><%= record.Name.Echo() %>;<% } %>`)
 	require.NoError(t, err)
 	require.NotNil(t, tmpl.bytecode.FastRenderPlan)
 	segment := &tmpl.bytecode.FastRenderPlan.Segments[0]
@@ -3328,7 +3328,7 @@ func Test_VM_Fast_Struct_Slice_Loop_Specializes_Method_Value_Path(t *testing.T) 
 	require.Equal(t, `Bender;&lt;Fry&gt;;`, out.String())
 
 	rendered, err := tmpl.Render(plush.NewContextWith(map[string]interface{}{
-		"products": []vmAccessRobot{{Name: "Bender"}, {Name: "<Fry>"}},
+		"records": []vmAccessRobot{{Name: "Bender"}, {Name: "<Fry>"}},
 	}))
 	require.NoError(t, err)
 	require.Equal(t, `Bender;&lt;Fry&gt;;`, rendered)
@@ -3530,10 +3530,10 @@ func Test_VM_Write_Call_Falls_Back_When_Fast_Invoker_Is_Unavailable(t *testing.T
 }
 
 func Test_VM_Direct_Property_Write_Fusion_And_Raw_Loop_Values(t *testing.T) {
-	type product struct {
+	type record struct {
 		Name string
 	}
-	input := `<%= user.Name %>|<%= for (i, product) in products { %><%= product.Name %>;<% } %>`
+	input := `<%= user.Name %>|<%= for (i, record) in records { %><%= record.Name %>;<% } %>`
 	program, err := parser.Parse(input)
 	require.NoError(t, err)
 
@@ -3546,8 +3546,8 @@ func Test_VM_Direct_Property_Write_Fusion_And_Raw_Loop_Values(t *testing.T) {
 	require.True(t, loopCanUseRawValues(&object.Closure{Fn: loopFn}))
 
 	out, err := Render(input, plush.NewContextWith(map[string]interface{}{
-		"user":     product{Name: "<Ada>"},
-		"products": []product{{Name: "Bender"}, {Name: "<Fry>"}},
+		"user":    record{Name: "<Ada>"},
+		"records": []record{{Name: "Bender"}, {Name: "<Fry>"}},
 	}))
 	require.NoError(t, err)
 	require.Equal(t, "&lt;Ada&gt;|Bender;&lt;Fry&gt;;", out)
@@ -4019,7 +4019,53 @@ func Test_VM_Partial_Bytecode_Links_Reuse_Within_Render(t *testing.T) {
 	require.Equal(t, 1, links.Len())
 }
 
+func Test_VM_Trusted_Partial_Bytecode_Cache_Bypasses_Feeder_Across_Renders(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
+	const filename = "trusted-row.plush"
+	source := `<span><%= name %></span>`
+	feederCalls := 0
+	tmpl, err := Compile(`<%= partial("` + filename + `") %>`)
+	require.NoError(t, err)
+
+	render := func(name string) string {
+		ctx := plush.NewContextWith(map[string]interface{}{
+			"name": name,
+			"partialFeeder": func(got string) (string, error) {
+				require.Equal(t, filename, got)
+				feederCalls++
+				return source, nil
+			},
+		})
+		plush.EnableTrustedPartialBytecodeCache(ctx)
+		out, renderErr := tmpl.Render(ctx)
+		require.NoError(t, renderErr)
+		return out
+	}
+
+	require.Equal(t, "<span>Mido</span>", render("Mido"))
+	require.Equal(t, "<span>Leela</span>", render("Leela"))
+	require.Equal(t, 1, feederCalls)
+
+	cache.Delete(plush.GenerateASTKey(filename))
+	source = `<strong><%= name %></strong>`
+	require.Equal(t, "<strong>Fry</strong>", render("Fry"))
+	require.Equal(t, 2, feederCalls)
+}
+
 func Test_VM_Partial_Bytecode_Links_Do_Not_Stale_Dynamic_Feeder_Source(t *testing.T) {
+	cache := inmemory.NewMemoryCache()
+	plush.PlushCacheSetup(cache)
+	defer func() {
+		plush.ClearTemplateCache()
+		plush.PlushCacheSetup(nil)
+	}()
+
 	parts := []string{`<%= "a" %>`, `<%= "b" %>`}
 	calls := 0
 	ctx := plush.NewContextWith(map[string]interface{}{
@@ -4306,11 +4352,11 @@ if (listing.TotalResult < listing.DisplayResult) {
 	require.Equal(t, "3", out)
 }
 
-type vmProductListing struct {
-	Products []vmProduct
+type vmRecordListing struct {
+	Records []vmRecord
 }
 
-type vmProduct struct {
+type vmRecord struct {
 	Name []string
 }
 
@@ -4396,12 +4442,12 @@ func (r vmNumericRobot) MethodCount() uint32 {
 
 func Test_Render_Indexed_Receiver_Callee_Chain(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{
-		"product_listing": vmProductListing{
-			Products: []vmProduct{{Name: []string{"Buffalo"}}},
+		"record_listing": vmRecordListing{
+			Records: []vmRecord{{Name: []string{"Buffalo"}}},
 		},
 	})
 
-	out, err := Render(`<% let a = product_listing.Products[0].Name[0] %><%= a %>`, ctx)
+	out, err := Render(`<% let a = record_listing.Records[0].Name[0] %><%= a %>`, ctx)
 	require.NoError(t, err)
 	require.Equal(t, "Buffalo", out)
 }

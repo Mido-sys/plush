@@ -31,6 +31,8 @@ var PunchHoleCacheLifetime = 1 * time.Minute
 var cacheEnabled bool
 var holeTemplateFileKey = "__plush_internal_hole_render_key_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var interpreterPartialRenderKey = "__plush_internal_interpreter_partial_render_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var trustedPartialBytecodeCacheKey = "__plush_internal_trusted_partial_bytecode_cache_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
+var trustedTopLevelBytecodeCacheFilenameKey = "__plush_internal_trusted_top_level_bytecode_cache_filename_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "__"
 var errClearCache error = errors.New("template recently cached, skipping")
 var punchHoleConcurrencyLimit atomic.Int64
 var buffaloRenderPassCounter atomic.Uint64
@@ -72,6 +74,33 @@ func BuffaloRenderer(input string, data map[string]interface{}, helpers map[stri
 // configuration hook. The hook runs after data/helpers are loaded and before
 // rendering, so callers can attach per-render options such as VM fast helpers.
 func BuffaloRendererWithContext(input string, data map[string]interface{}, helpers map[string]interface{}, configure func(*Context)) (string, error) {
+	ctx := newBuffaloRenderContext(data, helpers, configure)
+	defer syncBuffaloRenderContextData(ctx, data)
+	return Render(input, ctx)
+}
+
+// BuffaloRendererFromTrustedBytecodeCache renders cached top-level VM
+// bytecode without requiring template source. A false hit tells the caller to
+// load the source and use BuffaloRendererWithContext normally.
+func BuffaloRendererFromTrustedBytecodeCache(cacheFilename string, data map[string]interface{}, helpers map[string]interface{}, configure func(*Context)) (rendered string, hit bool, err error) {
+	if cacheFilename == "" || GetRenderMode() != RenderModeVM {
+		return "", false, nil
+	}
+	renderer, ok := registeredTrustedVMCacheRenderer()
+	if !ok {
+		return "", false, ErrVMRendererNotRegistered
+	}
+
+	ctx := newBuffaloRenderContext(data, helpers, configure)
+	SetTrustedTopLevelBytecodeCacheFilename(ctx, cacheFilename)
+	rendered, hit, err = renderer(cacheFilename, ctx)
+	if hit || err != nil {
+		syncBuffaloRenderContextData(ctx, data)
+	}
+	return rendered, hit, err
+}
+
+func newBuffaloRenderContext(data map[string]interface{}, helpers map[string]interface{}, configure func(*Context)) *Context {
 	renderData := make(map[string]interface{}, len(data)+len(helpers))
 	for k, v := range data {
 		renderData[k] = v
@@ -87,14 +116,19 @@ func BuffaloRendererWithContext(input string, data map[string]interface{}, helpe
 	if configure != nil {
 		configure(ctx)
 	}
-	defer func() {
-		if data != nil {
-			for k, v := range ctx.localDataSnapshot() {
-				data[k] = v
-			}
+	return ctx
+}
+
+func syncBuffaloRenderContextData(ctx *Context, data map[string]interface{}) {
+	if ctx == nil || data == nil {
+		return
+	}
+	for k, v := range ctx.localDataSnapshot() {
+		if k == trustedPartialBytecodeCacheKey || k == trustedTopLevelBytecodeCacheFilenameKey {
+			continue
 		}
-	}()
-	return Render(input, ctx)
+		data[k] = v
+	}
 }
 
 func BuffaloRenderPassFromContext(ctx hctx.Context) (BuffaloRenderPass, bool) {

@@ -1151,7 +1151,13 @@ func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 			if !ok {
 				return errFastWriteUnsupported
 			}
-			helperCtx := vm.helperContext(nil)
+			var helperCtx plush.HelperContext
+			var helperCtxScope partialChildContextScope
+			if name == "partial" {
+				helperCtx, helperCtxScope = vm.scopedHelperContext(nil)
+			} else {
+				helperCtx = vm.helperContext(nil)
+			}
 			value, err := raw.(func(string, map[string]interface{}, plush.HelperContext) (template.HTML, error))(
 				partialName, data, helperCtx,
 			)
@@ -1159,6 +1165,7 @@ func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 				vm.syncContextBindingsFromContext(vm.ctx, helperCtx.Context)
 			}
 			vm.syncFrameBindingsFromContext(helperCtx.Context)
+			helperCtxScope.release()
 			if err != nil {
 				return fmt.Errorf("could not call %s function: %w", name, err)
 			}
@@ -1171,7 +1178,13 @@ func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 			if !ok {
 				return errFastWriteUnsupported
 			}
-			helperCtx := vm.helperContext(nil)
+			var helperCtx plush.HelperContext
+			var helperCtxScope partialChildContextScope
+			if name == "partial" {
+				helperCtx, helperCtxScope = vm.scopedHelperContext(nil)
+			} else {
+				helperCtx = vm.helperContext(nil)
+			}
 			value, err := raw.(func(string, map[string]interface{}, hctx.HelperContext) (template.HTML, error))(
 				partialName, data, helperCtx,
 			)
@@ -1179,6 +1192,7 @@ func writeFastInvokerForRaw(raw interface{}) writeFastInvoker {
 				vm.syncContextBindingsFromContext(vm.ctx, helperCtx.Context)
 			}
 			vm.syncFrameBindingsFromContext(helperCtx.Context)
+			helperCtxScope.release()
 			if err != nil {
 				return fmt.Errorf("could not call %s function: %w", name, err)
 			}
@@ -1659,6 +1673,11 @@ func fastWriteStringArg(obj object.Object) (string, bool) {
 }
 
 func fastWriteRawStringArg(value interface{}) (string, bool) {
+	if obj, ok := value.(object.Object); ok {
+		if raw, ok := fastWriteStringArg(obj); ok {
+			return raw, true
+		}
+	}
 	value = fastArgGoValue(value)
 	switch value := value.(type) {
 	case string:
@@ -1725,6 +1744,14 @@ func fastStringMapArg(value interface{}) (map[string]interface{}, bool) {
 }
 
 func fastWriteRawBoolArg(value interface{}) (bool, bool) {
+	switch value := value.(type) {
+	case *object.Boolean:
+		return value.Value, true
+	case *object.Native:
+		if raw, ok := value.Value.(bool); ok {
+			return raw, true
+		}
+	}
 	value = fastArgGoValue(value)
 	if raw, ok := value.(bool); ok {
 		return raw, true

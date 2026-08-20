@@ -26,6 +26,50 @@ func ClearTemplateCache() {
 	}
 }
 
+func EnableTrustedPartialBytecodeCache(ctx hctx.Context) {
+	SetTrustedPartialBytecodeCache(ctx, true)
+}
+
+func DisableTrustedPartialBytecodeCache(ctx hctx.Context) {
+	SetTrustedPartialBytecodeCache(ctx, false)
+}
+
+func SetTrustedPartialBytecodeCache(ctx hctx.Context, enabled bool) {
+	if ctx == nil {
+		return
+	}
+	ctx.Set(trustedPartialBytecodeCacheKey, enabled)
+}
+
+func TrustedPartialBytecodeCacheEnabled(ctx hctx.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(trustedPartialBytecodeCacheKey).(bool)
+	return enabled
+}
+
+// SetTrustedTopLevelBytecodeCacheFilename gives the next top-level VM render a
+// stable physical cache identity. The filename is consumed by that render so
+// nested renders cannot inherit it, and it is only honored while trusted
+// partial bytecode caching is enabled on the same context.
+func SetTrustedTopLevelBytecodeCacheFilename(ctx hctx.Context, filename string) {
+	if ctx == nil {
+		return
+	}
+	ctx.Set(trustedTopLevelBytecodeCacheFilenameKey, cleanFilePath(filename))
+}
+
+// TrustedTopLevelBytecodeCacheFilename returns the physical top-level cache
+// identity selected by a trusted file-backed renderer.
+func TrustedTopLevelBytecodeCacheFilename(ctx hctx.Context) string {
+	if ctx == nil || !TrustedPartialBytecodeCacheEnabled(ctx) {
+		return ""
+	}
+	filename, _ := ctx.Value(trustedTopLevelBytecodeCacheFilenameKey).(string)
+	return filename
+}
+
 func CachedVMBytecode(filename string, ctx hctx.Context) (interface{}, bool) {
 	if filename == "" || !cacheEnabled || templateCacheBackend == nil || !isVMBytecodeCacheableFile(filename) || isHole(ctx) {
 		return nil, false

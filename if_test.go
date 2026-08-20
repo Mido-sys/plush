@@ -63,7 +63,7 @@ func Test_Condition_Only(t *testing.T) {
 	ctx_empty := plush.NewContext()
 
 	ctx_with_paths := plush.NewContext()
-	ctx_with_paths.Set("paths", "cart")
+	ctx_with_paths.Set("paths", "route")
 
 	tests := []struct {
 		input    string
@@ -80,21 +80,21 @@ func Test_Condition_Only(t *testing.T) {
 
 		{`<%= paths || pages %>`, "true", "SET_or_unknown", true, ctx_with_paths}, // fast return
 		{`<%= pages || paths %>`, "true", "unknown_or_SET", true, ctx_with_paths},
-		{`<%= paths || pages == "cart" %>`, "true", "SET_or_unknown_equal", true, ctx_with_paths}, // fast return
-		{`<%= pages == "cart" || paths %>`, "true", "unknown_equal_or_SET", true, ctx_with_paths},
-		{`<%= paths == "cart" || pages %>`, "true", "EQUAL_or_unknown", true, ctx_with_paths}, // fast return
-		{`<%= pages || paths == "cart" %>`, "true", "unknown_or_EQUAL", true, ctx_with_paths},
-		{`<%= paths == "cart" || pages == "cart" %>`, "true", "EQUAL_or_unknown_equal", true, ctx_with_paths}, // fast return
-		{`<%= pages == "cart" || paths == "cart" %>`, "true", "unknown_equal_or_EQUAL", true, ctx_with_paths},
+		{`<%= paths || pages == "route" %>`, "true", "SET_or_unknown_equal", true, ctx_with_paths}, // fast return
+		{`<%= pages == "route" || paths %>`, "true", "unknown_equal_or_SET", true, ctx_with_paths},
+		{`<%= paths == "route" || pages %>`, "true", "EQUAL_or_unknown", true, ctx_with_paths}, // fast return
+		{`<%= pages || paths == "route" %>`, "true", "unknown_or_EQUAL", true, ctx_with_paths},
+		{`<%= paths == "route" || pages == "route" %>`, "true", "EQUAL_or_unknown_equal", true, ctx_with_paths}, // fast return
+		{`<%= pages == "route" || paths == "route" %>`, "true", "unknown_equal_or_EQUAL", true, ctx_with_paths},
 
 		{`<%= paths && pages %>`, "false", "set_and_UNKNOWN==false", true, ctx_with_paths},
 		{`<%= pages && paths %>`, "false", "UNKNOWN_and_set==false", true, ctx_with_paths}, // fast return
-		{`<%= paths && pages == "cart" %>`, "false", "set_and_UNKNOWN_equal==false", true, ctx_with_paths},
-		{`<%= pages == "cart" && paths %>`, "false", "UNKNOWN_equal_and_set==false", true, ctx_with_paths}, // fast return
-		{`<%= paths == "cart" && pages %>`, "false", "equal_and_UNKNOWN", true, ctx_with_paths},
-		{`<%= pages && paths == "cart" %>`, "false", "UNKNOWN_and_equal", true, ctx_with_paths}, // fast return
-		{`<%= paths == "cart" && pages == "cart" %>`, "false", "equal_and_UNKNOWN_equal", true, ctx_with_paths},
-		{`<%= pages == "cart" && paths == "cart" %>`, "false", "UNKNOWN_equal_and_equal", true, ctx_with_paths}, // fast return
+		{`<%= paths && pages == "route" %>`, "false", "set_and_UNKNOWN_equal==false", true, ctx_with_paths},
+		{`<%= pages == "route" && paths %>`, "false", "UNKNOWN_equal_and_set==false", true, ctx_with_paths}, // fast return
+		{`<%= paths == "route" && pages %>`, "false", "equal_and_UNKNOWN", true, ctx_with_paths},
+		{`<%= pages && paths == "route" %>`, "false", "UNKNOWN_and_equal", true, ctx_with_paths}, // fast return
+		{`<%= paths == "route" && pages == "route" %>`, "false", "equal_and_UNKNOWN_equal", true, ctx_with_paths},
+		{`<%= pages == "route" && paths == "route" %>`, "false", "UNKNOWN_equal_and_equal", true, ctx_with_paths}, // fast return
 	}
 
 	for _, tc := range tests {
@@ -242,9 +242,9 @@ func Test_If_Block_Scope_Nested_Overwrite(t *testing.T) {
 func Test_If_Variable_Not_Set_But_Or_Condition_Is_True_Complex(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
-	ctx.Set("path", "cart")
-	ctx.Set("paths", "cart")
-	input := `<%= if ( paths == "cart" || (page && page.PageTitle != "cafe") || paths == "cart") { %>hi<%} %>`
+	ctx.Set("path", "route")
+	ctx.Set("paths", "route")
+	input := `<%= if ( paths == "route" || (page && page.PageTitle != "cafe") || paths == "route") { %>hi<%} %>`
 
 	s, err := plush.Render(input, ctx)
 	r.NoError(err)
@@ -254,8 +254,8 @@ func Test_If_Variable_Not_Set_But_Or_Condition_Is_True_Complex(t *testing.T) {
 func Test_If_Syntax_Error_On_Last_Node(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
-	ctx.Set("paths", "cart")
-	input := `<%= if ( paths == "cart" ||  pages ^^^ ) { %>hi<%} %>`
+	ctx.Set("paths", "route")
+	input := `<%= if ( paths == "route" ||  pages ^^^ ) { %>hi<%} %>`
 
 	_, err := plush.Render(input, ctx)
 	r.Error(err)
@@ -264,8 +264,8 @@ func Test_If_Syntax_Error_On_Last_Node(t *testing.T) {
 func Test_If_Syntax_Error_On_First_Node(t *testing.T) {
 	r := require.New(t)
 	ctx := plush.NewContext()
-	ctx.Set("paths", "cart")
-	input := `<%= if ( paths @#@# "cart" ||  pages) { %>hi<%} %>`
+	ctx.Set("paths", "route")
+	input := `<%= if ( paths @#@# "route" ||  pages) { %>hi<%} %>`
 
 	_, err := plush.Render(input, ctx)
 	r.Error(err)

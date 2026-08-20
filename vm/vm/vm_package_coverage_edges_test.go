@@ -363,7 +363,7 @@ func Test_VM_Fast_Render_And_Value_Remaining_Edge_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.ErrorContains(t, err, "line 66")
 
-	var nilProduct *vmStructLoopProduct
+	var nilRecord *vmStructLoopRecord
 	value, ok, err := evalFastFieldChainValue(&compiler.FastValuePlan{
 		Kind:      compiler.FastValuePath,
 		NameIndex: -1,
@@ -372,7 +372,7 @@ func Test_VM_Fast_Render_And_Value_Remaining_Edge_Branches(t *testing.T) {
 			Value: "Name",
 			Line:  67,
 		}},
-	}, nilProduct, plush.NewContext())
+	}, nilRecord, plush.NewContext())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Nil(t, value)
@@ -386,14 +386,14 @@ func Test_VM_Fast_Render_And_Value_Remaining_Edge_Branches(t *testing.T) {
 			Line:  69,
 		}},
 	}
-	emptyChainKey := fastFieldChainPlanKey{plan: emptyChainPlan, typ: reflect.TypeOf(vmStructLoopProduct{})}
+	emptyChainKey := fastFieldChainPlanKey{plan: emptyChainPlan, typ: reflect.TypeOf(vmStructLoopRecord{})}
 	fastFieldChainPlanCache.Store(emptyChainKey, &fastFieldChainPlan{})
 	defer fastFieldChainPlanCache.Delete(emptyChainKey)
-	rawProduct := vmStructLoopProduct{Name: "cached"}
-	value, ok, err = evalFastFieldChainValue(emptyChainPlan, rawProduct, plush.NewContext())
+	rawRecord := vmStructLoopRecord{Name: "cached"}
+	value, ok, err = evalFastFieldChainValue(emptyChainPlan, rawRecord, plush.NewContext())
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, rawProduct, value)
+	require.Equal(t, rawRecord, value)
 
 	indexed, found, handled := fastAccessDirectMapIndex(reflect.ValueOf(map[string]int{"name": 1}), &fastAccessChainStep{
 		mapDirect: fastMapDirectStringString,
@@ -525,9 +525,9 @@ func Test_VM_Fast_Call_And_Loop_Call_Remaining_Error_Branches(t *testing.T) {
 }
 
 func Test_VM_Fast_Struct_Loop_Call_Remaining_State_Branches(t *testing.T) {
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 
-	floatArg := buildFastStructLoopCallArgPlan(&compiler.FastValuePlan{Kind: compiler.FastValueFloat, FloatValue: 1.25, Line: 70}, reflect.TypeOf(vmStructLoopProduct{}))
+	floatArg := buildFastStructLoopCallArgPlan(&compiler.FastValuePlan{Kind: compiler.FastValueFloat, FloatValue: 1.25, Line: 70}, reflect.TypeOf(vmStructLoopRecord{}))
 	require.Equal(t, fastStructLoopCallArgFloat, floatArg.kind)
 	require.Equal(t, 1.25, floatArg.floatVal)
 
@@ -721,7 +721,7 @@ func Test_VM_Fast_Struct_Loop_Call_Remaining_State_Branches(t *testing.T) {
 func Test_VM_Fast_Struct_Loop_Direct_Writer_And_String_Arg_Remaining_Branches(t *testing.T) {
 	ctx := plush.NewContext()
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 	firstMissingPlan := structLoopCallPlan(t,
 		compiler.FastValuePlan{Kind: compiler.FastValueName, NameIndex: 99, Value: "missing", Line: 86},
 		structLoopNameArg(),
@@ -849,7 +849,7 @@ func Test_VM_Fast_Struct_Loop_Direct_Writer_And_String_Arg_Remaining_Branches(t 
 func Test_VM_Fast_Struct_Loop_Value_Remaining_Branches(t *testing.T) {
 	ctx := plush.NewContextWith(map[string]interface{}{"fail": func() string { return "never" }})
 	bindings := newFastRenderBindings(&compiler.FastRenderPlan{Bindings: []string{"fail"}}, ctx)
-	item := reflect.ValueOf(vmStructLoopProduct{Name: "bot"})
+	item := reflect.ValueOf(vmStructLoopRecord{Name: "bot"})
 
 	truthy, ok, err := isTruthyFastStructLoopValue(&compiler.FastValuePlan{
 		Kind:      compiler.FastValueName,

@@ -156,7 +156,7 @@ func Test_Parity_Partials_Cached_Recursive_Renders_Isolate_Concurrent_Contexts(t
 	tmpl, err := vmplush.Compile(input)
 	require.NoError(t, err)
 
-	previousFallback := rootplush.SetVMGenericFallback(true)
+	previousFallback := rootplush.SetVMGenericFallback(false)
 	defer rootplush.SetVMGenericFallback(previousFallback)
 
 	type result struct {
@@ -183,6 +183,7 @@ func Test_Parity_Partials_Cached_Recursive_Renders_Isolate_Concurrent_Contexts(t
 				},
 			}}, partials)
 			ctx.Set(meta.TemplateFileKey, "recursive-concurrent-root.plush.html")
+			rootplush.EnableRenderPartialFallbackDiagnostics(ctx)
 			output, renderErr := tmpl.Render(ctx)
 			diagnostics, hasDiag := rootplush.RenderDiagnosticsFromContext(ctx)
 			results <- result{index: index, output: output, err: renderErr, diagnostics: diagnostics, hasDiag: hasDiag}
@@ -199,6 +200,7 @@ func Test_Parity_Partials_Cached_Recursive_Renders_Isolate_Concurrent_Contexts(t
 		require.Equal(t, expected, renderResult.output)
 		require.True(t, renderResult.hasDiag)
 		require.NotEqual(t, rootplush.RenderFastPathInterpreterFallback, renderResult.diagnostics.FastPath)
+		require.Zero(t, renderResult.diagnostics.PartialFallbacks.Calls)
 	}
 }
 

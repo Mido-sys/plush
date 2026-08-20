@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gobuffalo/plush/v5"
@@ -13,6 +14,31 @@ import (
 	"github.com/gobuffalo/plush/v5/vm/compiler"
 	"github.com/gobuffalo/plush/v5/vm/object"
 )
+
+const pooledFastCallArgsMaxExtra = 16
+
+var fastCallArgsPool = sync.Pool{
+	New: func() interface{} {
+		return new(fastCallArgs)
+	},
+}
+
+func borrowFastCallArgs() *fastCallArgs {
+	args := fastCallArgsPool.Get().(*fastCallArgs)
+	args.Reset()
+	return args
+}
+
+func releaseFastCallArgs(args *fastCallArgs) {
+	if args == nil {
+		return
+	}
+	args.Reset()
+	if cap(args.extra) > pooledFastCallArgsMaxExtra {
+		args.extra = nil
+	}
+	fastCallArgsPool.Put(args)
+}
 
 func (a *fastCallArgs) Append(value interface{}) {
 	if a.n < len(a.inline) {
@@ -143,7 +169,7 @@ func writeFastBlockCallSegment(out *strings.Builder, ctx hctx.Context, bindings 
 		return rendered, err
 	})
 	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
-		return fastLineError(call.Line, err)
+		return fastBlockCallLineError(call.Line, err)
 	}
 	return nil
 }
@@ -178,7 +204,7 @@ func writeFastLoopBlockCallPart(out *strings.Builder, ctx hctx.Context, bindings
 		return rendered, err
 	})
 	if err := writeFastBlockCallValue(writeOut, ctx, call.Name, raw, args, helperCtx, &call.Cache, bindings.vmHotspots); err != nil {
-		return fastLineError(call.Line, err)
+		return fastBlockCallLineError(call.Line, err)
 	}
 	return nil
 }

@@ -35,6 +35,7 @@ var vmGenericFallback atomic.Bool
 var outputSizeEstimatorDisabled atomic.Bool
 var outputSizeEstimatorDiagnosticsMode atomic.Int32
 var vmRenderer atomic.Value
+var trustedVMCacheRenderer atomic.Value
 
 func init() {
 	outputSizeEstimatorDiagnosticsMode.Store(int32(OutputSizeEstimatorDiagnosticsOff))
@@ -43,6 +44,7 @@ func init() {
 var ErrVMRendererNotRegistered = errors.New("plush VM renderer is not registered")
 
 type RenderFunc func(string, hctx.Context) (string, error)
+type TrustedVMCacheRenderFunc func(string, hctx.Context) (string, bool, error)
 
 func SetRenderMode(mode RenderMode) RenderMode {
 	if mode != RenderModeInterpreter && mode != RenderModeVM {
@@ -117,5 +119,21 @@ func registeredVMRenderer() (RenderFunc, bool) {
 		return nil, false
 	}
 	fn, ok := renderer.(RenderFunc)
+	return fn, ok && fn != nil
+}
+
+func RegisterTrustedVMCacheRenderer(renderer TrustedVMCacheRenderFunc) {
+	if renderer == nil {
+		return
+	}
+	trustedVMCacheRenderer.Store(renderer)
+}
+
+func registeredTrustedVMCacheRenderer() (TrustedVMCacheRenderFunc, bool) {
+	renderer := trustedVMCacheRenderer.Load()
+	if renderer == nil {
+		return nil, false
+	}
+	fn, ok := renderer.(TrustedVMCacheRenderFunc)
 	return fn, ok && fn != nil
 }

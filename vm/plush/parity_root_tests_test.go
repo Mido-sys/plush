@@ -119,7 +119,7 @@ func Test_Parity_Root_If_Condition_Table(t *testing.T) {
 
 func Test_Parity_Root_Condition_Only_Table(t *testing.T) {
 	ctxEmpty := emptyContext
-	ctxWithPaths := contextWith(map[string]interface{}{"paths": "cart"})
+	ctxWithPaths := contextWith(map[string]interface{}{"paths": "route"})
 
 	tests := []struct {
 		name    string
@@ -132,20 +132,20 @@ func Test_Parity_Root_Condition_Only_Table(t *testing.T) {
 		{"not_unknown_identifier", `<%= !pages %>`, ctxWithPaths},
 		{"set_or_unknown", `<%= paths || pages %>`, ctxWithPaths},
 		{"unknown_or_set", `<%= pages || paths %>`, ctxWithPaths},
-		{"set_or_unknown_equal", `<%= paths || pages == "cart" %>`, ctxWithPaths},
-		{"unknown_equal_or_set", `<%= pages == "cart" || paths %>`, ctxWithPaths},
-		{"equal_or_unknown", `<%= paths == "cart" || pages %>`, ctxWithPaths},
-		{"unknown_or_equal", `<%= pages || paths == "cart" %>`, ctxWithPaths},
-		{"equal_or_unknown_equal", `<%= paths == "cart" || pages == "cart" %>`, ctxWithPaths},
-		{"unknown_equal_or_equal", `<%= pages == "cart" || paths == "cart" %>`, ctxWithPaths},
+		{"set_or_unknown_equal", `<%= paths || pages == "route" %>`, ctxWithPaths},
+		{"unknown_equal_or_set", `<%= pages == "route" || paths %>`, ctxWithPaths},
+		{"equal_or_unknown", `<%= paths == "route" || pages %>`, ctxWithPaths},
+		{"unknown_or_equal", `<%= pages || paths == "route" %>`, ctxWithPaths},
+		{"equal_or_unknown_equal", `<%= paths == "route" || pages == "route" %>`, ctxWithPaths},
+		{"unknown_equal_or_equal", `<%= pages == "route" || paths == "route" %>`, ctxWithPaths},
 		{"set_and_unknown", `<%= paths && pages %>`, ctxWithPaths},
 		{"unknown_and_set", `<%= pages && paths %>`, ctxWithPaths},
-		{"set_and_unknown_equal", `<%= paths && pages == "cart" %>`, ctxWithPaths},
-		{"unknown_equal_and_set", `<%= pages == "cart" && paths %>`, ctxWithPaths},
-		{"equal_and_unknown", `<%= paths == "cart" && pages %>`, ctxWithPaths},
-		{"unknown_and_equal", `<%= pages && paths == "cart" %>`, ctxWithPaths},
-		{"equal_and_unknown_equal", `<%= paths == "cart" && pages == "cart" %>`, ctxWithPaths},
-		{"unknown_equal_and_equal", `<%= pages == "cart" && paths == "cart" %>`, ctxWithPaths},
+		{"set_and_unknown_equal", `<%= paths && pages == "route" %>`, ctxWithPaths},
+		{"unknown_equal_and_set", `<%= pages == "route" && paths %>`, ctxWithPaths},
+		{"equal_and_unknown", `<%= paths == "route" && pages %>`, ctxWithPaths},
+		{"unknown_and_equal", `<%= pages && paths == "route" %>`, ctxWithPaths},
+		{"equal_and_unknown_equal", `<%= paths == "route" && pages == "route" %>`, ctxWithPaths},
+		{"unknown_equal_and_equal", `<%= pages == "route" && paths == "route" %>`, ctxWithPaths},
 	}
 
 	for _, tt := range tests {
@@ -201,9 +201,9 @@ func Test_Parity_Root_If_Scope_And_Else_If_Cases(t *testing.T) {
 		username = "1"
 	 }%><%= username %></p>`, emptyContext)
 
-	compareRender(t, `<%= if ( paths == "cart" || (page && page.PageTitle != "cafe") || paths == "cart") { %>hi<%} %>`, contextWith(map[string]interface{}{
-		"path":  "cart",
-		"paths": "cart",
+	compareRender(t, `<%= if ( paths == "route" || (page && page.PageTitle != "cafe") || paths == "route") { %>hi<%} %>`, contextWith(map[string]interface{}{
+		"path":  "route",
+		"paths": "route",
 	}))
 }
 

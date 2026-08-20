@@ -34,6 +34,29 @@ func Test_Render_Keeps_Spacing(t *testing.T) {
 	r.Equal("hi mark", s)
 }
 
+func Test_Trusted_Partial_Bytecode_Cache_Setting_Inherits_To_Child_Contexts(t *testing.T) {
+	ctx := plush.NewContext()
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(nil))
+
+	plush.EnableTrustedPartialBytecodeCache(ctx)
+	require.True(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.True(t, plush.TrustedPartialBytecodeCacheEnabled(ctx.New()))
+
+	plush.DisableTrustedPartialBytecodeCache(ctx)
+	require.False(t, plush.TrustedPartialBytecodeCacheEnabled(ctx))
+	require.Empty(t, plush.TrustedTopLevelBytecodeCacheFilename(ctx))
+
+	plush.EnableTrustedPartialBytecodeCache(ctx)
+	plush.SetTrustedTopLevelBytecodeCacheFilename(ctx, "templates/page.plush")
+	require.Equal(t, "templates/page.plush", plush.TrustedTopLevelBytecodeCacheFilename(ctx))
+
+	plush.SetTrustedPartialBytecodeCache(nil, true)
+	plush.EnableTrustedPartialBytecodeCache(nil)
+	plush.DisableTrustedPartialBytecodeCache(nil)
+	plush.SetTrustedTopLevelBytecodeCacheFilename(nil, "templates/page.plush")
+}
+
 func Test_Render_HTML_Injected_String(t *testing.T) {
 	r := require.New(t)
 
@@ -96,7 +119,7 @@ func Test_Render_Diagnostics_Interpreter_Context(t *testing.T) {
 	defer plush.SetRenderMode(previous)
 
 	ctx := plush.NewContext()
-	ctx.Set(meta.TemplateFileKey, "products/show.plush")
+	ctx.Set(meta.TemplateFileKey, "records/show.plush")
 	ctx.Set("renderValue", func() string {
 		time.Sleep(20 * time.Millisecond)
 		return "interpreter"
@@ -109,7 +132,7 @@ func Test_Render_Diagnostics_Interpreter_Context(t *testing.T) {
 	diagnostics, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
 	r.Equal(plush.RenderModeNameInterpreter, diagnostics.Mode)
-	r.Equal("products/show.plush", diagnostics.TemplateFilename)
+	r.Equal("records/show.plush", diagnostics.TemplateFilename)
 	r.Equal(plush.VMBytecodeCacheDisabled, diagnostics.VMBytecodeCache)
 	r.NotZero(diagnostics.EngineDuration)
 }
@@ -120,7 +143,7 @@ func Test_Render_Diagnostics_From_Data_After_Buffalo_Renderer(t *testing.T) {
 	defer plush.SetRenderMode(previous)
 
 	data := map[string]interface{}{
-		meta.TemplateFileKey: "products/show.plush",
+		meta.TemplateFileKey: "records/show.plush",
 		"renderValue": func() string {
 			time.Sleep(20 * time.Millisecond)
 			return "interpreter"
@@ -133,7 +156,7 @@ func Test_Render_Diagnostics_From_Data_After_Buffalo_Renderer(t *testing.T) {
 	diagnostics, ok := plush.RenderDiagnosticsFromData(data)
 	r.True(ok)
 	r.Equal(plush.RenderModeNameInterpreter, diagnostics.Mode)
-	r.Equal("products/show.plush", diagnostics.TemplateFilename)
+	r.Equal("records/show.plush", diagnostics.TemplateFilename)
 	r.Equal(plush.VMBytecodeCacheDisabled, diagnostics.VMBytecodeCache)
 	r.NotZero(diagnostics.EngineDuration)
 }
@@ -144,7 +167,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	defer plush.SetRenderMode(previous)
 
 	ctx := plush.NewContext()
-	ctx.Set(meta.TemplateFileKey, "products/show.plush")
+	ctx.Set(meta.TemplateFileKey, "records/show.plush")
 	ctx.Set("renderBody", func() string {
 		time.Sleep(20 * time.Millisecond)
 		return "body"
@@ -158,7 +181,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	r.NoError(err)
 	first, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
-	r.Equal("products/show.plush", first.TemplateFilename)
+	r.Equal("records/show.plush", first.TemplateFilename)
 	r.NotZero(first.EngineDuration)
 
 	ctx.Set(meta.TemplateFileKey, "application.plush")
@@ -166,7 +189,7 @@ func Test_Render_Diagnostics_Accumulates_Sequential_Template_Durations(t *testin
 	r.NoError(err)
 	second, ok := plush.RenderDiagnosticsFromContext(ctx)
 	r.True(ok)
-	r.Equal("products/show.plush", second.TemplateFilename)
+	r.Equal("records/show.plush", second.TemplateFilename)
 	r.Greater(second.EngineDuration, first.EngineDuration)
 }
 
@@ -198,7 +221,7 @@ func Test_Buffalo_Renderer_With_Context_Configures_Context(t *testing.T) {
 
 	configured := false
 	data := map[string]interface{}{
-		meta.TemplateFileKey: "products/show.plush",
+		meta.TemplateFileKey: "records/show.plush",
 	}
 	rendered, err := plush.BuffaloRendererWithContext(`<%= marker %>`, data, nil, func(ctx *plush.Context) {
 		configured = true
