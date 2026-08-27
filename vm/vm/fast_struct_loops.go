@@ -884,7 +884,7 @@ func evalFastStructLoopInfixValue(value *compiler.FastValuePlan, ctx hctx.Contex
 	if !ok {
 		right = nil
 	}
-	result, err := evalFastInfixOperator(value.Operator, left, right)
+	result, err := evalFastInfixOperator(value.Operator, left, right, value.RegexCache)
 	if err != nil {
 		return nil, true, fastLineError(value.Line, err)
 	}
@@ -1002,6 +1002,14 @@ func evalFastStructLoopConditionPlan(plan *fastStructLoopConditionPlan, ctx hctx
 		}
 		if !rightOK {
 			right = fastConditionOperandValue{}
+		}
+		if plan.operator == "~=" {
+			pattern := fmt.Sprint(right.goValue())
+			re, err := cachedRegex(plan.regexCache, pattern)
+			if err != nil {
+				return false, true, fastLineError(plan.line, fmt.Errorf("couldn't compile regex %s", right.goValue()))
+			}
+			return re.MatchString(fmt.Sprint(left.goValue())), true, nil
 		}
 		result, err := evalFastConditionInfixOperator(plan.operator, left, right)
 		if err != nil {
@@ -1383,6 +1391,7 @@ func buildFastStructLoopConditionPlan(value *compiler.FastValuePlan, elemType re
 			operator:   value.Operator,
 			leftValue:  left,
 			rightValue: right,
+			regexCache: value.RegexCache,
 			line:       value.Line,
 		}
 	}

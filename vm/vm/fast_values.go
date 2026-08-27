@@ -483,7 +483,7 @@ func evalFastInfixValue(value *compiler.FastValuePlan, ctx hctx.Context, binding
 	if !rightOK {
 		right = nil
 	}
-	result, err := evalFastInfixOperator(value.Operator, left, right)
+	result, err := evalFastInfixOperator(value.Operator, left, right, value.RegexCache)
 	if err != nil {
 		return nil, true, fastLineError(value.Line, annotateFastInfixError(value, leftOK, rightOK, left, right, err))
 	}
@@ -644,7 +644,7 @@ func evalFastLogicalInfixValue(value *compiler.FastValuePlan, ctx hctx.Context, 
 	return ok && isTruthyFastValue(right), true, nil
 }
 
-func evalFastInfixOperator(operator string, left, right interface{}) (interface{}, error) {
+func evalFastInfixOperator(operator string, left, right interface{}, regexSlot *object.InlineCacheSlot) (interface{}, error) {
 	leftValue := fastConditionOperandValue{raw: left}
 	rightValue := fastConditionOperandValue{raw: right}
 	switch operator {
@@ -666,7 +666,7 @@ func evalFastInfixOperator(operator string, left, right interface{}) (interface{
 		return evalFastConditionInfixOperator(operator, leftValue, rightValue)
 	case "~=":
 		pattern := fmt.Sprint(fastAddGoValue(right))
-		re, err := cachedRegex(pattern)
+		re, err := cachedRegex(regexSlot, pattern)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't compile regex %s", fastAddGoValue(right))
 		}

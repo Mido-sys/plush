@@ -154,7 +154,6 @@ var (
 	emptyMapType               = reflect.TypeOf(map[string]interface{}{})
 	callPlanCache              sync.Map
 	propertyLookupCache        sync.Map
-	regexCache                 sync.Map
 )
 
 type optionalArgKind uint8

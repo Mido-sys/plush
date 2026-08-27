@@ -135,6 +135,7 @@ type fastStructLoopConditionPlan struct {
 	rightValue fastStructLoopCallArgPlan
 	left       *fastStructLoopConditionPlan
 	right      *fastStructLoopConditionPlan
+	regexCache *object.InlineCacheSlot
 	line       int
 }
 
@@ -391,8 +392,9 @@ type fastSimpleNameBinder interface {
 }
 
 type regexCacheEntry struct {
-	re  *regexp.Regexp
-	err error
+	pattern string
+	re      *regexp.Regexp
+	err     error
 }
 
 type partialBytecodeLink struct {

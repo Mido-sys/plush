@@ -1322,7 +1322,7 @@ func evalFastSimpleInfixValue(plan *fastSimpleValuePlan, ctx hctx.Context, bindi
 	if !rightOK {
 		right = nil
 	}
-	result, err := evalFastInfixOperator(value.Operator, left, right)
+	result, err := evalFastInfixOperator(value.Operator, left, right, value.RegexCache)
 	if err != nil {
 		return nil, true, fastLineError(value.Line, annotateFastInfixError(value, leftOK, rightOK, left, right, err))
 	}
